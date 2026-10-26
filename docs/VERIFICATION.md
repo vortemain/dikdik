@@ -1,5 +1,29 @@
 # Verification record — 2026-10-26
 
+## Phase A — Browser tool and panel (latest)
+
+- Full checks: **254 Python passes / 2 explicit live-runtime skips** (256 total),
+  **51 Bun tests / 288 assertions**, **15 Rust tests**, strict TypeScript check,
+  frontend build, worker syntax check and deterministic syntax-only evaluation
+  **4/4**. The runtime skips cover the live Docker security and browser tests.
+- Implemented separate execution/browsing approval, Docker worker protocol,
+  public-address/DNS/redirect policy, credential-free public GET relay, scoped
+  PNG storage/retention, cancellation, restart cleanup and profile/Settings gates.
+- Real Chrome/Playwright at **1440×900** and **390×844**, in light and dark, checked
+  the actual UI/API: empty URL/page state, disabled external link, consent denial,
+  real blocked-Docker response, chat and panel screenshot rendering, history after
+  reload, and Settings disable/enable. All four layouts had no horizontal page
+  overflow; page errors and console errors were empty. All screenshots were inspected.
+- Successful screenshot rendering used an explicitly labeled synthetic capture
+  stand-in. The actual Docker attempt returned `blocked`; no successful Chromium
+  container capture, public-network capture or live container-isolation pass is
+  claimed. No provider key or paid model was used.
+- Python tests use real SQLite/loopback HTTP plus mocked Docker/protocol/DNS
+  boundaries. The relay's transport fixture is a real loopback HTTP server behind
+  an explicit socket-routing stand-in; it is not a public Internet security test.
+- The live browser test is separately gated by `DIKDIK_RUN_BROWSER=1` and requests
+  the public example page only when explicitly enabled. Setup is in `BROWSER.md`.
+
 ## Phase A — Terminal and Bash API (latest)
 
 - Full regression checks: **234 Python tests passed, 1 live-Docker test skipped**

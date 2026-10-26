@@ -49,6 +49,19 @@ proposals and tool output are untrusted. An objective cannot change policy.
   the single stored key the user assigns, never the server's environment or other
   secrets. MCP tool output is treated as data. Each agent task connects to enabled
   servers only and stops command servers when the task ends.
+- **Browser captures** require separate literal Boolean browsing and Docker
+  approvals. Chromium runs only in an optional operator-built container, with no
+  network, no workspace mount and the restricted Docker profile. A bounded trusted
+  standard-library relay performs public HTTP/HTTPS GET requests: every DNS answer
+  and redirect is checked, sockets are pinned to public addresses, and no host
+  cookies, keys, proxy settings or authorization are forwarded. Forms, uploads,
+  login, local targets and WebSockets are unsupported. The worker's Chromium
+  sandbox is disabled under this profile, so the outer Docker boundary is
+  essential. See `docs/BROWSER.md` for limits and the missing live-security gate.
+- Browser screenshots are authenticated task-scoped PNG responses, stored in the
+  private SQLite database with bounded retention. Task deletion removes their rows
+  atomically with task events. URLs, screenshots and page text may themselves be
+  sensitive. Network responses and page text remain untrusted data.
 - **Skills** reach the model inside an untrusted-data marker and cannot change
   tools, approvals or limits. **Agent profiles** can only narrow tool access.
 - **Automations** store the mode and approvals the user chose; a schedule never

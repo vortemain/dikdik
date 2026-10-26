@@ -134,7 +134,7 @@ def make_server(engine: Engine, port: int, token: str):
                     if text != live:
                         live = text
                         out.append(f"event: delta\ndata: {json.dumps({'text': text or ''})}\n\n")
-                    if not events and state in TERMINAL and not engine.busy(task) and not engine.bash.busy(task):
+                    if not events and state in TERMINAL and not engine.busy(task) and not engine.bash.busy(task) and not engine.browser.busy(task):
                         out.append(f"event: end\ndata: {json.dumps({'state': state})}\n\n")
                     if not out and time.monotonic() - quiet > 15:
                         out.append(": keep-alive\n\n")
@@ -160,6 +160,14 @@ def make_server(engine: Engine, port: int, token: str):
                 self.reply(*routes("GET", self.path, {}))
                 return
             try:
+                parts = path.split("/")
+                if len(parts) == 7 and parts[:3] == ["", "api", "tasks"] and parts[4:6] == ["browser", "screenshots"]:
+                    self.reply(200, engine.browser.screenshot(parts[3], parts[6]), "image/png")
+                    return
+                browser = engine.browser.route("GET", self.path)
+                if browser is not None:
+                    self.reply(*browser)
+                    return
                 bash = engine.bash.route("GET", self.path, {})
                 if bash is not None:
                     self.reply(*bash)
@@ -209,6 +217,10 @@ def make_server(engine: Engine, port: int, token: str):
                         self.reply(400, {"error": "Endpoint body limit is 64KB"})
                     else:
                         self.reply(*routes(self.command, self.path, body))
+                    return
+                browser = engine.browser.route("POST", self.path, body)
+                if browser is not None:
+                    self.reply(*browser)
                     return
                 bash = engine.bash.route("POST", self.path, body)
                 if bash is not None:
@@ -264,6 +276,10 @@ def make_server(engine: Engine, port: int, token: str):
                     raise ValueError("Endpoint body limit is 64KB")
                 body = json.loads(self.rfile.read(length)) if length else {}
                 path = urlsplit(self.path).path
+                browser = engine.browser.route(method, self.path, body)
+                if browser is not None:
+                    self.reply(*browser)
+                    return
                 bash = engine.bash.route(method, self.path, body)
                 if bash is not None:
                     self.reply(*bash)

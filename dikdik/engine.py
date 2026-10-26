@@ -11,11 +11,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .providers import propose
-from .agent import AgentBudget, run_agent
+from .agent import AgentBudget, BROWSER_TOOL, run_agent
 from .agent_profiles import LIMITS as PROFILE_LIMITS, AgentProfiles
 from .agent_provider import CompatibleAgentModel
 from .automation import AutomationScheduler
 from .bash_service import BashService
+from .browser_service import BrowserService
 from .locking import DataLock
 from .mcp import McpSession, McpStore
 from .model_config import ModelResolver
@@ -128,9 +129,10 @@ class Engine:
         self.active: dict[str, threading.Event] = {}
         self.pending: dict[str, list[dict]] = {}  # follow-ups sent while their task was running
         self.live: dict[str, str] = {}  # a reply as it streams in; never persisted
-        self.automation = AutomationScheduler(self)  # M4: scheduler owned by Engine lifecycle
-        self.automation.start()
         self.bash = BashService(self)
+        self.browser = BrowserService(self)
+        self.automation = AutomationScheduler(self)  # starts only after every tool service exists
+        self.automation.start()
 
     def submit(self, request):
         clean = self._validate(request)
@@ -163,6 +165,8 @@ class Engine:
         with self.lock:
             if task in self.active:
                 raise ValueError("Stop the task before deleting it")
+            if self.browser.busy(task):
+                raise ValueError("Stop the browser capture before deleting this task")
             self.bash.prepare_delete(task)
             try:
                 self.store.delete(task)
@@ -273,6 +277,10 @@ class Engine:
             raise ValueError("Choose syntax or docker verification")
         if request["verification"] == "docker" and request.get("approve_execution") is not True:
             raise ValueError("Explicit Docker execution approval required")
+        if "approve_browser" in request and type(request["approve_browser"]) is not bool:
+            raise ValueError("Browser approval must be a Boolean")
+        if request.get("approve_browser") is True and (request["mode"] != "agent" or request.get("approve_execution") is not True):
+            raise ValueError("Browser tools require agent mode and explicit Docker execution approval")
         if request["mode"] in {"model", "agent"} and request.get("approve_external") is not True:
             raise ValueError("Explicit external-code disclosure approval required")
         if request["mode"] == "offline":
@@ -288,7 +296,7 @@ class Engine:
             except KeyError:
                 raise ValueError("That agent profile no longer exists; pick another") from None
         # Persist only the public contract, never arbitrary caller fields.
-        clean = {k: request[k] for k in ("objective", "mode", "verification", "edits", "approve_execution", "approve_external") if k in request}
+        clean = {k: request[k] for k in ("objective", "mode", "verification", "edits", "approve_execution", "approve_external", "approve_browser") if k in request}
         if profile not in (None, ""):
             clean["agent_profile"] = profile
         return clean
@@ -459,6 +467,14 @@ class Engine:
         session = McpSession(servers, self.models.secrets.reveal) if servers else None
         if session:
             self.store.event(task, "mcp", {"servers": [s["name"] for s in servers], "tools": len(session.tools), "errors": session.errors})
+        browsing = request.get("approve_browser") is True and request.get("approve_execution") is True and self.browser.enabled() and (profile is None or profile["allow_browser"])
+        extra_tools = (session.tools if session else []) + ([BROWSER_TOOL] if browsing else [])
+        def extra_call(name, arguments):
+            if name == "browse_url" and browsing:
+                return self.browser.visit(task, arguments.get("url"), request, cancel)
+            if session:
+                return session.call(name, arguments)
+            raise ValueError("Tool unavailable")
         budget = AgentBudget(**{key: profile[key] for key in PROFILE_LIMITS if profile and profile.get(key)})
         model = self.models.describe(model_id)
         self.store.event(task, "agent_started", {"implementation": "original_dikdik", "profile": profile["name"] if profile else "Default", "max_model_calls": budget.max_model_calls, "max_tool_calls": budget.max_tool_calls, "max_repair_attempts": budget.max_repair_attempts, "deadline_seconds": budget.deadline_seconds, "model": {k: v for k, v in model.items() if k != "problem"}})
@@ -468,7 +484,7 @@ class Engine:
                 verify if docker else None, lambda kind, data: self.store.event(task, "agent_" + kind, data), cancel, budget,
                 creation_policy=lambda path: can_create_file(self.root, path),
                 start=files, history=history, shell=shell if docker and (profile is None or profile["allow_shell"]) else None,
-                extra_tools=session.tools if session else None, extra_call=session.call if session else None,
+                extra_tools=extra_tools, extra_call=extra_call if extra_tools else None,
             )
         finally:
             if session:
@@ -495,6 +511,7 @@ class Engine:
         self._finish(task, outcome.state, result, cancel)
 
     def close(self):
+        self.browser.close()
         self.bash.close()
         self.automation.close()
         with self.lock:

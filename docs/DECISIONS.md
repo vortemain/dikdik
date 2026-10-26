@@ -78,3 +78,29 @@ Serialize cancellation acceptance and terminal state commit so an accepted
 cancellation during artifact/diff finalization cannot become verified completion.
 Count available provider component usage, but do not call reported usage a strict
 cost guarantee when metadata is missing or dishonest.
+
+## ADR-006: Isolated browser with a public-resource relay
+
+The optional browser uses Playwright **1.64.1** and its matching Chromium image
+only inside an operator-built `dikdik-browser:1` container. Browser rendering
+requires an actual browser engine; a Python HTML renderer would not provide
+equivalent screenshots. This adds no Python or frontend runtime package and
+imports no code from the OpenHands reference. Playwright is Apache-2.0; Chromium
+and the base image include separately licensed components (see LICENSE-STATUS).
+
+Keep the existing no-network Docker boundary and relay public GET resources over
+stdin/stdout. The standard-library relay validates every target/redirect, rejects
+private DNS answers, pins the socket address, and forwards no ambient credentials.
+This avoids granting the browser direct access to the host/LAN. Separate task
+execution and browsing approvals are required. Restrict the first browser tool
+to URL capture and bounded text/screenshot results; interactive login, arbitrary
+methods and local targets require their own future policy and acceptance work.
+
+Playwright's [Docker guidance](https://playwright.dev/docs/docker) documents its
+version matching and notes the additional sandbox requirements for untrusted
+sites. Our fixed Docker profile supplies the outer boundary; Chromium's own
+sandbox is disabled, and live browser/container security remains a release gate.
+[Request interception](https://playwright.dev/docs/network) requires service
+workers to be disabled; the worker also blocks WebSockets. Direct traffic stays
+blocked by Docker even if a browser API bypasses interception. No image was built
+or downloaded during this increment because the Docker daemon was unavailable.

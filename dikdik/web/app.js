@@ -158,6 +158,9 @@
       throw new Error("Approve sending code and the objective to the external provider.");
     if (policy.requiresExecution && !input.approveExecution)
       throw new Error("Approve execution inside Docker before starting this task.");
+    const browsing = input.mode === "agent" && input.approveBrowser === true;
+    if (browsing && !input.approveExecution)
+      throw new Error("Approve Docker execution to use the browser.");
     let edits = [];
     if (policy.showEdits) {
       const parsed = JSON.parse(input.edits);
@@ -170,8 +173,9 @@
       mode: input.mode,
       edits,
       verification: policy.verification,
-      approve_execution: policy.requiresExecution && input.approveExecution,
+      approve_execution: (policy.requiresExecution || browsing) && input.approveExecution,
       approve_external: policy.requiresExternal && input.approveExternal,
+      ...browsing ? { approve_browser: true } : {},
       ...input.mode === "agent" && input.agentProfile ? { agent_profile: input.agentProfile } : {}
     };
   }
@@ -265,6 +269,10 @@
       case "terminal_command":
       case "terminal_output":
         return [];
+      case "browser_started":
+        return [{ ...base, role: "tool", title: "Opening public web page", body: textOf(d.url, 4096) }];
+      case "browser_result":
+        return [{ ...base, role: "tool", title: "Browser capture", details: d }];
       case "completed":
       case "failed":
       case "blocked":
@@ -325,6 +333,35 @@ ${command.output}${ending}`;
 
 `);
     return { commands: list, text };
+  }
+  function browserView(events) {
+    const view = { url: "", title: "", text: "", screenshot: "", status: "", error: "" };
+    for (const event of events) {
+      const data = event.data ?? {};
+      if (event.kind === "browser_started") {
+        view.status = "running";
+        view.error = "";
+        continue;
+      }
+      if (event.kind !== "browser_result")
+        continue;
+      view.status = textOf(data.status, 80);
+      view.error = textOf(data.error, 1000);
+      const screenshot = textOf(data.screenshot, 200);
+      let url = "";
+      try {
+        const parsed = new URL(textOf(data.url, 4096));
+        if (["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password)
+          url = parsed.href;
+      } catch {}
+      if (view.status === "passed" && url && /^\/api\/tasks\/[a-f0-9]{32}\/browser\/screenshots\/[a-f0-9]{32}$/.test(screenshot)) {
+        view.url = url;
+        view.screenshot = screenshot;
+        view.title = textOf(data.title, 256);
+        view.text = textOf(data.text, 12000);
+      }
+    }
+    return view;
   }
   function observationText(tool, observation) {
     if (typeof observation !== "object" || observation === null)
@@ -1660,6 +1697,25 @@ ${c.output}` : "";
   var pendingCalls = [];
   var lastRole = "";
   function renderMessage(msg) {
+    if (msg.kind === "browser_result") {
+      const view = browserView([{ seq: 1, task_id: selected ?? "", time: msg.time, kind: msg.kind, data: msg.details ?? {} }]);
+      const li2 = make("li", "msg msg-browser");
+      li2.id = msg.id;
+      li2.append(make("p", "msg-label", view.screenshot ? view.title || "Browser capture" : `Browser: ${view.status || "unavailable"}`));
+      if (view.screenshot) {
+        const image = make("img", "browser-image");
+        image.src = view.screenshot;
+        image.alt = `Screenshot of ${view.url}`;
+        image.loading = "lazy";
+        li2.append(image, make("p", "browser-caption", view.url));
+        const open = make("button", "small", "Open Browser tab");
+        open.type = "button";
+        open.onclick = () => openCanvas("browser");
+        li2.append(open);
+      } else
+        li2.append(make("p", "browser-status", view.error || "No screenshot was captured."));
+      return li2;
+    }
     if (msg.role === "user") {
       const li2 = make("li", `msg msg-user msg-${msg.kind}`);
       li2.id = msg.id;
@@ -1810,6 +1866,8 @@ ${c.output}` : "";
       loadGit();
     if (tab === "terminal")
       renderTerminal();
+    if (tab === "browser")
+      renderBrowser();
   }
   function changedPaths() {
     return new Set(review.files.map((file) => file.path));
@@ -1825,6 +1883,77 @@ ${c.output}` : "";
     if (view.commands.some((command) => command.running))
       terminal.scrollTop = terminal.scrollHeight;
   }
+  function renderBrowser() {
+    const view = browserView(liveEvents);
+    el("browser-current-url").textContent = view.url || "No URL loaded";
+    const link = el("browser-external");
+    link.hidden = !view.url;
+    link.href = view.url || "#";
+    button("browser-external-empty").hidden = !!view.url;
+    el("browser-empty").hidden = !!view.screenshot;
+    const mount = el("browser-snapshot");
+    mount.hidden = !view.screenshot;
+    if (mount.dataset.screenshot !== view.screenshot) {
+      mount.dataset.screenshot = view.screenshot;
+      mount.replaceChildren();
+      if (view.screenshot) {
+        const image = make("img", "browser-image");
+        image.src = view.screenshot;
+        image.alt = view.title || `Screenshot of ${view.url}`;
+        image.addEventListener("error", () => {
+          el("browser-status").textContent = "This screenshot is no longer available. Open the URL again to capture it.";
+        });
+        mount.append(image);
+      }
+    }
+    el("browser-status").textContent = view.status === "running" ? "Opening page…" : view.error || (view.status === "passed" ? "Page captured. Web content is untrusted." : "");
+    button("browser-open").disabled = !selected || view.status === "running";
+    button("browser-stop").disabled = view.status !== "running";
+  }
+  el("browser-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!selected)
+      return message("Choose a conversation first.", true);
+    if (!input("browser-consent").checked)
+      return message("Approve Docker and public web access for this capture.", true);
+    const task = selected;
+    button("browser-open").disabled = true;
+    button("browser-stop").disabled = false;
+    el("browser-status").textContent = "Opening page…";
+    try {
+      await api(`/api/tasks/${task}/browser`, { url: input("browser-url").value, approve_browser: true, approve_execution: true });
+      if (selected === task) {
+        watching = true;
+        await observe();
+      }
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Browser capture failed", true);
+    } finally {
+      input("browser-consent").checked = false;
+      if (selected === task) {
+        button("browser-open").disabled = false;
+        button("browser-stop").disabled = true;
+      }
+    }
+  });
+  el("browser-stop").addEventListener("click", () => {
+    if (selected)
+      api(`/api/tasks/${selected}/browser/stop`, {}).catch((error) => message(String(error), true));
+  });
+  async function loadBrowserSettings() {
+    const info = await api("/api/browser");
+    input("browser-enabled").checked = info.enabled;
+    el("browser-availability").textContent = info.availability === "image_ready" ? info.launch_verified ? "Browser image installed. A capture completed in this service session." : "Browser image installed. A successful launch has not been verified." : `Browser runtime unavailable. Build the local ${info.image} image and start Docker.`;
+  }
+  el("browser-enabled").addEventListener("change", async () => {
+    try {
+      await request("/api/browser", "PATCH", { enabled: input("browser-enabled").checked });
+      message("Browser setting saved.");
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Could not save browser setting", true);
+      await loadBrowserSettings();
+    }
+  });
   function renderFileList() {
     const query = (el("file-search").value ?? "").trim().toLowerCase();
     const changed = changedPaths();
@@ -1986,7 +2115,11 @@ ${c.output}` : "";
     el("diff").replaceChildren();
     el("review-note").textContent = "";
     liveEvents = [];
+    input("browser-consent").checked = false;
+    input("browser-approval").checked = false;
+    input("browser-url").value = "";
     renderTerminal();
+    renderBrowser();
     el("working").hidden = true;
     el("toggle-canvas").hidden = true;
     setCanvas(false);
@@ -2342,6 +2475,8 @@ ${c.output}` : "";
       renderMessageStream(eventsToChat(liveEvents, liveObjective));
       if (record.kind === "terminal_command" || record.kind === "terminal_output")
         renderTerminal();
+      if (record.kind === "browser_started" || record.kind === "browser_result")
+        renderBrowser();
       if (record.kind === "running" || isTerminal(record.kind)) {
         setState(record.kind);
         selectedState = record.kind;
@@ -2386,6 +2521,7 @@ ${c.output}` : "";
       setState(task.state);
       selectedState = task.state;
       renderTerminal();
+      renderBrowser();
       button("cancel").disabled = isTerminal(task.state);
       const messages = eventsToChat(task.events, task.request.objective);
       lastMessages = messages;
@@ -2837,6 +2973,8 @@ ${c.output}` : "";
     }
   });
   function showPane(name) {
+    if (name === "general")
+      loadBrowserSettings().catch((error) => message(error instanceof Error ? error.message : "Could not load browser setting", true));
     const dialog = el("settings");
     for (const tab of dialog.querySelectorAll(".settings-tab"))
       tab.setAttribute("aria-selected", String(tab.dataset.pane === name));
@@ -2935,9 +3073,13 @@ ${c.output}` : "";
     input("external").required = policy.requiresExternal;
     select("verification").value = policy.verification;
     select("verification").disabled = policy.locksVerification;
-    el("execution-field").hidden = !policy.requiresExecution;
-    input("execution").disabled = !policy.requiresExecution;
-    input("execution").required = policy.requiresExecution;
+    el("browser-field").hidden = mode !== "agent";
+    input("browser-approval").disabled = mode !== "agent";
+    const execution = policy.requiresExecution || mode === "agent" && input("browser-approval").checked;
+    el("execution-field").hidden = !execution;
+    input("execution").disabled = !execution;
+    input("execution").required = execution;
+    el("execution-field").title = "Runs approved tools and tests inside restricted Docker containers.";
     el("model-pill").hidden = !policy.requiresExternal;
     el("agent-profile-pill").hidden = mode !== "agent" || !agentProfiles.length;
     if (policy.showEdits)
@@ -2945,6 +3087,7 @@ ${c.output}` : "";
   }
   select("mode").addEventListener("change", syncMode);
   select("verification").addEventListener("change", syncMode);
+  el("browser-approval").addEventListener("change", syncMode);
   el("options-toggle").addEventListener("click", () => setOptions(el("options-panel").hidden === true));
   syncMode();
   textarea("objective").addEventListener("input", autosize);
@@ -2975,6 +3118,7 @@ ${c.output}` : "";
       verification: parseVerification(select("verification").value),
       approveExecution: input("execution").checked,
       approveExternal: input("external").checked,
+      approveBrowser: input("browser-approval").checked,
       agentProfile: el("agent-profile").value ?? ""
     });
   }
@@ -3000,7 +3144,7 @@ ${c.output}` : "";
       const row = make("li", "m4-row");
       const head = make("p", "m4-title");
       head.append(make("span", "m4-strong", profile.name));
-      const tools = [profile.allow_shell && "shell", profile.use_mcp && "MCP", profile.use_skills && "skills"].filter(Boolean).join(", ") || "no extra tools";
+      const tools = [profile.allow_shell && "shell", profile.allow_browser && "browser", profile.use_mcp && "MCP", profile.use_skills && "skills"].filter(Boolean).join(", ") || "no extra tools";
       const limits = [profile.max_model_calls && `${profile.max_model_calls} model calls`, profile.deadline_seconds && `${profile.deadline_seconds}s`].filter(Boolean).join(" · ");
       row.append(head, make("span", "m4-meta", `${tools}${limits ? " · " + limits : ""}`));
       if (profile.instructions)
@@ -3035,6 +3179,7 @@ ${c.output}` : "";
     field("agent-steps").value = profile?.max_model_calls ? String(profile.max_model_calls) : "";
     field("agent-minutes").value = profile?.deadline_seconds ? String(profile.deadline_seconds) : "";
     field("agent-shell").checked = profile?.allow_shell ?? true;
+    field("agent-browser").checked = profile?.allow_browser ?? true;
     field("agent-mcp").checked = profile?.use_mcp ?? true;
     field("agent-skills").checked = profile?.use_skills ?? true;
     el("agent-save").textContent = profile ? "Save changes" : "Add agent";
@@ -3065,6 +3210,7 @@ ${c.output}` : "";
       max_model_calls: number("agent-steps"),
       deadline_seconds: number("agent-minutes"),
       allow_shell: field("agent-shell").checked,
+      allow_browser: field("agent-browser").checked,
       use_mcp: field("agent-mcp").checked,
       use_skills: field("agent-skills").checked
     };

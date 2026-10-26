@@ -8,16 +8,17 @@ the product; no formal clean-room or exclusive-rights guarantee is asserted.
 
 **M6: OpenHands-parity build phases.** Dikdik is now a conversational coding
 agent: follow-ups and queued messages; a sandboxed shell and Python/Bun/npm/Cargo
-test runners; a durable read-only Terminal and task-scoped Bash API; safe apply
+test runners; a durable read-only Terminal and task-scoped Bash API; an approved
+Docker browser tool with screenshots in chat and a Browser tab; safe apply
 with conflict detection; Files and Git; model profiles and
 encrypted keys driving every call; skills, MCP servers (HTTP and stdio) and agent
 profiles; streamed replies over server-sent events; automations with stored
 approvals; a Python client/CLI; and the Rust indexer loaded by default. The parity
-audit (docs/PARITY.md) moved from 89 to 215 fully matched OpenHands sub-features
+audit (docs/PARITY.md) moved from 89 to 218 fully matched OpenHands sub-features
 of 1,801. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-26): Python **234 passed, 1 live-Docker test skipped**; Bun
-**48 passed**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-26): Python **254 passed, 2 live-runtime tests skipped**; Bun
+**51 passed**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -31,6 +32,9 @@ Test status (2026-10-26): Python **234 passed, 1 live-Docker test skipped**; Bun
   approvals and evidence rendering; no frontend runtime dependencies.
 - Added a read-only Terminal whose task events append live and rebuild after
   reload, plus durable task-scoped execute/start/stop/search/get/clear Bash routes.
+- Added an optional Docker browser worker with separate approval, public-resource
+  relay, durable scoped screenshots, runtime discovery and a persisted disable
+  switch. Successful container capture is still unverified.
 - Independent review findings fixed: early-exit verification bypass, finalization
   cancellation race, component-token undercount; reviewer reran regressions.
 - Built wheel offline, inspected its 22 entries (no upstream/Python runtime deps),
@@ -40,8 +44,8 @@ Test status (2026-10-26): Python **234 passed, 1 live-Docker test skipped**; Bun
 
 ## Test status
 
-- Python: **234 passed, 1 live-Docker test skipped** (235 total).
-- Bun: **48 passed / 277 assertions**; strict TypeScript check and browser build passed.
+- Python: **254 passed, 2 live-runtime tests skipped** (256 total).
+- Bun: **51 passed / 288 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit
@@ -52,6 +56,9 @@ Test status (2026-10-26): Python **234 passed, 1 live-Docker test skipped**; Bun
 - Real Chrome/Playwright verification exercised Terminal SSE updates, durable
   reload history, light/dark themes and 390px/desktop layouts without overflow.
   Docker was unavailable, so the displayed command truthfully ended `blocked`.
+- Real Chrome checked Browser empty/blocked states, screenshot chat/panel rendering
+  and reload, Settings disable/enable, and all four desktop/phone light/dark layouts.
+  Screenshot success used a labeled stand-in; the actual Docker attempt was blocked.
 - Reference-only results: Canvas **74 passed / 1 skipped** after serial thread-pool
   retry; one SDK Stop-hook regression passed. Neither count belongs to DIKDIK.
 
@@ -76,7 +83,7 @@ contracts and measured benefit. See `docs/DECISIONS.md` and `SECURITY.md`.
 
 ## Next highest-value action
 
-Continue Phase A with the browser tool and panel while preserving the same
+Continue Phase A with planning mode and the task list while preserving the same
 task-scoped, local-first security boundary. Separately, enable a reviewed Linux
 Docker runtime and explicitly configure/approve a tool-capable model to record
 the still-missing live execution evidence.

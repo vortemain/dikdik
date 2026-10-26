@@ -43,3 +43,13 @@ Authors), latin and latin-ext variable WOFF2 subsets taken from the Fontsource
 packages `@fontsource-variable/inter` and `@fontsource-variable/jetbrains-mono`
 5.3.0 (dev dependencies). Their license texts ship beside them in
 `dikdik/web/fonts/`. The SVG icon is original.
+
+The optional browser image installs **playwright-core 1.64.1 (Apache-2.0)** and
+uses the matching Microsoft Playwright **v1.64.1-noble** base image. Chromium,
+Ubuntu, Node.js and other image components retain their own notices and licenses;
+the Playwright license does not cover the entire image. The Dockerfile is original
+Dikdik code, and no container image or Playwright source is bundled in this repo.
+The operator builds/downloads it explicitly. Immutable digest selection,
+vulnerability review and image redistribution/license review remain release gates.
+Primary references: [Playwright license](https://github.com/microsoft/playwright/blob/main/LICENSE)
+and [Docker image documentation](https://playwright.dev/docs/docker).

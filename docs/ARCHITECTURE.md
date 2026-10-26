@@ -10,6 +10,7 @@ server.py ── Engine (one worker + cancellation flag)
                  ├── agent.py + agent_provider.py: original bounded tool/repair loop
                  ├── store.py: SQLite tasks + ordered events, atomic transitions
                  ├── bash_service.py: durable task-scoped command/events API
+                 ├── browser_service.py: isolated browser capture + scoped screenshots
                  └── runners.py + sandbox.py: fixed Docker shell/test runners
                           │ read-only candidate mount, no source mount
                           ▼
@@ -29,7 +30,8 @@ so neither is a backend runtime requirement. No OpenHands runtime is imported.
 
 SQLite tables: `tasks(id, created, state, request, result)`,
 `events(seq, task_id, time, kind, data)`, `bash_events` for ordered durable command
-history, and `settings(key, value)` for workspace binding.
+history, `browser_snapshots` for bounded task-scoped PNGs, and `settings(key, value)`
+for workspace binding and workspace browser enablement.
 Schema is created idempotently at startup; there is no existing schema to migrate.
 Future schema changes require explicit migrations before wider release.
 
@@ -79,6 +81,16 @@ POST JSON bodies are limited to 262144 bytes; chunked transfer is unsupported.
 | `GET /api/tasks/{id}/bash/events` | query: after, limit, kind, command_id | ordered task-scoped command/output page |
 | `GET /api/tasks/{id}/bash/events/{event}` | — | one event or 404 |
 | `DELETE /api/tasks/{id}/bash/events` | — | cleared count; refused while a command runs |
+| `GET /api/browser`, `PATCH /api/browser` | optional `{enabled: boolean}` patch | browser runtime/approval metadata |
+| `POST /api/tasks/{id}/browser` | URL and separate Boolean execution/browser approvals | capture status and optional scoped screenshot URL |
+| `GET /api/tasks/{id}/browser/screenshots/{snapshot}` | — | authenticated task-scoped PNG |
+
+The browser implementation is a replaceable `capture` boundary. It uses an
+operator-built Playwright/Chromium image with no container network or workspace
+mount. Public GET resources cross a bounded stdin/stdout relay whose trusted
+standard-library fetcher pins validated public DNS addresses and verifies HTTPS
+hostnames. Runtime code, dependency/setup details and the remaining live-verification
+gate are documented in [BROWSER.md](BROWSER.md).
 
 Task request:
 

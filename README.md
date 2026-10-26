@@ -27,6 +27,11 @@ autonomous engineering platform.
 - **A durable, read-only Terminal.** Agent commands append live and survive reloads.
   Authenticated task-scoped Bash endpoints can start, stop, inspect, page and clear
   commands only for tasks that already have explicit Docker execution approval.
+- **Browser captures.** A separate browsing approval enables the Docker-only
+  `browse_url` tool. Page text and authenticated screenshots appear in chat and the
+  Browser tab; manual URL captures have their own approval. The optional browser
+  image must be built by the operator. Docker capture is contract-tested, with
+  live execution still blocked here. See [browser setup and limits](docs/BROWSER.md).
 - **Tests for several stacks** in network-less Docker containers: Python
   `unittest`, `bun test`, `npm test` and `cargo test --offline`, picked from the
   project's files. Without Docker, tasks are syntax-checked and labelled so.
@@ -46,7 +51,7 @@ autonomous engineering platform.
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
 
-**Not yet:** a browser panel, planning mode and task lists, model
+**Not yet:** planning mode and task lists, model
 routing, plugins and extension apps, folders/tags, per-action confirmations,
 WebSocket and TypeScript clients, a desktop app, and any recorded run against a
 live model provider or Docker engine. See [the parity audit](docs/PARITY.md).
@@ -100,7 +105,7 @@ docker pull node:22-slim
 docker pull rust:1-slim
 ```
 
-Then choose **Docker tests** and tick **Run tests in Docker**. Dikdik never pulls
+Then choose **Docker tests** and tick **Run tools in Docker**. Dikdik never pulls
 images, installs dependencies or uses the network inside containers, so projects
 whose tests need packages that are not in the repository will fail to verify.
 Python runs need at least one executed, non-skipped test.
@@ -148,7 +153,7 @@ immediate network abort. Ambient provider proxy configuration is trusted.
 ### The agent
 
 Choose **Agent** and tick **Share code with model**. It needs a model that supports
-chat-completions function tools. With **Docker tests** (and **Run tests in Docker**)
+chat-completions function tools. With **Docker tests** (and **Run tools in Docker**)
 it also verifies with your test suites and can use the sandboxed shell; with
 **Syntax check** it works without Docker and never claims tests passed.
 
@@ -222,8 +227,8 @@ python scripts/evaluate.py --output docs/evaluation-results.json
 python scripts/benchmark.py --samples 20 --output docs/benchmark-results.json
 ```
 
-Current result (2026-10-26): **234 Python tests passed, 1 live-Docker check skipped**
-(235 total); **48 Bun tests passed**; **15 Rust tests passed**; strict frontend type
+Current result (2026-10-26): **254 Python tests passed, 2 live-runtime checks skipped**
+(256 total); **51 Bun tests passed**; **15 Rust tests passed**; strict frontend type
 checking and build passed; deterministic syntax-only evaluation **4/4**. These are preview regression results, not proof of
 general autonomous engineering capability.
 

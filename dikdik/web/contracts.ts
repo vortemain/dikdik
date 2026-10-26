@@ -8,12 +8,13 @@ export interface TaskRequest {
   verification: Verification;
   approve_execution: boolean;
   approve_external: boolean;
+  approve_browser?: boolean;
   agent_profile?: string;
 }
 export interface AgentProfile {
   id: string; name: string; instructions: string; model_profile_id: string;
   max_model_calls: number | null; max_tool_calls: number | null; deadline_seconds: number | null;
-  allow_shell: boolean; use_mcp: boolean; use_skills: boolean;
+  allow_shell: boolean; allow_browser: boolean; use_mcp: boolean; use_skills: boolean;
 }
 export interface Project {
   name: string;
@@ -199,12 +200,14 @@ export function parseVerification(value: string): Verification {
 }
 export function buildTaskRequest(input: {
   objective: string; mode: Mode; verification: Verification;
-  approveExecution: boolean; approveExternal: boolean; edits: string; agentProfile?: string;
+  approveExecution: boolean; approveExternal: boolean; approveBrowser?: boolean; edits: string; agentProfile?: string;
 }): TaskRequest {
   const policy = modePolicy(input.mode, input.verification);
   if (!input.objective.trim()) throw new Error("Enter an objective.");
   if (policy.requiresExternal && !input.approveExternal) throw new Error("Approve sending code and the objective to the external provider.");
   if (policy.requiresExecution && !input.approveExecution) throw new Error("Approve execution inside Docker before starting this task.");
+  const browsing = input.mode === "agent" && input.approveBrowser === true;
+  if (browsing && !input.approveExecution) throw new Error("Approve Docker execution to use the browser.");
   let edits: Edit[] = [];
   if (policy.showEdits) {
     const parsed: unknown = JSON.parse(input.edits);
@@ -219,8 +222,9 @@ export function buildTaskRequest(input: {
   return {
     objective: input.objective, mode: input.mode, edits,
     verification: policy.verification,
-    approve_execution: policy.requiresExecution && input.approveExecution,
+    approve_execution: (policy.requiresExecution || browsing) && input.approveExecution,
     approve_external: policy.requiresExternal && input.approveExternal,
+    ...(browsing ? { approve_browser: true } : {}),
     ...(input.mode === "agent" && input.agentProfile ? { agent_profile: input.agentProfile } : {}),
   };
 }
@@ -318,6 +322,10 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
     case "terminal_command":
     case "terminal_output":
       return [];  // rendered in the read-only Terminal panel, never duplicated into chat
+    case "browser_started":
+      return [{ ...base, role: "tool", title: "Opening public web page", body: textOf(d.url, 4096) }];
+    case "browser_result":
+      return [{ ...base, role: "tool", title: "Browser capture", details: d }];
     case "completed":
     case "failed":
     case "blocked":
@@ -370,6 +378,29 @@ export function terminalTranscript(events: TaskEvent[]): TerminalView {
     return `$ ${command.command}\n${command.output}${ending}`;
   }).join("\n\n");
   return { commands: list, text };
+}
+
+export interface BrowserView { url: string; title: string; text: string; screenshot: string; status: string; error: string }
+export function browserView(events: TaskEvent[]): BrowserView {
+  const view = { url: "", title: "", text: "", screenshot: "", status: "", error: "" };
+  for (const event of events) {
+    const data = event.data ?? {};
+    if (event.kind === "browser_started") { view.status = "running"; view.error = ""; continue; }
+    if (event.kind !== "browser_result") continue;
+    view.status = textOf(data.status, 80);
+    view.error = textOf(data.error, 1000);
+    const screenshot = textOf(data.screenshot, 200);
+    let url = "";
+    try {
+      const parsed = new URL(textOf(data.url, 4096));
+      if (["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password) url = parsed.href;
+    } catch { /* malformed data cannot become a link */ }
+    if (view.status === "passed" && url && /^\/api\/tasks\/[a-f0-9]{32}\/browser\/screenshots\/[a-f0-9]{32}$/.test(screenshot)) {
+      view.url = url; view.screenshot = screenshot;
+      view.title = textOf(data.title, 256); view.text = textOf(data.text, 12000);
+    }
+  }
+  return view;
 }
 
 /** Readable text for a tool observation; falls back to JSON for unknown shapes. */

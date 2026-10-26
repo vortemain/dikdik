@@ -30,11 +30,11 @@ OpenHands app map (844 entries) and the agent-server/SDK map
 
 | Status | First audit | After the build phases |
 |---|---|---|
-| Has (equivalent behaviour) | 89 | 215 |
-| Partly (note says what is missing) | 91 | 160 |
-| Missing | 1,534 | 1,337 |
+| Has (equivalent behaviour) | 89 | 218 |
+| Partly (note says what is missing) | 91 | 167 |
+| Missing | 1,534 | 1,326 |
 | Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 70 | 70 |
-| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 19 |
+| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 20 |
 | **Total** | **1,801** | **1,801** |
 
 Built since the first audit: conversations with follow-ups, queueing, rename/pin/
@@ -48,13 +48,18 @@ The first Phase A increment adds a durable read-only Terminal, live agent comman
 events and authenticated task-scoped Bash execution/history controls. Host/global
 shell execution is deliberately excluded; the Docker path is contract-tested but
 not live-verified in this environment.
+The second increment adds an optional Docker browser worker, separate browsing
+consent, a public GET relay, durable screenshots in chat and the Browser tab,
+runtime discovery and a persisted disable switch. Real Chrome verified the UI
+with a labeled screenshot stand-in; the real Docker attempt was blocked. The
+screenshot/launch parity rows remain partial until real runtime evidence exists.
 
 Gaps the first audit found in features that looked present, all fixed: unused
 model profiles and keys, unused skills, the unloaded Rust indexer, automations
 granting consent on their own, real agent tool events missing from the chat,
 and automation runs never listing (`task_id`/`id` mismatch).
 
-Largest remaining gaps: the browser panel, planning mode and task lists,
+Largest remaining gaps: live browser execution, planning mode and task lists,
 the command menu, folders and tags, per-action confirmation, model routing, plugins
 and extension apps, automation Git sync and templates, WebSocket and TypeScript
 clients, conversation fork/condense/goals, VS Code serving, onboarding, and any
@@ -90,7 +95,7 @@ recorded run against a live model provider or Docker engine.
 | F24 Automation Git sync | Missing. Require explicit network/publication/credential approvals and reproducible encrypted configuration behavior. | P2 |
 | F25 Backends/Cloud/sharing | Local-only; multi-backend/sharing missing. Cloud/vendor accounts are external, not bundled OSS features. Prove backend isolation and explicit disclosure consent. | P1/P2/external |
 | F26 Runtime/distribution | Partial: source startup and inspected dependency-free wheel/fresh install; Docker test runner not live-verified. Desktop, embedding and remote runtime variants missing. Verify each supported artifact and actual sandbox boundary. | P0/P2 |
-| F27 Workspace tools | Partial list/read/search/create/edit, fixed multi-stack runners, durable read-only Terminal and task-scoped Bash API. Missing browser screenshots/tools, planner/task list and detailed usage. Live Docker execution remains an acceptance gate. | P0/P1 |
+| F27 Workspace tools | Partial list/read/search/create/edit, fixed multi-stack runners, durable read-only Terminal, task-scoped Bash API and Docker browser capture with a Browser tab. Missing planner/task list and detailed usage. Live Docker/browser execution remains an acceptance gate. | P0/P1 |
 | F28 Automation setup/drafts | Missing schedule/event forms, draft tests and resume. Backend validation, persisted draft lifecycle and actual dispatch must precede UI completion claims. | P2 |
 
 Reference sources: `upstream/OpenHands/src/routes.ts`,

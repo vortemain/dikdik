@@ -140,7 +140,8 @@
             <div id="approvals" class="approvals">
               <span class="approvals-label">Allow for this task</span>
               <label id="external-field" class="toggle" title="Sends the objective, bounded repository text and tool output to your configured model provider."><input id="external" type="checkbox">Share code with model</label>
-              <label id="execution-field" class="toggle" title="Runs this repository’s tests inside the restricted Docker container." hidden><input id="execution" type="checkbox">Run tests in Docker</label>
+              <label id="execution-field" class="toggle" title="Runs approved tools and tests inside restricted Docker containers." hidden><input id="execution" type="checkbox">Run tools in Docker</label>
+              <label id="browser-field" class="toggle" title="Allows public web GET requests for this task. Pages run in Docker and may be sent to the model as untrusted text."><input id="browser-approval" type="checkbox">Browse public web</label>
             </div>
             <div class="composer-controls">
               <label class="pill" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
@@ -163,6 +164,7 @@
           <button class="canvas-tab" type="button" role="tab" data-tab="changes" aria-selected="true"><span id="review-title">Changes</span><span id="canvas-count" class="tab-count"></span></button>
           <button class="canvas-tab" type="button" role="tab" data-tab="files" aria-selected="false">Files</button>
           <button class="canvas-tab" type="button" role="tab" data-tab="terminal" aria-selected="false">Terminal</button>
+          <button class="canvas-tab" type="button" role="tab" data-tab="browser" aria-selected="false">Browser</button>
           <button class="canvas-tab" type="button" role="tab" data-tab="git" aria-selected="false">Git<span id="git-count" class="tab-count"></span></button>
         </div>
         <span class="grow"></span>
@@ -208,6 +210,17 @@
         <p id="terminal-empty" class="canvas-empty">No terminal output yet. Commands run by the agent will appear here.</p>
         <pre id="terminal-view" tabindex="0" aria-label="Sandbox command output" hidden></pre>
       </div>
+      <div class="canvas-body browser-panel" data-pane="browser" hidden>
+        <div class="browser-chrome"><span id="browser-current-url">No URL loaded</span><a id="browser-external" target="_blank" rel="noopener noreferrer" hidden>Open in New Tab</a><button id="browser-external-empty" type="button" disabled>Open in New Tab</button></div>
+        <form id="browser-form" class="browser-form">
+          <label for="browser-url" class="sr-only">Public URL</label><input id="browser-url" type="url" placeholder="https://example.com" maxlength="4096" required>
+          <label class="check"><input id="browser-consent" type="checkbox" required>Allow Docker and public web access for this capture</label>
+          <div class="row"><button id="browser-open" type="submit" class="small">Open URL</button><button id="browser-stop" type="button" class="small" disabled>Stop capture</button></div>
+        </form>
+        <p id="browser-status" class="browser-status" role="status"></p>
+        <p id="browser-empty" class="canvas-empty">No page loaded yet. Ask Dikdik to open a URL. Example: “Open https://example.com”.</p>
+        <div id="browser-snapshot" class="browser-snapshot" hidden></div>
+      </div>
     </aside>
   </div>
 
@@ -226,6 +239,7 @@
       <div class="settings-head"><h3 id="settings-pane-title">General</h3><button id="close-settings" class="ghost icon" type="button" aria-label="Close settings"><svg class="i"><use href="#i-x"/></svg></button></div>
       <section class="settings-pane" data-pane="general" role="tabpanel">
         <div class="setting-row"><div><h4>Appearance</h4><p>Match your system, or pick light or dark.</p></div><select id="theme" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+        <div class="setting-row"><div><h4>Browser tools</h4><p>Enable public web captures. Each task or manual capture still needs your approval.</p><p id="browser-availability" class="hint"></p></div><label class="check"><input id="browser-enabled" type="checkbox">Enabled</label></div>
         <div class="setting-row"><div><h4>Workspace</h4><p>The only folder Dikdik may read. Candidates are written to the private data directory.</p></div></div>
         <dl class="kv"><dt>Project</dt><dd id="settings-project">—</dd><dt>Inventory</dt><dd id="settings-inventory">—</dd><dt>Indexer</dt><dd id="settings-indexer">—</dd><dt>Network</dt><dd>Loopback only (127.0.0.1)</dd><dt>Sign-in</dt><dd>Remembered in this browser for 30 days. Restart with <code>--rotate-token</code> to sign out everywhere.</dd></dl>
       </section>
@@ -243,6 +257,7 @@
             <span>Tools</span>
             <div class="agent-flags">
               <label class="check"><input id="agent-shell" type="checkbox" checked>Shell in Docker</label>
+              <label class="check"><input id="agent-browser" type="checkbox" checked>Browser in Docker</label>
               <label class="check"><input id="agent-mcp" type="checkbox" checked>MCP servers</label>
               <label class="check"><input id="agent-skills" type="checkbox" checked>Skills</label>
             </div>

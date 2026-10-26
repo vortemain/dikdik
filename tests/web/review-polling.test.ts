@@ -37,8 +37,8 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   };
   const nodes = new Map<string, Node>();
-  for (const id of ["token", "external", "execution"]) nodes.set(id, new Input());
-  for (const id of ["cancel", "refresh", "start"]) nodes.set(id, new Button());
+  for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url"]) nodes.set(id, new Input());
+  for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-external-empty"]) nodes.set(id, new Button());
   for (const id of ["mode", "verification"]) nodes.set(id, new Select());
   for (const id of ["edits", "objective"]) nodes.set(id, new Textarea());
   const node = (id: string): Node => {

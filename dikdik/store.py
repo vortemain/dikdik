@@ -139,3 +139,5 @@ class Store:
             db.execute("DELETE FROM events WHERE task_id=?", (task,))
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bash_events'").fetchone():
                 db.execute("DELETE FROM bash_events WHERE task_id=?", (task,))
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='browser_snapshots'").fetchone():
+                db.execute("DELETE FROM browser_snapshots WHERE task_id=?", (task,))

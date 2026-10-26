@@ -1,4 +1,4 @@
-import { buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parseVerification, resultStatus, reviewDiff, terminalTranscript, transcriptMarkdown } from "./contracts";
+import { browserView, buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parseVerification, resultStatus, reviewDiff, terminalTranscript, transcriptMarkdown } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries, profilesPanel, secretsPanel, skillsPanel } from "./contracts";
 import type { ActiveModel, AgentProfile, Automation, ChatMessage, DiffReview, M4Factory, M4Node, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 
@@ -341,6 +341,17 @@ let rendered = new Set<string>();
 let pendingCalls: { name: string; body: HTMLElement }[] = [];
 let lastRole = "";
 function renderMessage(msg: ChatMessage): HTMLLIElement | null {
+  if (msg.kind === "browser_result") {
+    const view = browserView([{ seq: 1, task_id: selected ?? "", time: msg.time, kind: msg.kind, data: (msg.details ?? {}) as Record<string, unknown> }]);
+    const li = make("li", "msg msg-browser"); li.id = msg.id;
+    li.append(make("p", "msg-label", view.screenshot ? view.title || "Browser capture" : `Browser: ${view.status || "unavailable"}`));
+    if (view.screenshot) {
+      const image = make("img", "browser-image"); image.src = view.screenshot; image.alt = `Screenshot of ${view.url}`; image.loading = "lazy";
+      li.append(image, make("p", "browser-caption", view.url));
+      const open = make("button", "small", "Open Browser tab"); open.type = "button"; open.onclick = () => openCanvas("browser"); li.append(open);
+    } else li.append(make("p", "browser-status", view.error || "No screenshot was captured."));
+    return li;
+  }
   if (msg.role === "user") {
     const li = make("li", `msg msg-user msg-${msg.kind}`);
     li.id = msg.id;
@@ -472,6 +483,7 @@ function openCanvas(tab: string): void {
   if (tab === "files") renderFileList();
   if (tab === "git") void loadGit();
   if (tab === "terminal") renderTerminal();
+  if (tab === "browser") renderBrowser();
 }
 function changedPaths(): Set<string> { return new Set(review.files.map(file => file.path)); }
 
@@ -487,6 +499,58 @@ function renderTerminal(): void {
     : "No terminal output yet. Commands run by the agent will appear here.";
   if (view.commands.some(command => command.running)) terminal.scrollTop = terminal.scrollHeight;
 }
+
+function renderBrowser(): void {
+  const view = browserView(liveEvents);
+  el("browser-current-url").textContent = view.url || "No URL loaded";
+  const link = el("browser-external") as HTMLAnchorElement;
+  link.hidden = !view.url; link.href = view.url || "#";
+  button("browser-external-empty").hidden = !!view.url;
+  el("browser-empty").hidden = !!view.screenshot;
+  const mount = el("browser-snapshot"); mount.hidden = !view.screenshot;
+  if (mount.dataset.screenshot !== view.screenshot) {
+    mount.dataset.screenshot = view.screenshot;
+    mount.replaceChildren();
+    if (view.screenshot) {
+      const image = make("img", "browser-image"); image.src = view.screenshot; image.alt = view.title || `Screenshot of ${view.url}`;
+      image.addEventListener("error", () => { el("browser-status").textContent = "This screenshot is no longer available. Open the URL again to capture it."; });
+      mount.append(image);
+    }
+  }
+  el("browser-status").textContent = view.status === "running" ? "Opening page…" : view.error || (view.status === "passed" ? "Page captured. Web content is untrusted." : "");
+  button("browser-open").disabled = !selected || view.status === "running";
+  button("browser-stop").disabled = view.status !== "running";
+}
+
+el("browser-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (!selected) return message("Choose a conversation first.", true);
+  if (!input("browser-consent").checked) return message("Approve Docker and public web access for this capture.", true);
+  const task = selected;
+  button("browser-open").disabled = true; button("browser-stop").disabled = false;
+  el("browser-status").textContent = "Opening page…";
+  try {
+    await api(`/api/tasks/${task}/browser`, { url: input("browser-url").value, approve_browser: true, approve_execution: true });
+    if (selected === task) { watching = true; await observe(); }
+  } catch (error) { message(error instanceof Error ? error.message : "Browser capture failed", true); }
+  finally {
+    input("browser-consent").checked = false;
+    if (selected === task) { button("browser-open").disabled = false; button("browser-stop").disabled = true; }
+  }
+});
+el("browser-stop").addEventListener("click", () => {
+  if (selected) void api(`/api/tasks/${selected}/browser/stop`, {}).catch(error => message(String(error), true));
+});
+
+async function loadBrowserSettings(): Promise<void> {
+  const info = await api<{ enabled: boolean; image: string; availability: string; launch_verified: boolean }>("/api/browser");
+  input("browser-enabled").checked = info.enabled;
+  el("browser-availability").textContent = info.availability === "image_ready" ? info.launch_verified ? "Browser image installed. A capture completed in this service session." : "Browser image installed. A successful launch has not been verified." : `Browser runtime unavailable. Build the local ${info.image} image and start Docker.`;
+}
+el("browser-enabled").addEventListener("change", async () => {
+  try { await request("/api/browser", "PATCH", { enabled: input("browser-enabled").checked }); message("Browser setting saved."); }
+  catch (error) { message(error instanceof Error ? error.message : "Could not save browser setting", true); await loadBrowserSettings(); }
+});
 
 function renderFileList(): void {
   const query = ((el("file-search") as HTMLInputElement).value ?? "").trim().toLowerCase();
@@ -631,7 +695,11 @@ function resetConversation(): void {
   el("diff").replaceChildren();
   el("review-note").textContent = "";
   liveEvents = [];
+  input("browser-consent").checked = false;
+  input("browser-approval").checked = false;
+  input("browser-url").value = "";
   renderTerminal();
+  renderBrowser();
   el("working").hidden = true;
   el("toggle-canvas").hidden = true;
   setCanvas(false);
@@ -916,6 +984,7 @@ function startStream(id: string): void {
     if (record.kind === "agent_message" || record.kind === "agent_tool") showLiveReply("");
     renderMessageStream(eventsToChat(liveEvents, liveObjective));
     if (record.kind === "terminal_command" || record.kind === "terminal_output") renderTerminal();
+    if (record.kind === "browser_started" || record.kind === "browser_result") renderBrowser();
     if (record.kind === "running" || isTerminal(record.kind)) {
       setState(record.kind);
       selectedState = record.kind;
@@ -950,6 +1019,7 @@ async function observe(): Promise<void> {
     setState(task.state);
     selectedState = task.state;
     renderTerminal();
+    renderBrowser();
     button("cancel").disabled = isTerminal(task.state);
     const messages = eventsToChat(task.events as TaskEvent[], task.request.objective);
     lastMessages = messages;
@@ -1285,6 +1355,7 @@ el("mcp-form").addEventListener("submit", async event => {
   } catch (error) { message(error instanceof Error ? error.message : "Could not add the server", true); }
 });
 function showPane(name: string): void {
+  if (name === "general") void loadBrowserSettings().catch(error => message(error instanceof Error ? error.message : "Could not load browser setting", true));
   const dialog = el("settings");
   for (const tab of dialog.querySelectorAll<HTMLElement>(".settings-tab")) tab.setAttribute("aria-selected", String(tab.dataset.pane === name));
   for (const pane of dialog.querySelectorAll<HTMLElement>(".settings-pane")) pane.hidden = pane.dataset.pane !== name;
@@ -1353,15 +1424,20 @@ function syncMode(): void {
   input("external").required = policy.requiresExternal;
   select("verification").value = policy.verification;
   select("verification").disabled = policy.locksVerification;
-  (el("execution-field") as HTMLElement).hidden = !policy.requiresExecution;
-  input("execution").disabled = !policy.requiresExecution;
-  input("execution").required = policy.requiresExecution;
+  el("browser-field").hidden = mode !== "agent";
+  input("browser-approval").disabled = mode !== "agent";
+  const execution = policy.requiresExecution || (mode === "agent" && input("browser-approval").checked);
+  (el("execution-field") as HTMLElement).hidden = !execution;
+  input("execution").disabled = !execution;
+  input("execution").required = execution;
+  el("execution-field").title = "Runs approved tools and tests inside restricted Docker containers.";
   el("model-pill").hidden = !policy.requiresExternal;
   el("agent-profile-pill").hidden = mode !== "agent" || !agentProfiles.length;
   if (policy.showEdits) setOptions(true);
 }
 select("mode").addEventListener("change", syncMode);
 select("verification").addEventListener("change", syncMode);
+el("browser-approval").addEventListener("change", syncMode);
 el("options-toggle").addEventListener("click", () => setOptions(el("options-panel").hidden === true));
 syncMode();
 
@@ -1389,6 +1465,7 @@ function composerRequest(text: string) {
     objective: text, mode: parseMode(select("mode").value),
     edits: textarea("edits").value, verification: parseVerification(select("verification").value),
     approveExecution: input("execution").checked, approveExternal: input("external").checked,
+    approveBrowser: input("browser-approval").checked,
     agentProfile: (el("agent-profile") as HTMLSelectElement).value ?? "",
   });
 }
@@ -1415,7 +1492,7 @@ function renderAgentList(): void {
     const row = make("li", "m4-row");
     const head = make("p", "m4-title");
     head.append(make("span", "m4-strong", profile.name));
-    const tools = [profile.allow_shell && "shell", profile.use_mcp && "MCP", profile.use_skills && "skills"].filter(Boolean).join(", ") || "no extra tools";
+    const tools = [profile.allow_shell && "shell", profile.allow_browser && "browser", profile.use_mcp && "MCP", profile.use_skills && "skills"].filter(Boolean).join(", ") || "no extra tools";
     const limits = [profile.max_model_calls && `${profile.max_model_calls} model calls`, profile.deadline_seconds && `${profile.deadline_seconds}s`].filter(Boolean).join(" · ");
     row.append(head, make("span", "m4-meta", `${tools}${limits ? " · " + limits : ""}`));
     if (profile.instructions) row.append(make("p", "m4-objective", profile.instructions));
@@ -1443,6 +1520,7 @@ function fillAgentForm(profile: AgentProfile | null): void {
   field("agent-steps").value = profile?.max_model_calls ? String(profile.max_model_calls) : "";
   field("agent-minutes").value = profile?.deadline_seconds ? String(profile.deadline_seconds) : "";
   field("agent-shell").checked = profile?.allow_shell ?? true;
+  field("agent-browser").checked = profile?.allow_browser ?? true;
   field("agent-mcp").checked = profile?.use_mcp ?? true;
   field("agent-skills").checked = profile?.use_skills ?? true;
   el("agent-save").textContent = profile ? "Save changes" : "Add agent";
@@ -1466,7 +1544,7 @@ el("agent-form").addEventListener("submit", async event => {
     name: field("agent-name").value, instructions: (el("agent-instructions") as HTMLTextAreaElement).value,
     model_profile_id: (el("agent-model") as HTMLSelectElement).value || null,
     max_model_calls: number("agent-steps"), deadline_seconds: number("agent-minutes"),
-    allow_shell: field("agent-shell").checked, use_mcp: field("agent-mcp").checked, use_skills: field("agent-skills").checked,
+    allow_shell: field("agent-shell").checked, allow_browser: field("agent-browser").checked, use_mcp: field("agent-mcp").checked, use_skills: field("agent-skills").checked,
   };
   const id = field("agent-id").value;
   try {

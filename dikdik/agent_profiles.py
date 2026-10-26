@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
 );
 """
 LIMITS = {"max_model_calls": (1, 60), "max_tool_calls": (1, 200), "deadline_seconds": (30, 1800)}
-FLAGS = ("allow_shell", "use_mcp", "use_skills")
+FLAGS = ("allow_shell", "allow_browser", "use_mcp", "use_skills")
 MAX_PROFILES = 50
 
 
@@ -28,6 +28,9 @@ class AgentProfiles:
         self.store = store
         with store.connect() as db:
             db.execute(SCHEMA)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_profiles)")}
+            if "allow_browser" not in columns:
+                db.execute("ALTER TABLE agent_profiles ADD COLUMN allow_browser INTEGER NOT NULL DEFAULT 1")
 
     @staticmethod
     def _row(row) -> dict:
