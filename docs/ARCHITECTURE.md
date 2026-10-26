@@ -11,6 +11,7 @@ server.py ── Engine (one worker + cancellation flag)
                  ├── store.py: SQLite tasks + ordered events, atomic transitions
                  ├── bash_service.py: durable task-scoped command/events API
                  ├── browser_service.py: isolated browser capture + scoped screenshots
+                 ├── planning.py: separate read-only planners + review/progress metadata
                  └── runners.py + sandbox.py: fixed Docker shell/test runners
                           │ read-only candidate mount, no source mount
                           ▼
@@ -32,10 +33,17 @@ SQLite tables: `tasks(id, created, state, request, result)`,
 `events(seq, task_id, time, kind, data)`, `bash_events` for ordered durable command
 history, `browser_snapshots` for bounded task-scoped PNGs, and `settings(key, value)`
 for workspace binding and workspace browser enablement.
+Additive `plans` and `task_progress` tables own planner/code links, revisioned plan
+content and reported checklist state. Private PLAN.md artifacts are mirrors of the
+SQLite content; no cross-filesystem/DB atomicity is claimed.
 Schema is created idempotently at startup; there is no existing schema to migrate.
 Future schema changes require explicit migrations before wider release.
 
 States: `queued → running → completed | failed | blocked | cancelled`.
+`draft` is an initialized conversation awaiting its first approved turn, not a
+claim of completed execution. Planner children have separate histories and no
+repository-write/execution tools. Build checks the planner identity and revision
+and snapshots untrusted plan content into the code conversation's handoff event.
 Abandoned queued/running tasks become `interrupted` on restart. Terminal state and
 its evidence event commit in one transaction; task reads use a consistent SQLite
 snapshot. Events have global monotonically increasing sequence IDs. No exact
@@ -84,6 +92,9 @@ POST JSON bodies are limited to 262144 bytes; chunked transfer is unsupported.
 | `GET /api/browser`, `PATCH /api/browser` | optional `{enabled: boolean}` patch | browser runtime/approval metadata |
 | `POST /api/tasks/{id}/browser` | URL and separate Boolean execution/browser approvals | capture status and optional scoped screenshot URL |
 | `GET /api/tasks/{id}/browser/screenshots/{snapshot}` | — | authenticated task-scoped PNG |
+| `GET/POST /api/tasks/{id}/planner` | `{}` to initialize | durable plan revision and planner/code IDs |
+| `POST /api/tasks/{id}/planner/build` | review confirmation, planner ID, revision and new turn approvals | 202 code conversation ID |
+| `GET /api/tasks/{id}/progress` | — | reported checklist and revision |
 
 The browser implementation is a replaceable `capture` boundary. It uses an
 operator-built Playwright/Chromium image with no container network or workspace
@@ -109,8 +120,10 @@ Task request:
 `verification`: syntax or docker. Offline requires 1–20 exact replacement objects.
 Model requires approval and server-side provider configuration; it ignores edits
 as a proposal source. Docker and external approvals must be literal JSON `true`.
-Agent mode accepts an objective with no edits, requires both approvals, and requires
-Docker (syntax-only is rejected). It uses original in-memory tools and candidate-
+Agent mode accepts an objective with no edits, requires disclosure approval, and
+supports syntax-only or explicitly approved Docker verification. Plan mode requires
+disclosure but forbids execution approval and uses only read-only inspection plus
+private plan/progress tools. Agent mode uses original in-memory tools and candidate-
 specific completion gating, with counters stored in `result.agent`. Every edit
 invalidates previous passing evidence; no net change or no current test pass
 prevents `finish`. Provider/tool failures remain real structured events.

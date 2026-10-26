@@ -38,7 +38,7 @@ test("actual polling retains file selection and control nodes, with safe fallbac
   };
   const nodes = new Map<string, Node>();
   for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url"]) nodes.set(id, new Input());
-  for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-external-empty"]) nodes.set(id, new Button());
+  for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-external-empty", "planner-create", "planner-build"]) nodes.set(id, new Button());
   for (const id of ["mode", "verification"]) nodes.set(id, new Select());
   for (const id of ["edits", "objective"]) nodes.set(id, new Textarea());
   const node = (id: string): Node => {
@@ -50,6 +50,7 @@ test("actual polling retains file selection and control nodes, with safe fallbac
   const diff = `diff --git a/${path} b/${path}\nnew file mode 100644\n`;
   let result: unknown = { diff, file_changes: [{ path, status: "added", start_line: 0, end_line: 2 }] };
   let state = "running", requests = 0, poll: (() => void) | undefined;
+  let holdGet: Promise<void> | null = null;
   const tick = () => new Promise(resolve => setTimeout(resolve, 0));
   try {
     install("HTMLElement", Node); install("HTMLButtonElement", Button); install("HTMLInputElement", Input);
@@ -60,10 +61,14 @@ test("actual polling retains file selection and control nodes, with safe fallbac
       if (url === "/api/session") return Response.json({ signed_in: true });
       if (url === "/api/model") return Response.json({ configured: false, source: "none", problem: "No model is set up." });
       if (url === "/api/project") return Response.json({ name: "fixture", files: [], python_tests: [], manifests: [], limitations: "fixture" });
+      if (url.endsWith('/planner')) return Response.json({ task_id: 'a'.repeat(32), planner_id: null, content: '', revision: 0, built_revision: 0 });
       if (url === "/api/tasks") return Response.json([{ id: "task-1", state }]);
+      if (url === '/api/tasks/task-1/messages') { state = 'running'; result = null; return Response.json({ queued: false }); }
       if (url === "/api/profiles" || url === "/api/secrets" || url === "/api/skills" || url === "/api/automations" || url === "/api/agent-profiles") return Response.json([]);
       requests++;
-      return Response.json({ id: "task-1", state, request: { objective: "Review candidate" }, events: [], result });
+      const snapshot = { id: "task-1", state, request: { objective: "Review candidate" }, events: [], result };
+      if (holdGet) await holdGet;
+      return Response.json(snapshot);
     });
     await import("../../dikdik/web/app");
     node("token").value = "local-test";
@@ -111,6 +116,18 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     const stoppedRequests = requests;
     poll!(); await tick();
     expect(requests).toBe(stoppedRequests);
+
+    // An older completed response must not hide a follow-up accepted meanwhile.
+    state = 'completed'; result = null;
+    let release!: () => void;
+    holdGet = new Promise<void>(resolve => { release = resolve; });
+    node('history').children[0]!.onclick!(); await tick();
+    node('objective').value = 'Start another turn';
+    node('edits').value = '[{"path":"a.py","before":"1","after":"2"}]';
+    await node('task-form').listeners.get('submit')!({ preventDefault() {} });
+    holdGet = null; release(); await tick(); await tick();
+    expect(node('task-state').textContent).toBe('running');
+    expect(node('cancel').disabled).toBe(false);
   } finally {
     for (const [name, descriptor] of saved) {
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);

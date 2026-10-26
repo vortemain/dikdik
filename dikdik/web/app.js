@@ -129,19 +129,19 @@
     return end === lines.length - 1 ? { diff, files, metadata: "available" } : fallback("invalid");
   }
   function isTerminal(state) {
-    return ["completed", "failed", "blocked", "cancelled", "interrupted"].includes(state);
+    return ["completed", "failed", "blocked", "cancelled", "interrupted", "draft"].includes(state);
   }
   function modePolicy(mode, verification) {
     return {
       showEdits: mode === "offline",
       requiresExternal: mode !== "offline",
-      verification,
-      locksVerification: false,
-      requiresExecution: verification === "docker"
+      verification: mode === "plan" ? "syntax" : verification,
+      locksVerification: mode === "plan",
+      requiresExecution: mode !== "plan" && verification === "docker"
     };
   }
   function parseMode(value) {
-    if (value === "offline" || value === "model" || value === "agent")
+    if (value === "offline" || value === "model" || value === "agent" || value === "plan")
       return value;
     throw new Error("Select a supported proposal source.");
   }
@@ -176,7 +176,7 @@
       approve_execution: (policy.requiresExecution || browsing) && input.approveExecution,
       approve_external: policy.requiresExternal && input.approveExternal,
       ...browsing ? { approve_browser: true } : {},
-      ...input.mode === "agent" && input.agentProfile ? { agent_profile: input.agentProfile } : {}
+      ...["agent", "plan"].includes(input.mode) && input.agentProfile ? { agent_profile: input.agentProfile } : {}
     };
   }
   var CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
@@ -273,6 +273,15 @@
         return [{ ...base, role: "tool", title: "Opening public web page", body: textOf(d.url, 4096) }];
       case "browser_result":
         return [{ ...base, role: "tool", title: "Browser capture", details: d }];
+      case "plan_updated":
+        return [{ ...base, role: "assistant", title: "PLAN.md", body: textOf(d.content, 32768), details: d }];
+      case "planner_initialized":
+        return [{ ...base, role: "system", title: "Planning agent initialized" }];
+      case "task_tracker":
+      case "plan_handoff":
+        return [];
+      case "draft":
+        return [];
       case "completed":
       case "failed":
       case "blocked":
@@ -333,6 +342,37 @@ ${command.output}${ending}`;
 
 `);
     return { commands: list, text };
+  }
+  function parsePlan(value) {
+    if (typeof value !== "object" || value === null)
+      return null;
+    const row = value;
+    if (typeof row.task_id !== "string" || !/^[a-f0-9]{32}$/.test(row.task_id) || row.planner_id !== null && (typeof row.planner_id !== "string" || !/^[a-f0-9]{32}$/.test(row.planner_id)) || typeof row.content !== "string" || row.content.length > 32768 || typeof row.revision !== "number" || !Number.isSafeInteger(row.revision) || row.revision < 0 || typeof row.built_revision !== "number" || !Number.isSafeInteger(row.built_revision) || row.built_revision < 0 || row.built_revision > row.revision)
+      return null;
+    return { task_id: row.task_id, planner_id: row.planner_id, content: row.content, revision: row.revision, built_revision: row.built_revision };
+  }
+  function taskChecklist(events) {
+    let tasks = [], used = false;
+    for (const event of events) {
+      if (event.kind !== "task_tracker")
+        continue;
+      const items = event.data?.tasks;
+      if (!Array.isArray(items) || items.length > 50)
+        continue;
+      const next = [];
+      for (const item of items) {
+        if (typeof item !== "object" || item === null)
+          continue;
+        const row = item;
+        if (typeof row.id === "string" && typeof row.title === "string" && row.title.length <= 300 && ["todo", "in_progress", "done"].includes(String(row.status)))
+          next.push({ id: row.id, title: textOf(row.title, 300), status: row.status });
+      }
+      if (next.length === items.length) {
+        used = true;
+        tasks = next;
+      }
+    }
+    return { used, tasks };
   }
   function browserView(events) {
     const view = { url: "", title: "", text: "", screenshot: "", status: "", error: "" };
@@ -1301,6 +1341,11 @@ ${c.output}` : "";
   var showArchived = false;
   var lastMessages = [];
   var agentProfiles = [];
+  var currentPlan = null;
+  var parentTask = null;
+  var observedTaskMode = "";
+  var viewEpoch = 0;
+  var observeQueued = false;
   function make(tag, className = "", text = "") {
     const node = document.createElement(tag);
     if (className)
@@ -1409,14 +1454,30 @@ ${c.output}` : "";
   }
   function inline(text) {
     const nodes = [];
-    const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g;
+    const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;
     let last = 0;
     for (const match of text.matchAll(pattern)) {
       const index = match.index ?? 0;
       if (index > last)
         nodes.push(document.createTextNode(text.slice(last, index)));
       const token2 = match[0];
-      nodes.push(token2.startsWith("`") ? make("code", "", token2.slice(1, -1)) : make("strong", "", token2.slice(2, -2)));
+      if (token2.startsWith("[")) {
+        const parts = /^\[([^\]]+)\]\((.+)\)$/.exec(token2);
+        try {
+          const url = new URL(parts?.[2] ?? "https://invalid.invalid");
+          if (!url.username && !url.password) {
+            const link = make("a", "", parts?.[1] ?? "Link");
+            link.href = url.href;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            nodes.push(link);
+          } else
+            nodes.push(document.createTextNode(token2));
+        } catch {
+          nodes.push(document.createTextNode(token2));
+        }
+      } else
+        nodes.push(token2.startsWith("`") ? make("code", "", token2.slice(1, -1)) : make("strong", "", token2.slice(2, -2)));
       last = index + token2.length;
     }
     if (last < text.length)
@@ -1697,6 +1758,26 @@ ${c.output}` : "";
   var pendingCalls = [];
   var lastRole = "";
   function renderMessage(msg) {
+    if (msg.kind === "plan_updated") {
+      const li2 = make("li", "msg msg-plan-preview");
+      li2.id = msg.id;
+      li2.append(make("h4", "", "PLAN.md"), richText((msg.body ?? "").slice(0, 800)));
+      const actions = make("div", "row");
+      for (const label of ["Read more", "View", "Build"]) {
+        const control = make("button", "small", label);
+        control.type = "button";
+        control.onclick = () => {
+          if (label === "Build") {
+            const plan = msg.details;
+            buildReviewedPlan(plan?.revision, plan?.planner_id);
+          } else
+            openCanvas("planner");
+        };
+        actions.append(control);
+      }
+      li2.append(actions);
+      return li2;
+    }
     if (msg.kind === "browser_result") {
       const view = browserView([{ seq: 1, task_id: selected ?? "", time: msg.time, kind: msg.kind, data: msg.details ?? {} }]);
       const li2 = make("li", "msg msg-browser");
@@ -1868,6 +1949,13 @@ ${c.output}` : "";
       renderTerminal();
     if (tab === "browser")
       renderBrowser();
+    if (tab === "planner") {
+      renderPlanner();
+      if (selected)
+        loadPlan(selected);
+    }
+    if (tab === "tasklist")
+      renderChecklist();
   }
   function changedPaths() {
     return new Set(review.files.map((file) => file.path));
@@ -1910,6 +1998,102 @@ ${c.output}` : "";
     button("browser-open").disabled = !selected || view.status === "running";
     button("browser-stop").disabled = view.status !== "running";
   }
+  async function loadPlan(task) {
+    const epoch = viewEpoch;
+    const plan = parsePlan(await api(`/api/tasks/${encodeURIComponent(task)}/planner`));
+    if (task !== selected || epoch !== viewEpoch)
+      return;
+    currentPlan = plan;
+    renderPlanner();
+  }
+  function renderPlanner() {
+    const content = currentPlan?.content ?? "";
+    el("planner-empty").hidden = !!content;
+    const mount = el("planner-content");
+    mount.hidden = !content;
+    if (mount.dataset.content !== content) {
+      mount.dataset.content = content;
+      mount.replaceChildren(...content ? [richText(content)] : []);
+    }
+    button("planner-create").disabled = !selected || !!currentPlan?.planner_id || !isTerminal(selectedState);
+    button("planner-build").disabled = !content || !isTerminal(selectedState) || currentPlan?.built_revision === currentPlan?.revision;
+    el("planner-note").textContent = content ? `PLAN.md · revision ${currentPlan?.revision}. Review before Build. Files change only through Apply.` : "Plans are reviewed before building. Workspace files change only through Apply.";
+  }
+  function renderChecklist() {
+    const view = taskChecklist(liveEvents);
+    el("tasklist-tab").hidden = !view.used;
+    const list = el("task-checklist");
+    list.replaceChildren();
+    const labels = { todo: "To do", in_progress: "In progress", done: "Done" };
+    const symbols = { todo: "○", in_progress: "●", done: "✓" };
+    for (const task of view.tasks) {
+      const row = make("li", "checklist-step");
+      row.dataset.active = String(task.status === "in_progress");
+      const marker = make("span", "checklist-icon", symbols[task.status]);
+      marker.setAttribute("aria-hidden", "true");
+      row.append(marker, make("span", "checklist-status", labels[task.status]), make("span", "", task.title));
+      list.append(row);
+    }
+    if (view.used && !view.tasks.length)
+      list.append(make("li", "", "No checklist steps."));
+  }
+  async function enterPlanning() {
+    if (!selected) {
+      select("mode").value = "plan";
+      syncMode();
+      syncComposer();
+      textarea("objective").focus();
+      return;
+    }
+    if (!isTerminal(selectedState))
+      throw new Error("Wait for the current turn before planning.");
+    const plan = parsePlan(await api(`/api/tasks/${selected}/planner`, {}));
+    if (!plan?.planner_id)
+      throw new Error("Planner initialization failed.");
+    select("mode").value = "plan";
+    syncMode();
+    selectTask(plan.planner_id);
+    await loadHistory();
+    await observe();
+    message("Planning agent initialized");
+  }
+  async function enterCode() {
+    const target = parentTask || currentPlan?.task_id;
+    select("mode").value = "agent";
+    syncMode();
+    if (target && target !== selected) {
+      selectTask(target);
+      await loadHistory();
+      await observe();
+    }
+    syncComposer();
+  }
+  async function buildReviewedPlan(expectedRevision, expectedPlanner) {
+    if (!selected || !currentPlan?.content)
+      return message("There is no plan to build.", true);
+    if (expectedRevision !== undefined && expectedRevision !== currentPlan.revision)
+      return message("The plan changed. Review its latest revision in the Planner tab.", true);
+    if (expectedPlanner !== undefined && expectedPlanner !== currentPlan.planner_id)
+      return message("The planner changed. Review the current plan in the Planner tab.", true);
+    try {
+      const task = selected, revision = currentPlan.revision, planner_id = currentPlan.planner_id;
+      select("mode").value = "agent";
+      syncMode();
+      const request = composerRequest("Execute the plan based on the PLAN.md file.");
+      const result = await api(`/api/tasks/${task}/planner/build`, { ...request, confirm: true, revision, planner_id });
+      selectTask(result.id);
+      await loadHistory();
+      await observe();
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Could not build this plan", true);
+    }
+  }
+  el("planner-create").addEventListener("click", () => {
+    enterPlanning().catch((error) => message(String(error), true));
+  });
+  el("planner-build").addEventListener("click", () => {
+    buildReviewedPlan();
+  });
   el("browser-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!selected)
@@ -2115,11 +2299,16 @@ ${c.output}` : "";
     el("diff").replaceChildren();
     el("review-note").textContent = "";
     liveEvents = [];
+    currentPlan = null;
+    parentTask = null;
+    observedTaskMode = "";
     input("browser-consent").checked = false;
     input("browser-approval").checked = false;
     input("browser-url").value = "";
     renderTerminal();
     renderBrowser();
+    renderPlanner();
+    renderChecklist();
     el("working").hidden = true;
     el("toggle-canvas").hidden = true;
     setCanvas(false);
@@ -2132,11 +2321,12 @@ ${c.output}` : "";
     globalThis.history.replaceState(null, "", task ? `${loc.pathname}?task=${encodeURIComponent(task)}` : loc.pathname);
   }
   function syncComposer() {
-    textarea("objective").placeholder = selected ? "Reply to Dikdik…" : "Ask Dikdik to build, fix or change something…";
+    textarea("objective").placeholder = select("mode").value === "plan" ? "Let’s work on a plan" : selected ? "Reply to Dikdik…" : "Ask Dikdik to build, fix or change something…";
     el("task-actions").hidden = !selected;
   }
   function selectTask(id) {
     stopStream();
+    viewEpoch++;
     selected = id;
     watching = true;
     selectedState = "";
@@ -2150,6 +2340,7 @@ ${c.output}` : "";
   }
   function newTask() {
     stopStream();
+    viewEpoch++;
     selected = null;
     watching = false;
     reviewTask = null;
@@ -2477,9 +2668,14 @@ ${c.output}` : "";
         renderTerminal();
       if (record.kind === "browser_started" || record.kind === "browser_result")
         renderBrowser();
+      if (record.kind === "plan_updated")
+        loadPlan(id);
+      if (record.kind === "task_tracker")
+        renderChecklist();
       if (record.kind === "running" || isTerminal(record.kind)) {
         setState(record.kind);
         selectedState = record.kind;
+        renderPlanner();
         loadHistory();
       }
       if (record.kind === "running") {
@@ -2504,14 +2700,22 @@ ${c.output}` : "";
       }
     };
   }
-  async function observe() {
-    if (!selected || polling || !watching || liveTask === selected)
+  async function observe(force = false) {
+    if (force) {
+      viewEpoch++;
+      watching = true;
+    }
+    if (polling) {
+      observeQueued = true;
+      return;
+    }
+    if (!selected || !watching || liveTask === selected)
       return;
     polling = true;
-    const id = selected;
+    const id = selected, epoch = viewEpoch;
     try {
       const task = await api("/api/tasks/" + id);
-      if (id !== selected)
+      if (id !== selected || epoch !== viewEpoch)
         return;
       liveEvents = [...task.events];
       liveObjective = task.request.objective;
@@ -2520,8 +2724,22 @@ ${c.output}` : "";
       setTitle(el("chat-title").textContent ?? "");
       setState(task.state);
       selectedState = task.state;
+      parentTask = typeof task.request.parent_task === "string" ? task.request.parent_task : null;
+      if (!observedTaskMode) {
+        if (task.request.mode === "plan")
+          select("mode").value = "plan";
+        else if (select("mode").value === "plan")
+          select("mode").value = "agent";
+        observedTaskMode = task.request.mode || "unknown";
+        syncMode();
+        syncComposer();
+      }
       renderTerminal();
       renderBrowser();
+      renderChecklist();
+      await loadPlan(id);
+      if (id !== selected || epoch !== viewEpoch)
+        return;
       button("cancel").disabled = isTerminal(task.state);
       const messages = eventsToChat(task.events, task.request.objective);
       lastMessages = messages;
@@ -2533,6 +2751,8 @@ ${c.output}` : "";
       const known = lastTasks.find((item) => item.id === id);
       if (isTerminal(task.state) || known && known.state !== task.state)
         await loadHistory();
+      if (id !== selected || epoch !== viewEpoch)
+        return;
       if (isTerminal(task.state))
         watching = false;
       else
@@ -2542,6 +2762,10 @@ ${c.output}` : "";
         message(error.message, true);
     } finally {
       polling = false;
+      if (observeQueued) {
+        observeQueued = false;
+        observe();
+      }
     }
   }
   var m4Create = (tag) => document.createElement(tag);
@@ -3040,6 +3264,13 @@ ${c.output}` : "";
   }
   if (typeof document.addEventListener === "function") {
     document.addEventListener("keydown", (event) => {
+      if (event.defaultPrevented)
+        return;
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && select("mode").value === "plan" && !textarea("objective").value.trim()) {
+        event.preventDefault();
+        buildReviewedPlan();
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         newTask();
@@ -3068,6 +3299,10 @@ ${c.output}` : "";
     el("model-fields").hidden = !policy.requiresExternal;
     el("model-hint").hidden = mode !== "model";
     el("agent-hint").hidden = mode !== "agent";
+    if (mode === "plan") {
+      el("agent-hint").hidden = false;
+      el("agent-hint").textContent = "The planner can inspect files and write a private PLAN.md for review. It cannot execute tools or modify repository files.";
+    }
     el("external-field").hidden = !policy.requiresExternal;
     input("external").disabled = !policy.requiresExternal;
     input("external").required = policy.requiresExternal;
@@ -3081,9 +3316,10 @@ ${c.output}` : "";
     input("execution").required = execution;
     el("execution-field").title = "Runs approved tools and tests inside restricted Docker containers.";
     el("model-pill").hidden = !policy.requiresExternal;
-    el("agent-profile-pill").hidden = mode !== "agent" || !agentProfiles.length;
+    el("agent-profile-pill").hidden = !["agent", "plan"].includes(mode) || !agentProfiles.length;
     if (policy.showEdits)
       setOptions(true);
+    syncComposer();
   }
   select("mode").addEventListener("change", syncMode);
   select("verification").addEventListener("change", syncMode);
@@ -3092,6 +3328,11 @@ ${c.output}` : "";
   syncMode();
   textarea("objective").addEventListener("input", autosize);
   textarea("objective").addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && select("mode").value === "plan" && !textarea("objective").value.trim()) {
+      event.preventDefault();
+      buildReviewedPlan();
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       const form = el("task-form");
@@ -3233,7 +3474,7 @@ ${c.output}` : "";
       if (reply.queued)
         message("Queued. Dikdik will reply when the current step finishes.");
       await loadHistory();
-      await observe();
+      await observe(true);
     } catch (error) {
       message(error instanceof Error ? error.message : "Message failed", true);
     }
@@ -3242,7 +3483,20 @@ ${c.output}` : "";
     event.preventDefault();
     button("start").disabled = true;
     try {
-      const text = textarea("objective").value;
+      let text = textarea("objective").value;
+      const command = /^\/(plan|code)(?:\s+([\s\S]*))?$/.exec(text.trim());
+      if (command) {
+        if (command[1] === "plan")
+          await enterPlanning();
+        else
+          await enterCode();
+        text = command[2]?.trim() ?? "";
+        textarea("objective").value = text;
+        if (!text)
+          return;
+      }
+      if (selected && select("mode").value === "plan" && observedTaskMode !== "plan" && command?.[1] !== "plan")
+        await enterPlanning();
       if (selected) {
         composerRequest(text);
         textarea("objective").value = "";

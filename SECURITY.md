@@ -37,7 +37,7 @@ proposals and tool output are untrusted. An objective cannot change policy.
   need an approved path.
 - **The task Bash API and read-only Terminal** reuse that Docker-only boundary.
   There is no global or host-shell route. Every command is scoped to an existing
-  task whose stored request has literal Boolean execution approval, uses a fresh
+  task whose latest persisted turn has literal Boolean execution approval, uses a fresh
   throwaway copy, receives no ambient host environment, and cannot write to the
   approved workspace. Commands accept only a supported image, a 1–300 second
   timeout and a safe relative working directory. Output is capped at 2 MiB and
@@ -62,6 +62,17 @@ proposals and tool output are untrusted. An objective cannot change policy.
   private SQLite database with bounded retention. Task deletion removes their rows
   atomically with task events. URLs, screenshots and page text may themselves be
   sensitive. Network responses and page text remain untrusted data.
+- **Planning** uses a separate conversation with only bounded read-only repository
+  tools, a private plan writer and reported progress. Shell, tests, browser, MCP
+  and candidate edits are absent from its tool schema. Build requires the reviewed
+  planner identity and revision plus new code-turn approvals; neither plan text,
+  planner permissions, profiles nor skills can grant execution or disclosure.
+  The handed-off plan is immutable untrusted data. Stale/deleted planner identities
+  and duplicate builds are refused. Plans never write to the source workspace.
+- Execution/disclosure/browser approval Booleans are stored atomically in the
+  existing `running` event for each turn. Task APIs use those persisted approvals,
+  with old-data fallback to the original request, rather than borrowing grants
+  from a related conversation. Checklist completion never establishes verification.
 - **Skills** reach the model inside an untrusted-data marker and cannot change
   tools, approvals or limits. **Agent profiles** can only narrow tool access.
 - **Automations** store the mode and approvals the user chose; a schedule never

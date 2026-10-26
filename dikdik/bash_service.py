@@ -89,7 +89,8 @@ class BashService:
 
     def _approved_task(self, task_id: str) -> dict:
         task = self.store.get(_task_id(task_id))
-        if task["request"].get("approve_execution") is not True:
+        approval = next((event['data']['approvals'] for event in reversed(task['events']) if event['kind'] == 'running' and isinstance(event['data'].get('approvals'), dict)), task['request'])
+        if approval.get('approve_execution') is not True:
             raise PermissionError("This task has no explicit Docker execution approval")
         return task
 

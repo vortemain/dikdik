@@ -21,7 +21,7 @@ Status: **partial** = some behavior exists, with explicit gaps; **missing** = no
 implemented; **external** = requires an actual external service/account as well
 as DIKDIK integration. **Contract-tested** is not live model/sandbox verification.
 
-## Sub-feature audit (2026-10-26)
+## Sub-feature audit (2026-10-27)
 
 Every sub-feature in both reference maps was graded against the code: the
 OpenHands app map (844 entries) and the agent-server/SDK map
@@ -30,9 +30,9 @@ OpenHands app map (844 entries) and the agent-server/SDK map
 
 | Status | First audit | After the build phases |
 |---|---|---|
-| Has (equivalent behaviour) | 89 | 218 |
-| Partly (note says what is missing) | 91 | 167 |
-| Missing | 1,534 | 1,326 |
+| Has (equivalent behaviour) | 89 | 226 |
+| Partly (note says what is missing) | 91 | 168 |
+| Missing | 1,534 | 1,317 |
 | Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 70 | 70 |
 | Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 20 |
 | **Total** | **1,801** | **1,801** |
@@ -53,13 +53,19 @@ consent, a public GET relay, durable screenshots in chat and the Browser tab,
 runtime discovery and a persisted disable switch. Real Chrome verified the UI
 with a labeled screenshot stand-in; the real Docker attempt was blocked. The
 screenshot/launch parity rows remain partial until real runtime evidence exists.
+The third increment adds a separate read-only planner conversation, private
+revisioned PLAN.md artifacts, review/identity-checked Build, bare and payload
+`/plan`/`/code`, Ctrl/Cmd+Enter, safe plan previews and durable reported checklists.
+The full HTTP/SSE/provider-adapter flow was checked in real Chrome using a local
+streamed model stand-in; Build stayed syntax-only. Workspace `.agents_tmp/PLAN.md`
+import remains partial.
 
 Gaps the first audit found in features that looked present, all fixed: unused
 model profiles and keys, unused skills, the unloaded Rust indexer, automations
 granting consent on their own, real agent tool events missing from the chat,
 and automation runs never listing (`task_id`/`id` mismatch).
 
-Largest remaining gaps: live browser execution, planning mode and task lists,
+Largest remaining gaps: live browser execution, the full slash menu and attachments,
 the command menu, folders and tags, per-action confirmation, model routing, plugins
 and extension apps, automation Git sync and templates, WebSocket and TypeScript
 clients, conversation fork/condense/goals, VS Code serving, onboarding, and any
@@ -95,7 +101,7 @@ recorded run against a live model provider or Docker engine.
 | F24 Automation Git sync | Missing. Require explicit network/publication/credential approvals and reproducible encrypted configuration behavior. | P2 |
 | F25 Backends/Cloud/sharing | Local-only; multi-backend/sharing missing. Cloud/vendor accounts are external, not bundled OSS features. Prove backend isolation and explicit disclosure consent. | P1/P2/external |
 | F26 Runtime/distribution | Partial: source startup and inspected dependency-free wheel/fresh install; Docker test runner not live-verified. Desktop, embedding and remote runtime variants missing. Verify each supported artifact and actual sandbox boundary. | P0/P2 |
-| F27 Workspace tools | Partial list/read/search/create/edit, fixed multi-stack runners, durable read-only Terminal, task-scoped Bash API and Docker browser capture with a Browser tab. Missing planner/task list and detailed usage. Live Docker/browser execution remains an acceptance gate. | P0/P1 |
+| F27 Workspace tools | Partial list/read/search/create/edit, fixed multi-stack runners, Terminal/Bash API, Docker browser, separate read-only planning/review/Build and a reported task checklist. Workspace plan import and detailed usage remain missing. Live Docker/browser execution remains an acceptance gate. | P0/P1 |
 | F28 Automation setup/drafts | Missing schedule/event forms, draft tests and resume. Backend validation, persisted draft lifecycle and actual dispatch must precede UI completion claims. | P2 |
 
 Reference sources: `upstream/OpenHands/src/routes.ts`,

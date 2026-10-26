@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from .agent import BROWSER_TOOL, SHELL_TOOL, TOOLS
 from .browser_network import fetch_public, public_url
 from .sandbox import cleanup_container
+from .planning import TASK_TRACKER, WRITE_PLAN, READ_PLAN
 
 
 IMAGE = "dikdik-browser:1"
@@ -296,7 +297,7 @@ class BrowserService:
     def route(self, method, raw_path, body=None):
         path = urlsplit(raw_path).path
         try:
-            tools = TOOLS + [SHELL_TOOL, BROWSER_TOOL]
+            tools = TOOLS + [SHELL_TOOL, BROWSER_TOOL, TASK_TRACKER, WRITE_PLAN, READ_PLAN]
             if method == 'GET' and path in {'/api/tools', '/api/tools/'}:
                 return 200, [tool['function']['name'] for tool in tools]
             if method == 'GET' and path in {'/api/tools/catalog', '/server_info'}:
@@ -304,8 +305,8 @@ class BrowserService:
                 browser_usable = info['enabled'] and info['availability'] == 'image_ready'
                 if path == '/server_info':
                     return 200, {'conversation_runtime': 'docker', 'browser': info, 'usable_tools': [tool['function']['name'] for tool in tools if tool is not BROWSER_TOOL or browser_usable]}
-                return 200, {'tools': [{'name': tool['function']['name'], 'user_selectable': True, 'usable': tool is not BROWSER_TOOL or browser_usable,
-                                        'description': tool['function']['description'], 'in_default_set': tool in TOOLS,
+                return 200, {'tools': [{'name': tool['function']['name'], 'user_selectable': tool not in [WRITE_PLAN, READ_PLAN], 'usable': tool is not BROWSER_TOOL or browser_usable,
+                                        'description': tool['function']['description'], 'in_default_set': tool in TOOLS or tool is TASK_TRACKER,
                                         **({'approval_required': info['approval_required']} if tool is BROWSER_TOOL else {})} for tool in tools]}
             if path == "/api/browser":
                 return (200, self.info()) if method == "GET" else (200, self.configure(body)) if method == "PATCH" else None

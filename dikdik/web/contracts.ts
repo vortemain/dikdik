@@ -1,4 +1,4 @@
-export type Mode = "offline" | "model" | "agent";
+export type Mode = "offline" | "model" | "agent" | "plan";
 export type Verification = "syntax" | "docker";
 export interface Edit { path: string; before: string; after: string }
 export interface TaskRequest {
@@ -9,6 +9,7 @@ export interface TaskRequest {
   approve_execution: boolean;
   approve_external: boolean;
   approve_browser?: boolean;
+  parent_task?: string;
   agent_profile?: string;
 }
 export interface AgentProfile {
@@ -178,20 +179,20 @@ export interface Task extends TaskSummary {
   result?: TaskResult | null;
 }
 export function isTerminal(state: string): boolean {
-  return ["completed", "failed", "blocked", "cancelled", "interrupted"].includes(state);
+  return ["completed", "failed", "blocked", "cancelled", "interrupted", "draft"].includes(state);
 }
 export function modePolicy(mode: Mode, verification: Verification) {
   // Every mode can run with a syntax check only, or with tests in Docker.
   return {
     showEdits: mode === "offline",
     requiresExternal: mode !== "offline",
-    verification,
-    locksVerification: false,
-    requiresExecution: verification === "docker",
+    verification: mode === 'plan' ? 'syntax' as const : verification,
+    locksVerification: mode === 'plan',
+    requiresExecution: mode !== 'plan' && verification === "docker",
   };
 }
 export function parseMode(value: string): Mode {
-  if (value === "offline" || value === "model" || value === "agent") return value;
+  if (value === "offline" || value === "model" || value === "agent" || value === 'plan') return value;
   throw new Error("Select a supported proposal source.");
 }
 export function parseVerification(value: string): Verification {
@@ -225,7 +226,7 @@ export function buildTaskRequest(input: {
     approve_execution: (policy.requiresExecution || browsing) && input.approveExecution,
     approve_external: policy.requiresExternal && input.approveExternal,
     ...(browsing ? { approve_browser: true } : {}),
-    ...(input.mode === "agent" && input.agentProfile ? { agent_profile: input.agentProfile } : {}),
+    ...(["agent", "plan"].includes(input.mode) && input.agentProfile ? { agent_profile: input.agentProfile } : {}),
   };
 }
 
@@ -326,6 +327,15 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [{ ...base, role: "tool", title: "Opening public web page", body: textOf(d.url, 4096) }];
     case "browser_result":
       return [{ ...base, role: "tool", title: "Browser capture", details: d }];
+    case 'plan_updated':
+      return [{ ...base, role: 'assistant', title: 'PLAN.md', body: textOf(d.content, 32768), details: d }];
+    case 'planner_initialized':
+      return [{ ...base, role: 'system', title: 'Planning agent initialized' }];
+    case 'task_tracker':
+    case 'plan_handoff':
+      return [];
+    case 'draft':
+      return [];
     case "completed":
     case "failed":
     case "blocked":
@@ -381,6 +391,32 @@ export function terminalTranscript(events: TaskEvent[]): TerminalView {
 }
 
 export interface BrowserView { url: string; title: string; text: string; screenshot: string; status: string; error: string }
+export interface PlanView { task_id: string; planner_id: string | null; content: string; revision: number; built_revision: number }
+export function parsePlan(value: unknown): PlanView | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.task_id !== 'string' || !/^[a-f0-9]{32}$/.test(row.task_id) || (row.planner_id !== null && (typeof row.planner_id !== 'string' || !/^[a-f0-9]{32}$/.test(row.planner_id))) ||
+      typeof row.content !== 'string' || row.content.length > 32768 || typeof row.revision !== 'number' || !Number.isSafeInteger(row.revision) || row.revision < 0 ||
+      typeof row.built_revision !== 'number' || !Number.isSafeInteger(row.built_revision) || row.built_revision < 0 || row.built_revision > row.revision) return null;
+  return { task_id: row.task_id, planner_id: row.planner_id, content: row.content, revision: row.revision, built_revision: row.built_revision };
+}
+export interface ChecklistItem { id: string; title: string; status: 'todo' | 'in_progress' | 'done' }
+export function taskChecklist(events: TaskEvent[]): { used: boolean; tasks: ChecklistItem[] } {
+  let tasks: ChecklistItem[] = [], used = false;
+  for (const event of events) {
+    if (event.kind !== 'task_tracker') continue;
+    const items = event.data?.tasks;
+    if (!Array.isArray(items) || items.length > 50) continue;
+    const next: ChecklistItem[] = [];
+    for (const item of items) {
+      if (typeof item !== 'object' || item === null) continue;
+      const row = item as Record<string, unknown>;
+      if (typeof row.id === 'string' && typeof row.title === 'string' && row.title.length <= 300 && ['todo','in_progress','done'].includes(String(row.status))) next.push({ id: row.id, title: textOf(row.title, 300), status: row.status as ChecklistItem['status'] });
+    }
+    if (next.length === items.length) { used = true; tasks = next; }
+  }
+  return { used, tasks };
+}
 export function browserView(events: TaskEvent[]): BrowserView {
   const view = { url: "", title: "", text: "", screenshot: "", status: "", error: "" };
   for (const event of events) {

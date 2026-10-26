@@ -32,6 +32,10 @@ autonomous engineering platform.
   Browser tab; manual URL captures have their own approval. The optional browser
   image must be built by the operator. Docker capture is contract-tested, with
   live execution still blocked here. See [browser setup and limits](docs/BROWSER.md).
+- **Planning and checklists.** Plan in a separate read-only conversation, review
+  its private `PLAN.md`, then Build a chosen revision with fresh permissions.
+  `/plan` and `/code` switch conversations; the agent's reported checklist lives
+  in Task List. See [planning and Build](docs/PLANNING.md).
 - **Tests for several stacks** in network-less Docker containers: Python
   `unittest`, `bun test`, `npm test` and `cargo test --offline`, picked from the
   project's files. Without Docker, tasks are syntax-checked and labelled so.
@@ -51,7 +55,7 @@ autonomous engineering platform.
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
 
-**Not yet:** planning mode and task lists, model
+**Not yet:** the full slash-command menu, attachments and drafts, model
 routing, plugins and extension apps, folders/tags, per-action confirmations,
 WebSocket and TypeScript clients, a desktop app, and any recorded run against a
 live model provider or Docker engine. See [the parity audit](docs/PARITY.md).
@@ -227,8 +231,8 @@ python scripts/evaluate.py --output docs/evaluation-results.json
 python scripts/benchmark.py --samples 20 --output docs/benchmark-results.json
 ```
 
-Current result (2026-10-26): **254 Python tests passed, 2 live-runtime checks skipped**
-(256 total); **51 Bun tests passed**; **15 Rust tests passed**; strict frontend type
+Current result (2026-10-27): **263 Python tests passed, 2 live-runtime checks skipped**
+(265 total); **54 Bun tests passed**; **15 Rust tests passed**; strict frontend type
 checking and build passed; deterministic syntax-only evaluation **4/4**. These are preview regression results, not proof of
 general autonomous engineering capability.
 

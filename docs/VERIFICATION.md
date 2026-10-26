@@ -1,6 +1,32 @@
-# Verification record — 2026-10-26
+# Verification record — updated 2026-10-27
 
-## Phase A — Browser tool and panel (latest)
+## Phase A — Planning and task list (latest)
+
+- Final full checks: **263 Python passes / 2 explicit live-runtime skips** (265
+  total), **54 Bun tests / 302 assertions**, **15 Rust tests**, strict TypeScript
+  check and build, deterministic syntax-only evaluation **4/4**.
+- Real Chrome exercised a separate planner and code conversation through the real
+  HTTP/SSE/provider adapter and a local HTTP model stand-in that checked its fixture
+  API key and emitted streamed tool calls. It wrote private PLAN.md, rebuilt plan
+  and checklist state after reload, switched with bare and payload `/plan`/`/code`,
+  and handed a reviewed revision to the code agent with focused Ctrl+Enter.
+- The code turn produced the actual addition-repair candidate with syntax-only
+  verification. Source files remained byte-identical; `tests_verified` stayed false.
+  No live provider, paid model or Docker execution was used.
+- Planner and Task List each passed **1440×900** and **390×844**, in light and dark:
+  eight inspected screenshots, no page/console errors and no horizontal page
+  overflow. Raw HTML and a malformed Markdown URL remained inert text. Safe links
+  rendered with the external-opener policy.
+- Python contracts cover read-only tools, disclosure/execution rejection, scoped
+  artifacts, cancellation, identity/revision replay, duplicate Build, reported
+  progress validation, restart durability and deletion cleanup. The existing
+  event-order and active-task deletion assertions were preserved. Frontend
+  regression coverage includes a stale completed poll arriving after a new turn.
+- Early QA attempts encountered the old-completion-label race and a 30-second
+  fixture timeout. The final run used new message echoes/current-turn completion
+  and bounded 120-second state waits, then passed against the final backend.
+
+## Phase A — Browser tool and panel
 
 - Full checks: **254 Python passes / 2 explicit live-runtime skips** (256 total),
   **51 Bun tests / 288 assertions**, **15 Rust tests**, strict TypeScript check,
@@ -24,7 +50,7 @@
 - The live browser test is separately gated by `DIKDIK_RUN_BROWSER=1` and requests
   the public example page only when explicitly enabled. Setup is in `BROWSER.md`.
 
-## Phase A — Terminal and Bash API (latest)
+## Phase A — Terminal and Bash API
 
 - Full regression checks: **234 Python tests passed, 1 live-Docker test skipped**
   (235 total); **48 Bun tests / 277 assertions passed**; **15 Rust tests passed**;

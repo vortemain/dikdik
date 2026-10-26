@@ -70,10 +70,10 @@ class Store:
         with self.connect() as db:
             db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, time.time(), kind, json.dumps(data)))
 
-    def state(self, task, state, result=None):
+    def state(self, task, state, result=None, *, details=None):
         with self.connect() as db:
             db.execute("UPDATE tasks SET state=?, result=? WHERE id=?", (state, json.dumps(result) if result is not None else None, task))
-            db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, time.time(), state, json.dumps(result or {})))
+            db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, time.time(), state, json.dumps(details if details is not None else result or {})))
 
     def get(self, task):
         with self.connect() as db:
@@ -134,10 +134,15 @@ class Store:
 
     def delete(self, task):
         with self.connect() as db:
-            if db.execute("DELETE FROM tasks WHERE id=?", (task,)).rowcount == 0:
+            if db.execute('SELECT 1 FROM tasks WHERE id=?', (task,)).fetchone() is None:
                 raise KeyError(task)
-            db.execute("DELETE FROM events WHERE task_id=?", (task,))
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bash_events'").fetchone():
-                db.execute("DELETE FROM bash_events WHERE task_id=?", (task,))
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='browser_snapshots'").fetchone():
-                db.execute("DELETE FROM browser_snapshots WHERE task_id=?", (task,))
+            has_plans = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='plans'").fetchone()
+            identities = [task, *[row[0] for row in db.execute('SELECT planner_id FROM plans WHERE task_id=?', (task,))]] if has_plans else [task]
+            for identity in identities:
+                db.execute('DELETE FROM tasks WHERE id=?', (identity,))
+                db.execute('DELETE FROM events WHERE task_id=?', (identity,))
+                for table in ('bash_events', 'browser_snapshots', 'task_progress'):
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+                        db.execute(f'DELETE FROM {table} WHERE task_id=?', (identity,))
+                if has_plans:
+                    db.execute('DELETE FROM plans WHERE task_id=? OR planner_id=?', (identity, identity))

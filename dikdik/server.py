@@ -160,6 +160,10 @@ def make_server(engine: Engine, port: int, token: str):
                 self.reply(*routes("GET", self.path, {}))
                 return
             try:
+                planning = engine.planning.route('GET', self.path, {})
+                if planning is not None:
+                    self.reply(*planning)
+                    return
                 parts = path.split("/")
                 if len(parts) == 7 and parts[:3] == ["", "api", "tasks"] and parts[4:6] == ["browser", "screenshots"]:
                     self.reply(200, engine.browser.screenshot(parts[3], parts[6]), "image/png")
@@ -217,6 +221,10 @@ def make_server(engine: Engine, port: int, token: str):
                         self.reply(400, {"error": "Endpoint body limit is 64KB"})
                     else:
                         self.reply(*routes(self.command, self.path, body))
+                    return
+                planning = engine.planning.route('POST', self.path, body)
+                if planning is not None:
+                    self.reply(*planning)
                     return
                 browser = engine.browser.route("POST", self.path, body)
                 if browser is not None:
