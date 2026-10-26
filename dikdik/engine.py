@@ -6,6 +6,7 @@ import os
 import shutil
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from .agent import AgentBudget, run_agent
 from .agent_profiles import LIMITS as PROFILE_LIMITS, AgentProfiles
 from .agent_provider import CompatibleAgentModel
 from .automation import AutomationScheduler
+from .bash_service import BashService
 from .locking import DataLock
 from .mcp import McpSession, McpStore
 from .model_config import ModelResolver
@@ -128,6 +130,7 @@ class Engine:
         self.live: dict[str, str] = {}  # a reply as it streams in; never persisted
         self.automation = AutomationScheduler(self)  # M4: scheduler owned by Engine lifecycle
         self.automation.start()
+        self.bash = BashService(self)
 
     def submit(self, request):
         clean = self._validate(request)
@@ -160,7 +163,11 @@ class Engine:
         with self.lock:
             if task in self.active:
                 raise ValueError("Stop the task before deleting it")
-            self.store.delete(task)
+            self.bash.prepare_delete(task)
+            try:
+                self.store.delete(task)
+            finally:
+                self.bash.finish_delete(task)
         artifact = (self.data / "artifacts" / task).resolve()
         if artifact.parent == (self.data / "artifacts").resolve() and artifact.is_dir():
             shutil.rmtree(artifact, ignore_errors=True)
@@ -247,6 +254,10 @@ class Engine:
     def _start(self, task, clean, follow_up):
         # Caller holds self.lock.
         cancel = threading.Event()
+        # Publish the new turn before returning to a caller.  Otherwise a client
+        # can observe the previous terminal state and mistake it for this turn's
+        # result while the worker is still waiting for a thread.
+        self.store.state(task, "running")
         self.active[task] = cancel
         self.pool.submit(self._run, task, clean, cancel, follow_up)
 
@@ -351,7 +362,6 @@ class Engine:
     def _run(self, task, request, cancel, follow_up=False):
         started = time.monotonic()
         try:
-            self.store.state(task, "running")
             if not follow_up:  # the pipeline is the same every turn; describe it once
                 self.store.event(task, "plan", {"steps": ["Inspect bounded repository snapshot", "Validate minimal edit proposal", "Produce isolated candidate and diff", "Run selected checks", "Report evidence without changing source"]})
             original = inventory(self.root)
@@ -421,7 +431,22 @@ class Engine:
             return run_tests(candidate, cancel, name="dikdik-" + task, files=files)
 
         def shell(files, command, timeout, image):
-            return run_shell(self.data / "work" / task, files, command, cancel, image=image, timeout=timeout, name="dikdik-" + task)
+            command_id = uuid.uuid4().hex
+            self.store.event(task, "terminal_command", {"command_id": command_id, "command": command,
+                                                         "image": image, "timeout": timeout})
+            order = 0
+            def stream(text):
+                nonlocal order
+                order += 1
+                self.store.event(task, "terminal_output", {"command_id": command_id, "order": order,
+                                                            "output": text, "final": False})
+            result = run_shell(self.data / "work" / task, files, command, cancel, image=image, timeout=timeout,
+                               name="dikdik-" + task, on_chunk=stream)
+            order += 1
+            self.store.event(task, "terminal_output", {"command_id": command_id, "order": order, "output": "",
+                                                        "final": True, "exit_code": result.get("exit_code"),
+                                                        "status": result.get("status")})
+            return result
 
         docker = request["verification"] == "docker"
 
@@ -470,6 +495,7 @@ class Engine:
         self._finish(task, outcome.state, result, cancel)
 
     def close(self):
+        self.bash.close()
         self.automation.close()
         with self.lock:
             for flag in self.active.values():

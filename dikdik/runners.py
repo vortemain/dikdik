@@ -12,7 +12,9 @@ import subprocess
 import threading
 import time
 import uuid
+import codecs
 from pathlib import Path, PurePosixPath
+from typing import Callable
 
 from .repository import inventory
 from .sandbox import cleanup_container, run_tests as run_python_tests
@@ -69,7 +71,8 @@ def bounded(argv: list[str], seconds: float) -> list[str]:
     return ["timeout", "-k", "5", str(int(seconds) + 5), *argv]
 
 
-def run_container(command: list[str], name: str, cancel: threading.Event, timeout: float, limit: int = OUTPUT_LIMIT) -> dict:
+def run_container(command: list[str], name: str, cancel: threading.Event, timeout: float,
+                  limit: int = OUTPUT_LIMIT, on_chunk: Callable[[str], None] | None = None) -> dict:
     started = time.monotonic()
     output, truncated = bytearray(), threading.Event()
     try:
@@ -78,11 +81,29 @@ def run_container(command: list[str], name: str, cancel: threading.Event, timeou
         return {"status": "blocked", "error": "Docker CLI unavailable", "exit_code": None, "output": "", "seconds": 0.0}
 
     def drain():
+        pending = bytearray()
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        container_started = False
         while block := proc.stdout.read(4096):
             room = limit - len(output)
             output.extend(block[:max(0, room)])
             if len(block) > room:
                 truncated.set()
+            if on_chunk is not None:
+                pending.extend(block)
+                if not container_started and b"\n" in pending:
+                    line, _, rest = pending.partition(b"\n")
+                    pending = bytearray(rest)
+                    container_started = line.rstrip(b"\r") == STARTED.encode()
+                if container_started and pending:
+                    text = decoder.decode(bytes(pending), final=False)
+                    pending.clear()
+                    if text:
+                        on_chunk(text)
+        if on_chunk is not None and container_started:
+            text = decoder.decode(bytes(pending), final=True)
+            if text:
+                on_chunk(text)
 
     reader = threading.Thread(target=drain, daemon=True)
     reader.start()
@@ -141,7 +162,9 @@ def run_project_tests(snapshot: Path, files: dict[str, str], cancel: threading.E
 
 
 def run_shell(workdir: Path, files: dict[str, str], command: str, cancel: threading.Event, *,
-              image: str = "python", timeout: float = 60, name: str | None = None) -> dict:
+              image: str = "python", timeout: float = 60, name: str | None = None,
+              on_chunk: Callable[[str], None] | None = None,
+              output_limit: int = SHELL_OUTPUT_LIMIT) -> dict:
     """Run one shell command on a throwaway copy of the candidate; report changed text files."""
     if image not in IMAGES:
         raise ValueError(f"Image must be one of {', '.join(sorted(IMAGES))}")
@@ -161,8 +184,9 @@ def run_shell(workdir: Path, files: dict[str, str], command: str, cancel: thread
             if item.is_file():
                 item.chmod(0o666)
     name = _name(name)
-    result = run_container(container_command(workdir, name, IMAGES[image], bounded(["sh", "-c", command], timeout), writable=True),
-                           name, cancel, timeout + 10, SHELL_OUTPUT_LIMIT)
+    args = (container_command(workdir, name, IMAGES[image], bounded(["sh", "-c", command], timeout), writable=True),
+            name, cancel, timeout + 10, output_limit)
+    result = run_container(*args, on_chunk=on_chunk) if on_chunk is not None else run_container(*args)
     changed: dict[str, str] = {}
     deleted: list[str] = []
     try:

@@ -35,6 +35,14 @@ proposals and tool output are untrusted. An objective cannot change policy.
   65534, bounded memory/PIDs/time, an in-container `timeout`). Text files it changes
   are kept only under the edit rules: original tests stay protected and new files
   need an approved path.
+- **The task Bash API and read-only Terminal** reuse that Docker-only boundary.
+  There is no global or host-shell route. Every command is scoped to an existing
+  task whose stored request has literal Boolean execution approval, uses a fresh
+  throwaway copy, receives no ambient host environment, and cannot write to the
+  approved workspace. Commands accept only a supported image, a 1–300 second
+  timeout and a safe relative working directory. Output is capped at 2 MiB and
+  persisted in SQLite, so it can contain repository or command-produced secrets.
+  Treat the private data directory as sensitive and clear history when appropriate.
 - **MCP servers** are added and enabled by the user. HTTP servers must use HTTPS
   (or plain HTTP on loopback), with redirects refused. *Local command* servers run
   on the host by design, like any MCP client: they get a minimal environment plus
@@ -47,7 +55,7 @@ proposals and tool output are untrusted. An objective cannot change policy.
   grants consent. Automations created before this rule stay paused until edited.
 - Every Docker task requires Boolean execution approval; every external model
   task requires separate Boolean disclosure approval. Strings do not grant consent.
-- There is no arbitrary command API, host shell, source-write endpoint, deployment,
+- There is no global command API, host shell, source-write endpoint, deployment,
   installation, Git hook execution, production DB access or external publication.
 
 ## Filesystem and indexing

@@ -24,6 +24,9 @@ autonomous engineering platform.
 - **An agent with real tools.** It lists, reads, searches, edits and creates files,
   runs your tests and repairs failures within limits, or simply answers questions.
   With Docker approval it also gets a sandboxed shell (`run_command`).
+- **A durable, read-only Terminal.** Agent commands append live and survive reloads.
+  Authenticated task-scoped Bash endpoints can start, stop, inspect, page and clear
+  commands only for tasks that already have explicit Docker execution approval.
 - **Tests for several stacks** in network-less Docker containers: Python
   `unittest`, `bun test`, `npm test` and `cargo test --offline`, picked from the
   project's files. Without Docker, tasks are syntax-checked and labelled so.
@@ -43,7 +46,7 @@ autonomous engineering platform.
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
 
-**Not yet:** a terminal or browser panel, planning mode and task lists, model
+**Not yet:** a browser panel, planning mode and task lists, model
 routing, plugins and extension apps, folders/tags, per-action confirmations,
 WebSocket and TypeScript clients, a desktop app, and any recorded run against a
 live model provider or Docker engine. See [the parity audit](docs/PARITY.md).
@@ -219,8 +222,8 @@ python scripts/evaluate.py --output docs/evaluation-results.json
 python scripts/benchmark.py --samples 20 --output docs/benchmark-results.json
 ```
 
-Current result (2026-10-26): **223 Python tests passed, 1 live-Docker check skipped**
-(224 total); **45 Bun tests passed**; **15 Rust tests passed**; strict frontend type
+Current result (2026-10-26): **234 Python tests passed, 1 live-Docker check skipped**
+(235 total); **48 Bun tests passed**; **15 Rust tests passed**; strict frontend type
 checking and build passed; deterministic syntax-only evaluation **4/4**. These are preview regression results, not proof of
 general autonomous engineering capability.
 

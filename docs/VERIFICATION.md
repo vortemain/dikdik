@@ -1,5 +1,29 @@
 # Verification record — 2026-10-26
 
+## Phase A — Terminal and Bash API (latest)
+
+- Full regression checks: **234 Python tests passed, 1 live-Docker test skipped**
+  (235 total); **48 Bun tests / 277 assertions passed**; **15 Rust tests passed**;
+  strict TypeScript checking and the browser build passed; deterministic
+  syntax-only evaluation remained **4/4**.
+- Python contract/HTTP tests cover per-task approval, validation, authentication,
+  synchronous and asynchronous commands, ordered 1 MiB chunks, 2 MiB output cap,
+  paging, stop/idempotence, scope isolation, clear, persistence across service
+  restart, and agent-command mirroring. Docker behavior is mocked in those cases.
+- Lifecycle/security cases also bound pending commands to 16, refuse task deletion
+  while its command is active, and atomically remove terminal history with the task.
+- Real Chrome/Playwright against the local server exercised authentication, the
+  actual Bash HTTP API, server-sent Terminal events, history after reload, and
+  the exact read-only empty/waiting/blocked states. Desktop and 390px phone
+  layouts passed in light and dark themes with no horizontal page overflow,
+  page error or console error. These are viewport checks, not physical devices.
+- The Docker Desktop Linux engine was unavailable. The real browser command
+  therefore ended `blocked`, as designed. No successful live command, timeout,
+  stop signal, filesystem boundary or container isolation claim is made.
+- Full-suite verification exposed a follow-up dispatch race: a client could read
+  the previous terminal result before the worker published `running`. Dispatch
+  now commits the new running state before returning; the client regression passes.
+
 ## UI visual redesign (latest)
 
 - Original light-neutral design: native Segoe UI Variable / platform sans-serif

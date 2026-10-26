@@ -134,7 +134,7 @@ def make_server(engine: Engine, port: int, token: str):
                     if text != live:
                         live = text
                         out.append(f"event: delta\ndata: {json.dumps({'text': text or ''})}\n\n")
-                    if not events and state in TERMINAL and not engine.busy(task):
+                    if not events and state in TERMINAL and not engine.busy(task) and not engine.bash.busy(task):
                         out.append(f"event: end\ndata: {json.dumps({'state': state})}\n\n")
                     if not out and time.monotonic() - quiet > 15:
                         out.append(": keep-alive\n\n")
@@ -160,7 +160,10 @@ def make_server(engine: Engine, port: int, token: str):
                 self.reply(*routes("GET", self.path, {}))
                 return
             try:
-                if path == "/api/project":
+                bash = engine.bash.route("GET", self.path, {})
+                if bash is not None:
+                    self.reply(*bash)
+                elif path == "/api/project":
                     self.reply(200, {"name": engine.root.name, "indexer": INDEXER, **metadata(inventory(engine.root))})
                 elif path == "/api/tasks":
                     self.reply(200, engine.store.list())
@@ -207,7 +210,10 @@ def make_server(engine: Engine, port: int, token: str):
                     else:
                         self.reply(*routes(self.command, self.path, body))
                     return
-                if path == "/api/tasks":
+                bash = engine.bash.route("POST", self.path, body)
+                if bash is not None:
+                    self.reply(*bash)
+                elif path == "/api/tasks":
                     self.reply(202, {"id": engine.submit(body)})
                 elif path.startswith("/api/tasks/") and path.endswith("/cancel"):
                     self.reply(200, {"requested": engine.cancel(path.split("/")[3])})
@@ -258,6 +264,10 @@ def make_server(engine: Engine, port: int, token: str):
                     raise ValueError("Endpoint body limit is 64KB")
                 body = json.loads(self.rfile.read(length)) if length else {}
                 path = urlsplit(self.path).path
+                bash = engine.bash.route(method, self.path, body)
+                if bash is not None:
+                    self.reply(*bash)
+                    return
                 if path.startswith("/api/tasks/") and path.count("/") == 3:
                     task = path.split("/")[3]
                     if method == "PATCH":

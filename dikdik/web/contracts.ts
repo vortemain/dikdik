@@ -58,6 +58,15 @@ export interface ChatMessage {
   state?: string;      // terminal state for system/terminal messages
   testsVerified?: boolean;
 }
+export interface TerminalCommandView {
+  id: string;
+  command: string;
+  output: string;
+  running: boolean;
+  exitCode?: number | null;
+  status?: string;
+}
+export interface TerminalView { commands: TerminalCommandView[]; text: string }
 export interface ConversationSummary { id: string; created: number; state: string; objective: string; messages: number }
 
 export function fileStatusLabel(status: FileStatus): string {
@@ -306,6 +315,9 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [{ ...base, role: "system", title: "Cancellation requested" }];
     case "recovery_cleanup":
       return [{ ...base, role: "system", title: "Recovered after restart", details: { warning: textOf(d.warning) } }];
+    case "terminal_command":
+    case "terminal_output":
+      return [];  // rendered in the read-only Terminal panel, never duplicated into chat
     case "completed":
     case "failed":
     case "blocked":
@@ -315,6 +327,49 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
     default:
       return [];  // unknown event kinds are ignored, not executed
   }
+}
+
+/** Build a safe read-only terminal transcript from durable task events. */
+export function terminalTranscript(events: TaskEvent[]): TerminalView {
+  const commands = new Map<string, TerminalCommandView>();
+  const order: string[] = [];
+  let total = 0;
+  for (const event of events) {
+    if (event.kind !== "terminal_command" && event.kind !== "terminal_output") continue;
+    const data = event.data ?? {};
+    const id = textOf(data.command_id, 80);
+    if (!id) continue;
+    if (event.kind === "terminal_command") {
+      const command = textOf(data.command, 4000);
+      if (!command || commands.has(id)) continue;
+      commands.set(id, { id, command, output: "", running: true });
+      order.push(id);
+      continue;
+    }
+    const row = commands.get(id);
+    if (!row) continue;
+    const chunk = textOf(data.output, 1024 * 1024);
+    if (chunk && total < 1024 * 1024) {
+      const kept = chunk.slice(0, 1024 * 1024 - total);
+      row.output += kept;
+      total += kept.length;
+    }
+    if (data.final === true) {
+      row.running = false;
+      if (data.exit_code === null || typeof data.exit_code === "number") row.exitCode = data.exit_code as number | null;
+      const status = textOf(data.status, 80);
+      if (status) row.status = status;
+    }
+  }
+  const list = order.map(id => commands.get(id)!).filter(Boolean);
+  const text = list.map(command => {
+    const ending = command.running ? "\n[running]"
+      : command.status && !["passed", "failed"].includes(command.status) ? `\n[${command.status}]`
+      : command.exitCode !== undefined && command.exitCode !== null && command.exitCode !== 0 ? `\n[exit ${command.exitCode}]`
+      : command.status === "failed" ? "\n[failed]" : "";
+    return `$ ${command.command}\n${command.output}${ending}`;
+  }).join("\n\n");
+  return { commands: list, text };
 }
 
 /** Readable text for a tool observation; falls back to JSON for unknown shapes. */

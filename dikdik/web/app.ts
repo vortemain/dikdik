@@ -1,4 +1,4 @@
-import { buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parseVerification, resultStatus, reviewDiff, transcriptMarkdown } from "./contracts";
+import { buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parseVerification, resultStatus, reviewDiff, terminalTranscript, transcriptMarkdown } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries, profilesPanel, secretsPanel, skillsPanel } from "./contracts";
 import type { ActiveModel, AgentProfile, Automation, ChatMessage, DiffReview, M4Factory, M4Node, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 
@@ -471,8 +471,22 @@ function openCanvas(tab: string): void {
   setCanvas(true);
   if (tab === "files") renderFileList();
   if (tab === "git") void loadGit();
+  if (tab === "terminal") renderTerminal();
 }
 function changedPaths(): Set<string> { return new Set(review.files.map(file => file.path)); }
+
+function renderTerminal(): void {
+  const view = terminalTranscript(liveEvents);
+  const terminal = el("terminal-view");
+  const empty = el("terminal-empty");
+  terminal.textContent = view.text;
+  terminal.hidden = !view.commands.length;
+  empty.hidden = !!view.commands.length;
+  empty.textContent = selectedState && (!isTerminal(selectedState) || selectedState === "failed")
+    ? "Waiting for runtime to start..."
+    : "No terminal output yet. Commands run by the agent will appear here.";
+  if (view.commands.some(command => command.running)) terminal.scrollTop = terminal.scrollHeight;
+}
 
 function renderFileList(): void {
   const query = ((el("file-search") as HTMLInputElement).value ?? "").trim().toLowerCase();
@@ -616,6 +630,8 @@ function resetConversation(): void {
   el("review-controls").replaceChildren();
   el("diff").replaceChildren();
   el("review-note").textContent = "";
+  liveEvents = [];
+  renderTerminal();
   el("working").hidden = true;
   el("toggle-canvas").hidden = true;
   setCanvas(false);
@@ -899,6 +915,7 @@ function startStream(id: string): void {
     liveEvents.push(record);
     if (record.kind === "agent_message" || record.kind === "agent_tool") showLiveReply("");
     renderMessageStream(eventsToChat(liveEvents, liveObjective));
+    if (record.kind === "terminal_command" || record.kind === "terminal_output") renderTerminal();
     if (record.kind === "running" || isTerminal(record.kind)) {
       setState(record.kind);
       selectedState = record.kind;
@@ -932,6 +949,7 @@ async function observe(): Promise<void> {
     setTitle(el("chat-title").textContent ?? "");
     setState(task.state);
     selectedState = task.state;
+    renderTerminal();
     button("cancel").disabled = isTerminal(task.state);
     const messages = eventsToChat(task.events as TaskEvent[], task.request.objective);
     lastMessages = messages;

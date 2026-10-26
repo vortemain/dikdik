@@ -137,3 +137,5 @@ class Store:
             if db.execute("DELETE FROM tasks WHERE id=?", (task,)).rowcount == 0:
                 raise KeyError(task)
             db.execute("DELETE FROM events WHERE task_id=?", (task,))
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bash_events'").fetchone():
+                db.execute("DELETE FROM bash_events WHERE task_id=?", (task,))

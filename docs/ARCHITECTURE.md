@@ -9,7 +9,8 @@ server.py ── Engine (one worker + cancellation flag)
                  ├── providers.py: explicit edits OR one approved HTTPS proposal
                  ├── agent.py + agent_provider.py: original bounded tool/repair loop
                  ├── store.py: SQLite tasks + ordered events, atomic transitions
-                 └── sandbox.py: fixed Docker unittest runner
+                 ├── bash_service.py: durable task-scoped command/events API
+                 └── runners.py + sandbox.py: fixed Docker shell/test runners
                           │ read-only candidate mount, no source mount
                           ▼
                     restricted container
@@ -19,14 +20,16 @@ server.py ── Engine (one worker + cancellation flag)
 original wordmark/icon, design tokens, responsive workspace and accessible labeled
 controls. `examples/repair` is an intentionally broken two-test demonstration.
 `scripts/evaluate.py` and `scripts/benchmark.py` are outcome/measurement entrypoints.
-No Rust component, remote database or broker is required. Bun + one TypeScript
+No remote database or broker is required. The optional Rust indexer accelerates
+repository scanning and safely falls back to Python. Bun + one TypeScript
 dev dependency build/check the original frontend; generated assets are packaged,
 so neither is a backend runtime requirement. No OpenHands runtime is imported.
 
 ## Persistence and lifecycle
 
 SQLite tables: `tasks(id, created, state, request, result)`,
-`events(seq, task_id, time, kind, data)`, `settings(key, value)` for workspace binding.
+`events(seq, task_id, time, kind, data)`, `bash_events` for ordered durable command
+history, and `settings(key, value)` for workspace binding.
 Schema is created idempotently at startup; there is no existing schema to migrate.
 Future schema changes require explicit migrations before wider release.
 
@@ -70,6 +73,12 @@ POST JSON bodies are limited to 262144 bytes; chunked transfer is unsupported.
 | `POST /api/tasks` | task request below | 202 `{id}` |
 | `GET /api/tasks/{id}` | — | id, created, state, request, result, events |
 | `POST /api/tasks/{id}/cancel` | `{}` | `{requested: boolean}` |
+| `POST /api/tasks/{id}/bash/execute` | command, optional image/timeout/cwd | final output after the Docker command exits |
+| `POST /api/tasks/{id}/bash/start` | command, optional image/timeout/cwd | 202 command identity before completion |
+| `POST /api/tasks/{id}/bash/commands/{command}/stop` | `{}` | whether cancellation was requested |
+| `GET /api/tasks/{id}/bash/events` | query: after, limit, kind, command_id | ordered task-scoped command/output page |
+| `GET /api/tasks/{id}/bash/events/{event}` | — | one event or 404 |
+| `DELETE /api/tasks/{id}/bash/events` | — | cleared count; refused while a command runs |
 
 Task request:
 
@@ -93,17 +102,21 @@ Docker (syntax-only is rejected). It uses original in-memory tools and candidate
 specific completion gating, with counters stored in `result.agent`. Every edit
 invalidates previous passing evidence; no net change or no current test pass
 prevents `finish`. Provider/tool failures remain real structured events.
-Only one active task is accepted. Proposal changes cannot add files or modify
+Only one active agent turn is accepted. Bash commands are independently bounded
+to two worker slots, require the target task's stored Boolean execution approval,
+and never run on the host or write to the approved workspace. Proposal changes cannot add files or modify
 test-named files; all replacements must uniquely match and change content.
 
 Errors: 400 `{error}` validation/busy, 401 unauthorized, 403 host/origin,
 404 missing route/task, 500 storage/repository unavailable. Worker failures are
 terminal task states, not successful responses containing imaginary results.
 Current error strings are human-oriented; stable machine-readable error codes,
-idempotency keys, event cursors and streaming transport are future work.
+idempotency keys and WebSocket transport are future work. Task and Terminal live
+updates use the existing authenticated server-sent-event stream.
 
 Result fields: `diff`, `changed_files`, `checks`, `tests_verified`,
 `source_modified: false`, `artifact` task ID, measured `seconds`, `limitations`;
-early failures may contain only `error`. Events: `{seq,task_id,time,kind,data}`.
+early failures may contain only `error`. Events: `{seq,task_id,time,kind,data}`;
+Terminal events add a command/event UUID, per-command order and final status.
 Neither objective nor source content is safe to insert as HTML. The UI renders
 all backend data as text. No secret management endpoint exists.

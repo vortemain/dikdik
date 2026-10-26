@@ -792,11 +792,11 @@ OpenHands app (Canvas 1.33),F26-runtime-variants,F26.desktop-macos-titlebar,N,,"
 OpenHands app (Canvas 1.33),F26-runtime-variants,F26.desktop-external-links,N,,external links in the desktop window open in the system browser for allowed schemes only. Real Playwright CDP can click t
 OpenHands app (Canvas 1.33),F26-runtime-variants,- `F26.desktop-*` need the Electron binary (`node_modules/electron/dist/electron`; `npx --no-install electron --version` downloads it on first use) an,N,,
 OpenHands app (Canvas 1.33),F26-runtime-variants,- `F26.runtime-services` and `F26.runtime-services-agent-use` need an active LLM profile (`control-openhands llm preset deepseek`); the second also ne,N,,
-OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-empty,N,,"with the runtime active and no command run yet, the Terminal tab reads ""No terminal output yet. Commands run by the agent will ap"
-OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-waiting,N,,"while the runtime is starting or the conversation is in an error state, the Terminal tab reads ""Waiting for runtime to start..."
-OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-output,P,Sandboxed run_command output shows in the conversation,the agent's commands appear as `$ <command>` followed by their output; typing into the terminal does nothing (stdin is disabled)
-OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-history-reload,N,,after a page reload the earlier commands and output are still shown (issue [#17566](https://github.com/OpenHands/OpenHan
-OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-live-append,N,,a command the agent runs while the page is open is appended live.
+OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-empty,Y,Read-only Terminal tab has the exact durable empty state; browser checked, with the runtime active and no command run yet the Terminal tab shows its empty guidance
+OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-waiting,Y,Queued/running and failed conversations show the runtime waiting state; browser checked,while the runtime is starting or the conversation is in an error state the Terminal tab shows the waiting state
+OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-output,Y,Agent sandbox commands and output render read-only; contract-tested because Docker was unavailable,the agent's commands appear as `$ <command>` followed by their output; typing into the terminal does nothing
+OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-history-reload,Y,Durable task events rebuild the terminal after reload; real-browser checked,after a page reload the earlier commands and output are still shown
+OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-live-append,Y,Command chunks append over the existing task SSE stream; contract and real-browser checked,a command the agent runs while the page is open is appended live.
 OpenHands app (Canvas 1.33),F27-workspace-tools,F27.browser-empty,N,,"before any browsing the URL bar reads ""No URL loaded"", ""Open in New Tab"" is a disabled button, and the body reads ""No page loaded"
 OpenHands app (Canvas 1.33),F27-workspace-tools,F27.browser-screenshot,N,,"after the agent's browser tool ran, the tab shows the last screenshot under a bar with its URL and an enabled ""Open in New Ta"
 OpenHands app (Canvas 1.33),F27-workspace-tools,F27.planner-empty,N,,"with no plan the Planner reads ""There is currently no plan for this repo"" with an enabled ""Create a plan"" button; the drawer's ""Bu"
@@ -1153,35 +1153,35 @@ Agent server / SDK (1.58),F12-runtime-and-credentials,F12.managed-key-switch,N,,
 Agent server / SDK (1.58),F12-runtime-and-credentials,F12.docker-runtime-contract,P,Contract-tested restricted Docker command,"on a server with `OH_CONVERSATION_RUNTIME=docker` and no Docker daemon, fork, `switch_llm`, `switch_profile` and credent"
 Agent server / SDK (1.58),F12-runtime-and-credentials,F12.docker-runtime,N,,"with a Docker daemon, a create starts a container with the configured `--memory`, `--cpus` and `--pids-limit`, the launched profi"
 Agent server / SDK (1.58),F12-runtime-and-credentials,F12.docker-startup-timeout,N,,"a container that misses `conversation_container_startup_timeout` makes create return 502 within a bounded response time,"
-Agent server / SDK (1.58),F13-bash,F13.auth,N,,every bash route answers 401 without or with a wrong session key (and runs nothing); `WS /sockets/bash-events` closes with 4001 on a bad ke
-Agent server / SDK (1.58),F13-bash,F13.execute-sync,P,Agent run_command in a network-less Docker sandbox with a timeout,`POST /api/bash/execute_bash_command` blocks until the command exits and returns its final `BashOutput` with the real exit code and
-Agent server / SDK (1.58),F13-bash,F13.global-cwd,N,,"global commands run in the server process cwd by default, accept any explicit cwd, and a cwd that does not exist yields 200 with `exi"
-Agent server / SDK (1.58),F13-bash,F13.env-sanitized,N,,"commands run without `OH_SESSION_API_KEYS_*`, `SESSION_API_KEY` and `OH_SECRET_KEY` in their environment and with `AI_AGENT=openha"
-Agent server / SDK (1.58),F13-bash,F13.env-config-credentials,N,,"only those three names are stripped: other credential-bearing configuration variables (`OH_TELEMETRY_HTTP_TOKEN`, `OH_WEB"
-Agent server / SDK (1.58),F13-bash,F13.start-async,N,,`POST /api/bash/start_bash_command` returns the `BashCommand` before the command finishes; its `BashOutput` with `exit_code` appears
+Agent server / SDK (1.58),F13-bash,F13.auth,P,All implemented HTTP routes require the local session; bash WebSocket auth remains for Phase E,every bash route requires authentication and unauthorized requests run nothing
+Agent server / SDK (1.58),F13-bash,F13.execute-sync,P,Task-scoped synchronous Docker execution returns joined output; split stdout/stderr and the global route are missing,synchronous execute blocks until the sandbox command exits and returns its final output
+Agent server / SDK (1.58),F13-bash,F13.global-cwd,X,Dikdik forbids host/global shell execution; every command is task-scoped and Docker-isolated by design,global commands run in the server process cwd
+Agent server / SDK (1.58),F13-bash,F13.env-sanitized,Y,Dikdik forwards no ambient host environment and supplies only a fixed sandbox environment,commands cannot read server session or secret-key environment values
+Agent server / SDK (1.58),F13-bash,F13.env-config-credentials,X,Dikdik never forwards other ambient credential-bearing configuration into repository commands by design,other credential-bearing configuration variables reach commands unchanged
+Agent server / SDK (1.58),F13-bash,F13.start-async,Y,Task-scoped start returns before completion and persists output events for polling,asynchronous start returns the command before it finishes and output appears later
 Agent server / SDK (1.58),F13-bash,F13.ws-live,N,,"`WS /sockets/bash-events` streams `BashCommand` and `BashOutput` frames for commands started over REST, and `resend_mode=all` replays st"
 Agent server / SDK (1.58),F13-bash,F13.ws-command,N,,a client frame shaped like `ExecuteBashRequest` starts a command on the socket; an invalid frame gets a `BashError` frame and the soc
 Agent server / SDK (1.58),F13-bash,F13.ws-resend-all,N,,"the deprecated `resend_all=true` query parameter replays stored events like `resend_mode=all` (and logs a deprecation warning), wh"
 Agent server / SDK (1.58),F13-bash,F13.ws-subscriber-cap,N,,"`WS /sockets/bash-events` holds at most 50 subscribers: with 50 open, the 51st is closed with 1013 `Too many bash event connec"
-Agent server / SDK (1.58),F13-bash,F13.get-events,N,,"`GET /api/bash/bash_events/{event_id}` returns one event by its hex id (404 when unknown), and `GET /api/bash/bash_events/` with a JS"
-Agent server / SDK (1.58),F13-bash,F13.search,N,,"search filters by `kind__eq`, `command_id__eq` (outputs only), a UTC `timestamp__gte`/`timestamp__lt` window, sorts with `sort_order`, pa"
+Agent server / SDK (1.58),F13-bash,F13.get-events,P,Single-event get and paged list work; batch get is missing,single event lookup returns one event and unknown ids return 404
+Agent server / SDK (1.58),F13-bash,F13.search,P,Kind command-id and after-sequence paging work; timestamp windows and sort options are missing,search filters and pages persisted terminal events
 Agent server / SDK (1.58),F13-bash,F13.timestamp-offset,N,,a `timestamp__gte` with a non-UTC offset selects the same instant as its UTC spelling.
-Agent server / SDK (1.58),F13-bash,F13.output-chunks,N,,output over 1 MiB is stored as ordered `BashOutput` chunks of 1048576 characters plus a final chunk with the exit code; `order__gt
-Agent server / SDK (1.58),F13-bash,F13.order-gt-paging,N,,"`order__gt` filters before `limit` applies, so a poller asking for outputs after order N with a small page gets them."
-Agent server / SDK (1.58),F13-bash,F13.execute-large-output,N,,`execute_bash_command` returns the complete stdout of a command whose output is over 1 MiB.
-Agent server / SDK (1.58),F13-bash,F13.timeout,P,Agent run_command in a network-less Docker sandbox with a timeout,a command that outlives its `timeout` is killed with its process group and reports `exit_code` -1.
-Agent server / SDK (1.58),F13-bash,F13.stop,N,,"stopping a running command by id terminates only that command (final `exit_code` -15, process gone) while another command finishes normally"
-Agent server / SDK (1.58),F13-bash,F13.stop-idempotent,N,,"stopping an already finished command (hex or dashed id) returns 200, an unknown id 404 and a non-UUID id 422."
-Agent server / SDK (1.58),F13-bash,F13.scoped-cwd,N,,"conversation-scoped commands run in the conversation workspace by default, accept an absolute cwd inside it (also through the SDK's `"
-Agent server / SDK (1.58),F13-bash,F13.scoped-routes,N,,"the conversation-scoped execute, start, stop, get, batch get and search routes work on the conversation's own history, and the com"
-Agent server / SDK (1.58),F13-bash,F13.scoped-isolation,N,,"scoped events are invisible to the global search, the global socket, the global stop route and other conversations, and are sto"
-Agent server / SDK (1.58),F13-bash,F13.scoped-unknown,N,,every conversation-scoped bash route answers 404 `Conversation not found` for an unknown conversation id.
-Agent server / SDK (1.58),F13-bash,F13.persist-restart,N,,global and conversation-scoped bash history survives a server restart.
-Agent server / SDK (1.58),F13-bash,F13.clear,N,,"`DELETE .../bash_events` deletes one scope's stored events and reports `cleared_count`; the other scope is untouched, and a cleared finish"
+Agent server / SDK (1.58),F13-bash,F13.output-chunks,Y,Output is persisted in ordered 1 MiB chunks plus a final status event; large-output contract-tested,output over 1 MiB is stored as ordered chunks plus a final chunk with the exit code
+Agent server / SDK (1.58),F13-bash,F13.order-gt-paging,Y,Sequence filtering happens before the page limit and returns a next cursor; contract-tested,pollers can request events after a sequence with a small page
+Agent server / SDK (1.58),F13-bash,F13.execute-large-output,Y,Synchronous execute reassembles output over 1 MiB up to Dikdik's explicit 2 MiB cap; contract-tested,execute returns complete bounded output over 1 MiB
+Agent server / SDK (1.58),F13-bash,F13.timeout,P,Docker and in-container timeouts are enforced; the exact OpenHands -1 exit-code convention is not matched,a command that outlives its timeout is killed with its process group
+Agent server / SDK (1.58),F13-bash,F13.stop,P,Stopping targets one command and is contract-tested; exact -15 process semantics need live Docker,stopping a running command terminates only that command
+Agent server / SDK (1.58),F13-bash,F13.stop-idempotent,Y,Finished stops are idempotent; unknown ids are 404 and malformed ids use Dikdik's 400 validation convention,stopping an already finished command returns success
+Agent server / SDK (1.58),F13-bash,F13.scoped-cwd,P,Commands default to the task snapshot and safe relative subdirectories work; absolute in-scope cwd is not accepted,conversation-scoped commands run in the conversation workspace
+Agent server / SDK (1.58),F13-bash,F13.scoped-routes,P,Execute start stop get search and clear work; batch get is missing,conversation-scoped routes work on their own durable history
+Agent server / SDK (1.58),F13-bash,F13.scoped-isolation,Y,Each task has isolated history cancellation and throwaway files with no global route; contract-tested,scoped events are invisible to other conversations
+Agent server / SDK (1.58),F13-bash,F13.scoped-unknown,Y,Unknown well-formed task ids return 404 on every implemented scoped route,every conversation-scoped bash route answers 404 for an unknown conversation id
+Agent server / SDK (1.58),F13-bash,F13.persist-restart,P,Task-scoped history survives service restart; global history is intentionally absent,conversation-scoped bash history survives a server restart
+Agent server / SDK (1.58),F13-bash,F13.clear,Y,Clear deletes one task's bash records and mirrored terminal events while leaving other tasks untouched,delete terminal events clears one scope and reports cleared_count
 Agent server / SDK (1.58),F13-bash,F13.retention,N,,"with `bash_events_retention_seconds` set, global events older than the window are purged at startup while conversation-scoped history"
 Agent server / SDK (1.58),F13-bash,F13.retention-rolling,N,,the retention loop keeps purging while the server runs: a global event written after startup is readable at once and gone afte
-Agent server / SDK (1.58),F13-bash,F13.scoped-bad-id,N,,a conversation-scoped bash route with a non-UUID conversation id answers 422.
-Agent server / SDK (1.58),F13-bash,F13.scoped-idle-eviction,N,,"a conversation with a running scoped command is not evicted as idle, so the command keeps running."
+Agent server / SDK (1.58),F13-bash,F13.scoped-bad-id,Y,Malformed task ids are rejected before execution using Dikdik's 400 validation convention,a conversation-scoped bash route rejects a non-UUID conversation id
+Agent server / SDK (1.58),F13-bash,F13.scoped-idle-eviction,Y,Active commands are retained until completion stop or service shutdown; there is no idle eviction of running work,a conversation with a running scoped command is not evicted as idle
 Agent server / SDK (1.58),F14-files,F14.auth,N,,"every global and conversation-scoped file route answers 401 without a valid session key, and nothing is written."
 Agent server / SDK (1.58),F14-files,F14.upload-download,P,Read workspace/candidate files; no upload,"a multipart upload creates missing parent directories, a download returns byte-identical bytes as an `application/octet-stream`"
 Agent server / SDK (1.58),F14-files,F14.upload-errors,N,,"an upload without the `file` part or without `path` is 422, and a relative `path` is 400 `Path must be absolute`."

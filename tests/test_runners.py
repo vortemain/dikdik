@@ -59,6 +59,14 @@ class ContainerTests(unittest.TestCase):
         with patch("dikdik.runners.subprocess.Popen", side_effect=OSError):
             self.assertEqual(run_container(["docker"], "x", threading.Event(), 5)["status"], "blocked")
 
+    def test_container_stream_callback_excludes_internal_start_marker(self):
+        chunks = []
+        with patch("dikdik.runners.subprocess.Popen", return_value=FakeProcess(f"{STARTED}\nhello\n".encode(), 0)), \
+                patch("dikdik.runners.cleanup_container", return_value=None):
+            result = run_container(["docker"], "dikdik-stream", threading.Event(), 5, on_chunk=chunks.append)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual("".join(chunks), "hello\n")
+
     def test_project_tests_combine_every_suite(self):
         files = {"test_a.py": "", "package.json": '{"scripts": {"test": "bun test"}}'}
         with patch("dikdik.runners.run_python_tests", return_value={"kind": "unittest", "status": "passed", "output": "ok"}), \

@@ -262,6 +262,9 @@
         return [{ ...base, role: "system", title: "Cancellation requested" }];
       case "recovery_cleanup":
         return [{ ...base, role: "system", title: "Recovered after restart", details: { warning: textOf(d.warning) } }];
+      case "terminal_command":
+      case "terminal_output":
+        return [];
       case "completed":
       case "failed":
       case "blocked":
@@ -271,6 +274,57 @@
       default:
         return [];
     }
+  }
+  function terminalTranscript(events) {
+    const commands = new Map;
+    const order = [];
+    let total = 0;
+    for (const event of events) {
+      if (event.kind !== "terminal_command" && event.kind !== "terminal_output")
+        continue;
+      const data = event.data ?? {};
+      const id = textOf(data.command_id, 80);
+      if (!id)
+        continue;
+      if (event.kind === "terminal_command") {
+        const command = textOf(data.command, 4000);
+        if (!command || commands.has(id))
+          continue;
+        commands.set(id, { id, command, output: "", running: true });
+        order.push(id);
+        continue;
+      }
+      const row = commands.get(id);
+      if (!row)
+        continue;
+      const chunk = textOf(data.output, 1024 * 1024);
+      if (chunk && total < 1024 * 1024) {
+        const kept = chunk.slice(0, 1024 * 1024 - total);
+        row.output += kept;
+        total += kept.length;
+      }
+      if (data.final === true) {
+        row.running = false;
+        if (data.exit_code === null || typeof data.exit_code === "number")
+          row.exitCode = data.exit_code;
+        const status = textOf(data.status, 80);
+        if (status)
+          row.status = status;
+      }
+    }
+    const list = order.map((id) => commands.get(id)).filter(Boolean);
+    const text = list.map((command) => {
+      const ending = command.running ? `
+[running]` : command.status && !["passed", "failed"].includes(command.status) ? `
+[${command.status}]` : command.exitCode !== undefined && command.exitCode !== null && command.exitCode !== 0 ? `
+[exit ${command.exitCode}]` : command.status === "failed" ? `
+[failed]` : "";
+      return `$ ${command.command}
+${command.output}${ending}`;
+    }).join(`
+
+`);
+    return { commands: list, text };
   }
   function observationText(tool, observation) {
     if (typeof observation !== "object" || observation === null)
@@ -1754,9 +1808,22 @@ ${c.output}` : "";
       renderFileList();
     if (tab === "git")
       loadGit();
+    if (tab === "terminal")
+      renderTerminal();
   }
   function changedPaths() {
     return new Set(review.files.map((file) => file.path));
+  }
+  function renderTerminal() {
+    const view = terminalTranscript(liveEvents);
+    const terminal = el("terminal-view");
+    const empty = el("terminal-empty");
+    terminal.textContent = view.text;
+    terminal.hidden = !view.commands.length;
+    empty.hidden = !!view.commands.length;
+    empty.textContent = selectedState && (!isTerminal(selectedState) || selectedState === "failed") ? "Waiting for runtime to start..." : "No terminal output yet. Commands run by the agent will appear here.";
+    if (view.commands.some((command) => command.running))
+      terminal.scrollTop = terminal.scrollHeight;
   }
   function renderFileList() {
     const query = (el("file-search").value ?? "").trim().toLowerCase();
@@ -1918,6 +1985,8 @@ ${c.output}` : "";
     el("review-controls").replaceChildren();
     el("diff").replaceChildren();
     el("review-note").textContent = "";
+    liveEvents = [];
+    renderTerminal();
     el("working").hidden = true;
     el("toggle-canvas").hidden = true;
     setCanvas(false);
@@ -2271,6 +2340,8 @@ ${c.output}` : "";
       if (record.kind === "agent_message" || record.kind === "agent_tool")
         showLiveReply("");
       renderMessageStream(eventsToChat(liveEvents, liveObjective));
+      if (record.kind === "terminal_command" || record.kind === "terminal_output")
+        renderTerminal();
       if (record.kind === "running" || isTerminal(record.kind)) {
         setState(record.kind);
         selectedState = record.kind;
@@ -2314,6 +2385,7 @@ ${c.output}` : "";
       setTitle(el("chat-title").textContent ?? "");
       setState(task.state);
       selectedState = task.state;
+      renderTerminal();
       button("cancel").disabled = isTerminal(task.state);
       const messages = eventsToChat(task.events, task.request.objective);
       lastMessages = messages;

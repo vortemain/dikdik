@@ -458,6 +458,9 @@ pre.numbered .ln::before { content: attr(data-n); position: absolute; left: 0; w
 #diff { flex: 1; min-height: 0; max-height: none; margin: 0; }
 .canvas-empty { flex: 1; display: grid; place-items: center; text-align: center; color: var(--muted); font-size: 13.5px; padding: 24px; }
 .canvas-empty svg.i { width: 28px; height: 28px; stroke-width: 1.4; color: var(--faint); margin-bottom: 10px; }
+.terminal-panel { background: var(--code-bg); }
+.terminal-panel .canvas-empty { background: var(--surface); }
+#terminal-view { flex: 1; min-height: 0; margin: 0; padding: 16px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font-size: 13px; line-height: 1.55; }
 
 /* --- settings dialog ----------------------------------------------------- */
 dialog { padding: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); }

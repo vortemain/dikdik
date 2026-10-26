@@ -162,6 +162,7 @@
         <div class="canvas-tabs" role="tablist" aria-label="Panel">
           <button class="canvas-tab" type="button" role="tab" data-tab="changes" aria-selected="true"><span id="review-title">Changes</span><span id="canvas-count" class="tab-count"></span></button>
           <button class="canvas-tab" type="button" role="tab" data-tab="files" aria-selected="false">Files</button>
+          <button class="canvas-tab" type="button" role="tab" data-tab="terminal" aria-selected="false">Terminal</button>
           <button class="canvas-tab" type="button" role="tab" data-tab="git" aria-selected="false">Git<span id="git-count" class="tab-count"></span></button>
         </div>
         <span class="grow"></span>
@@ -202,6 +203,10 @@
       </div>
       <div class="canvas-body" data-pane="git" hidden>
         <div id="git-panel" class="git-panel"><p class="muted">Loading Git status…</p></div>
+      </div>
+      <div class="canvas-body terminal-panel" data-pane="terminal" hidden>
+        <p id="terminal-empty" class="canvas-empty">No terminal output yet. Commands run by the agent will appear here.</p>
+        <pre id="terminal-view" tabindex="0" aria-label="Sandbox command output" hidden></pre>
       </div>
     </aside>
   </div>
