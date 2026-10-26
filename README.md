@@ -39,6 +39,7 @@ autonomous engineering platform.
 - **Composer drafts.** Home and each conversation keep unsent text across navigation
   and reload. Conflicting tabs offer an explicit choice; failed sends retain text.
   Drafts stay in your private server data. See [drafts](docs/COMPOSER.md).
+  Drag the composer's top edge to resize; keyboard arrows resize and Home resets.
 - **Tests for several stacks** in network-less Docker containers: Python
   `unittest`, `bun test`, `npm test` and `cargo test --offline`, picked from the
   project's files. Without Docker, tasks are syntax-checked and labelled so.
@@ -235,7 +236,7 @@ python scripts/benchmark.py --samples 20 --output docs/benchmark-results.json
 ```
 
 Current result (2026-10-27): **269 Python tests passed, 2 live-runtime checks skipped**
-(271 total); **60 Bun tests passed**; **15 Rust tests passed**; strict frontend type
+(271 total); **62 Bun tests passed**; **15 Rust tests passed**; strict frontend type
 checking and build passed; deterministic syntax-only evaluation **4/4**. These are preview regression results, not proof of
 general autonomous engineering capability.
 

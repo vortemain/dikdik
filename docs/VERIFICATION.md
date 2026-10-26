@@ -1,6 +1,24 @@
 # Verification record — updated 2026-10-27
 
-## Phase A — Composer drafts (latest)
+## Phase A — Composer resize (latest)
+
+- Full checks: **269 Python passes / 2 explicit live-runtime skips** (271 total),
+  **62 Bun tests / 338 assertions**, **15 Rust tests**, strict TypeScript check
+  and build, deterministic syntax-only evaluation **4/4**.
+- Real Chrome pointer checks grew an empty field by 200 px, reduced it by 150 px,
+  exercised keyboard Up/Home, automatic multiline growth, clear-to-shrink,
+  retained manual size while typing and reset after reload. Shrinking to a
+  390×500 viewport kept the composer below navigation and within its height bound.
+- Four inspected screenshots cover **1440×900** and **390×844**, light and dark.
+  The grip has no child elements, background or pointer-focus outline, uses the
+  resize cursor and fits without page overflow. Keyboard focus remains visible.
+  Page and console errors were empty. No task, model call, Docker run or stand-in
+  was needed; text persistence still used the real authenticated draft API.
+- Early screenshots exposed pointer focus leaving a line on the grip; pointer
+  dragging now blurs it. The final run starts with an empty scratch draft and
+  waits for theme transitions to settle before capture.
+
+## Phase A — Composer drafts
 
 - Full checks: **269 Python passes / 2 explicit live-runtime skips** (271 total),
   **60 Bun tests / 328 assertions**, **15 Rust tests**, strict TypeScript check

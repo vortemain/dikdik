@@ -6,6 +6,13 @@ pending edits, and returning or reloading restores that conversation's text.
 Suggestions also update the saved draft. Empty or whitespace-only text disables
 Send; Shift+Enter inserts a newline and Enter submits.
 
+The field grows with its text. Drag the invisible top edge up or down to choose
+its height, including when it is empty. The resize cursor identifies the edge;
+keyboard users can Tab to **Resize message field**, use Up/Down arrows, or Home
+to restore automatic sizing. Double-click also resets. Clearing text, changing
+conversations and reloading restore automatic sizing. Height is local UI state,
+not saved with the draft; viewport and expanded controls bound its size.
+
 Drafts contain text only, up to 4,000 characters. They do not save permissions,
 run tools, call a model or change the workspace. Task deletion removes its draft;
 Home is separate. The database is private but draft text is not encrypted.

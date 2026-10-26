@@ -358,7 +358,8 @@ div.conv-item:hover .conv-more, div.conv-item:focus-within .conv-more, div.conv-
 /* --- composer ------------------------------------------------------------ */
 .composer { flex: 0 0 auto; padding: 0 24px 14px; }
 .composer-inner { max-width: var(--column); margin: 0 auto; }
-#task-form { border: 1px solid var(--line-strong); border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); transition: border-color .15s, box-shadow .15s; }
+#task-form { position: relative; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); transition: border-color .15s, box-shadow .15s; }
+.composer-resize { position: absolute; top: -5px; left: 18px; right: 18px; height: 10px; cursor: ns-resize; touch-action: none; border-radius: 8px; z-index: 1; }
 #task-form:focus-within { border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong)); }
 #objective { display: block; border: 0; background: transparent; box-shadow: none; resize: none; min-height: 52px; max-height: 260px; padding: 14px 18px 6px; font-size: 15px; line-height: 1.55; }
 #objective:focus { box-shadow: none; }

@@ -2,6 +2,7 @@ import { browserView, buildTaskRequest, conversationLabel, eventsToChat, fileSta
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries, profilesPanel, secretsPanel, skillsPanel } from "./contracts";
 import type { ActiveModel, AgentProfile, Automation, ChatMessage, DiffReview, M4Factory, M4Node, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
+import { ComposerSize, composerMaximum } from './composer-size';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
   const found = document.getElementById(id);
@@ -23,6 +24,7 @@ let agentProfiles: AgentProfile[] = [];  // read by syncMode at load time, so de
 let currentPlan: PlanView | null = null, parentTask: string | null = null, observedTaskMode = '';
 let viewEpoch = 0, observeQueued = false;
 let submitting = false;
+const composerSize = new ComposerSize();
 
 // --- small DOM helpers ----------------------------------------------------
 function make<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
@@ -802,6 +804,7 @@ function syncComposer(): void {
 }
 function syncSend(): void { button('start').disabled = submitting || !textarea('objective').value.trim(); }
 function selectTask(id: string): void {
+  composerSize.reset();
   stopStream();
   viewEpoch++;
   selected = id; watching = true; selectedState = "";
@@ -815,6 +818,7 @@ function selectTask(id: string): void {
   void composerDrafts.select(id);
 }
 function newTask(): void {
+  composerSize.reset();
   stopStream();
   viewEpoch++;
   selected = null; watching = false; reviewTask = null; reviewKey = ""; selectedState = "";
@@ -867,14 +871,14 @@ async function request<T>(path: string, method: string, body?: unknown): Promise
 const api = <T>(path: string, body?: unknown): Promise<T> => request<T>(path, body === undefined ? "GET" : "POST", body);
 const apiM4 = <T>(path: string, method: string, body?: unknown): Promise<T> => request<T>(path, method, body);
 const composerDrafts = new ComposerDrafts(request, (content, status) => {
-  if (content !== null) { textarea('objective').value = content; autosize(); }
+  if (content !== null) textarea('objective').value = content;
   const labels = { loading: 'Loading draft…', saving: 'Saving draft…', saved: 'Draft saved', unsaved: 'Draft not saved. Keep this tab open.', conflict: 'This draft changed in another tab. Choose which version to keep.' };
   el('draft-status').textContent = labels[status.state];
   el('draft-status-row').hidden = status.state === 'saved' && !textarea('objective').value;
   el('draft-use-saved').hidden = status.state !== 'conflict'; el('draft-keep-local').hidden = status.state !== 'conflict';
   el('draft-retry').hidden = status.state !== 'unsaved'; el('draft-conflict').hidden = status.state !== 'conflict';
   el('draft-remote').textContent = status.remote ?? '';
-  syncSend();
+  autosize();
 });
 el('draft-use-saved').addEventListener('click', () => { void composerDrafts.resolve('server'); });
 el('draft-keep-local').addEventListener('click', () => { void composerDrafts.resolve('local'); });
@@ -1527,12 +1531,52 @@ function autosize(): void {
   syncSend();
   const area = textarea("objective");
   if (!area.style) return;
+  const maximum = composerMaximum(globalThis.innerHeight || 900, Math.max(0, (el('task-form').offsetHeight || 0) - (area.offsetHeight || 0)));
+  area.style.maxHeight = `${maximum}px`;
   area.style.height = "auto";
-  area.style.height = `${Math.min(area.scrollHeight, 260)}px`;
+  const height = composerSize.fit(area.value, area.scrollHeight, maximum);
+  area.style.height = `${height}px`;
+  el('composer-resize').setAttribute('aria-valuenow', String(Math.round(height)));
+  el('composer-resize').setAttribute('aria-valuemax', String(Math.round(maximum)));
 }
+let composerDrag: { pointer: number; y: number; height: number } | null = null;
+const composerGrip = el('composer-resize');
+function resizeComposer(height: number): void {
+  const area = textarea('objective');
+  const maximum = composerMaximum(globalThis.innerHeight || 900, Math.max(0, el('task-form').offsetHeight - area.offsetHeight));
+  composerSize.resize(height, maximum); autosize();
+}
+composerGrip.addEventListener('pointerdown', event => {
+  if (!event.isPrimary || event.button !== 0 || textarea('objective').disabled) return;
+  event.preventDefault();
+  composerDrag = { pointer: event.pointerId, y: event.clientY, height: textarea('objective').getBoundingClientRect().height };
+  composerGrip.setPointerCapture(event.pointerId); composerGrip.blur();
+});
+composerGrip.addEventListener('pointermove', event => {
+  if (composerDrag?.pointer !== event.pointerId) return;
+  resizeComposer(composerDrag.height + composerDrag.y - event.clientY);
+});
+function endComposerDrag(event: PointerEvent): void {
+  if (composerDrag?.pointer !== event.pointerId) return;
+  composerDrag = null;
+  if (composerGrip.hasPointerCapture(event.pointerId)) composerGrip.releasePointerCapture(event.pointerId);
+}
+composerGrip.addEventListener('pointerup', endComposerDrag);
+composerGrip.addEventListener('pointercancel', endComposerDrag);
+composerGrip.addEventListener('lostpointercapture', () => { composerDrag = null; });
+composerGrip.addEventListener('keydown', event => {
+  if (textarea('objective').disabled) return;
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    event.preventDefault(); resizeComposer(textarea('objective').getBoundingClientRect().height + (event.key === 'ArrowUp' ? 24 : -24));
+  } else if (event.key === 'Home') { event.preventDefault(); composerSize.reset(); autosize(); }
+});
+composerGrip.addEventListener('dblclick', () => { composerSize.reset(); autosize(); });
+globalThis.addEventListener?.('resize', autosize);
+el('draft-conflict').addEventListener('toggle', autosize);
 function setOptions(open: boolean): void {
   el("options-panel").hidden = !open;
   el("options-toggle").setAttribute("aria-expanded", String(open));
+  autosize();
 }
 function syncMode(): void {
   const mode = parseMode(select("mode").value);
@@ -1559,6 +1603,7 @@ function syncMode(): void {
   el("agent-profile-pill").hidden = !['agent','plan'].includes(mode) || !agentProfiles.length;
   if (policy.showEdits) setOptions(true);
   syncComposer();
+  autosize();
 }
 select("mode").addEventListener("change", syncMode);
 select("verification").addEventListener("change", syncMode);

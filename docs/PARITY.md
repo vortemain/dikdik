@@ -30,8 +30,8 @@ OpenHands app map (844 entries) and the agent-server/SDK map
 
 | Status | First audit | After the build phases |
 |---|---|---|
-| Has (equivalent behaviour) | 89 | 229 |
-| Partly (note says what is missing) | 91 | 167 |
+| Has (equivalent behaviour) | 89 | 230 |
+| Partly (note says what is missing) | 91 | 166 |
 | Missing | 1,534 | 1,315 |
 | Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 70 | 70 |
 | Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 20 |
@@ -63,6 +63,8 @@ The fourth increment adds private Home/conversation drafts with revision conflic
 choices, failed-send retention, acknowledgment-based clearing and empty Send
 gating. Real Chrome checked persistence and conflicts against real HTTP/SQLite;
 offline syntax-only submissions needed no model or Docker stand-in.
+The composer also has the missing invisible resize grip, with keyboard support,
+viewport bounds and reset-on-clear behavior checked in real Chrome.
 
 Gaps the first audit found in features that looked present, all fixed: unused
 model profiles and keys, unused skills, the unloaded Rust indexer, automations

@@ -1491,6 +1491,28 @@ ${c.output}` : "";
     }
   }
 
+  // dikdik/web/composer-size.ts
+  function composerMaximum(viewport, controls) {
+    return Math.max(52, Math.min(520, viewport - controls - 180));
+  }
+
+  class ComposerSize {
+    manual = null;
+    previous = "";
+    reset() {
+      this.manual = null;
+    }
+    resize(height, maximum) {
+      this.manual = Math.max(52, Math.min(maximum, height));
+    }
+    fit(content, natural, maximum) {
+      if (!content && this.previous)
+        this.reset();
+      this.previous = content;
+      return Math.max(52, Math.min(maximum, this.manual ?? natural));
+    }
+  }
+
   // dikdik/web/app.ts
   function element(id, kind) {
     const found = document.getElementById(id);
@@ -1525,6 +1547,7 @@ ${c.output}` : "";
   var viewEpoch = 0;
   var observeQueued = false;
   var submitting = false;
+  var composerSize = new ComposerSize;
   function make(tag, className = "", text = "") {
     const node = document.createElement(tag);
     if (className)
@@ -2508,6 +2531,7 @@ ${c.output}` : "";
     button("start").disabled = submitting || !textarea("objective").value.trim();
   }
   function selectTask(id) {
+    composerSize.reset();
     stopStream();
     viewEpoch++;
     selected = id;
@@ -2523,6 +2547,7 @@ ${c.output}` : "";
     composerDrafts.select(id);
   }
   function newTask() {
+    composerSize.reset();
     stopStream();
     viewEpoch++;
     selected = null;
@@ -2590,10 +2615,8 @@ ${c.output}` : "";
   var api = (path, body) => request(path, body === undefined ? "GET" : "POST", body);
   var apiM4 = (path, method, body) => request(path, method, body);
   var composerDrafts = new ComposerDrafts(request, (content, status) => {
-    if (content !== null) {
+    if (content !== null)
       textarea("objective").value = content;
-      autosize();
-    }
     const labels = { loading: "Loading draft…", saving: "Saving draft…", saved: "Draft saved", unsaved: "Draft not saved. Keep this tab open.", conflict: "This draft changed in another tab. Choose which version to keep." };
     el("draft-status").textContent = labels[status.state];
     el("draft-status-row").hidden = status.state === "saved" && !textarea("objective").value;
@@ -2602,7 +2625,7 @@ ${c.output}` : "";
     el("draft-retry").hidden = status.state !== "unsaved";
     el("draft-conflict").hidden = status.state !== "conflict";
     el("draft-remote").textContent = status.remote ?? "";
-    syncSend();
+    autosize();
   });
   el("draft-use-saved").addEventListener("click", () => {
     composerDrafts.resolve("server");
@@ -3504,12 +3527,69 @@ ${c.output}` : "";
     const area = textarea("objective");
     if (!area.style)
       return;
+    const maximum = composerMaximum(globalThis.innerHeight || 900, Math.max(0, (el("task-form").offsetHeight || 0) - (area.offsetHeight || 0)));
+    area.style.maxHeight = `${maximum}px`;
     area.style.height = "auto";
-    area.style.height = `${Math.min(area.scrollHeight, 260)}px`;
+    const height = composerSize.fit(area.value, area.scrollHeight, maximum);
+    area.style.height = `${height}px`;
+    el("composer-resize").setAttribute("aria-valuenow", String(Math.round(height)));
+    el("composer-resize").setAttribute("aria-valuemax", String(Math.round(maximum)));
   }
+  var composerDrag = null;
+  var composerGrip = el("composer-resize");
+  function resizeComposer(height) {
+    const area = textarea("objective");
+    const maximum = composerMaximum(globalThis.innerHeight || 900, Math.max(0, el("task-form").offsetHeight - area.offsetHeight));
+    composerSize.resize(height, maximum);
+    autosize();
+  }
+  composerGrip.addEventListener("pointerdown", (event) => {
+    if (!event.isPrimary || event.button !== 0 || textarea("objective").disabled)
+      return;
+    event.preventDefault();
+    composerDrag = { pointer: event.pointerId, y: event.clientY, height: textarea("objective").getBoundingClientRect().height };
+    composerGrip.setPointerCapture(event.pointerId);
+    composerGrip.blur();
+  });
+  composerGrip.addEventListener("pointermove", (event) => {
+    if (composerDrag?.pointer !== event.pointerId)
+      return;
+    resizeComposer(composerDrag.height + composerDrag.y - event.clientY);
+  });
+  function endComposerDrag(event) {
+    if (composerDrag?.pointer !== event.pointerId)
+      return;
+    composerDrag = null;
+    if (composerGrip.hasPointerCapture(event.pointerId))
+      composerGrip.releasePointerCapture(event.pointerId);
+  }
+  composerGrip.addEventListener("pointerup", endComposerDrag);
+  composerGrip.addEventListener("pointercancel", endComposerDrag);
+  composerGrip.addEventListener("lostpointercapture", () => {
+    composerDrag = null;
+  });
+  composerGrip.addEventListener("keydown", (event) => {
+    if (textarea("objective").disabled)
+      return;
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      resizeComposer(textarea("objective").getBoundingClientRect().height + (event.key === "ArrowUp" ? 24 : -24));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      composerSize.reset();
+      autosize();
+    }
+  });
+  composerGrip.addEventListener("dblclick", () => {
+    composerSize.reset();
+    autosize();
+  });
+  globalThis.addEventListener?.("resize", autosize);
+  el("draft-conflict").addEventListener("toggle", autosize);
   function setOptions(open) {
     el("options-panel").hidden = !open;
     el("options-toggle").setAttribute("aria-expanded", String(open));
+    autosize();
   }
   function syncMode() {
     const mode = parseMode(select("mode").value);
@@ -3540,6 +3620,7 @@ ${c.output}` : "";
     if (policy.showEdits)
       setOptions(true);
     syncComposer();
+    autosize();
   }
   select("mode").addEventListener("change", syncMode);
   select("verification").addEventListener("change", syncMode);

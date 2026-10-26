@@ -14,11 +14,11 @@ with conflict detection; Files and Git; model profiles and
 encrypted keys driving every call; skills, MCP servers (HTTP and stdio) and agent
 profiles; streamed replies over server-sent events; automations with stored
 approvals; a Python client/CLI; and the Rust indexer loaded by default. The parity
-audit (docs/PARITY.md) moved from 89 to 229 fully matched OpenHands sub-features
+audit (docs/PARITY.md) moved from 89 to 230 fully matched OpenHands sub-features
 of 1,801. Live model-provider and live-Docker runs are still not recorded.
 
 Test status (2026-10-27): Python **269 passed, 2 live-runtime tests skipped**; Bun
-**60 passed**; Rust **15 passed**; strict TypeScript check and build passed.
+**62 passed**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -41,6 +41,8 @@ Test status (2026-10-27): Python **269 passed, 2 live-runtime tests skipped**; B
 - Added private home/conversation composer drafts, revision conflicts with explicit
   resolution, failed-send retention and clearing only after successful submission.
   Empty and whitespace-only text disables Send.
+- Added an invisible composer resize grip with pointer capture, keyboard controls,
+  reset on clear/navigation and height limits that reserve space for controls.
 - Independent review findings fixed: early-exit verification bypass, finalization
   cancellation race, component-token undercount; reviewer reran regressions.
 - Built wheel offline, inspected its 22 entries (no upstream/Python runtime deps),
@@ -52,7 +54,7 @@ Test status (2026-10-27): Python **269 passed, 2 live-runtime tests skipped**; B
 ## Test status
 
 - Python: **269 passed, 2 live-runtime tests skipped** (271 total).
-- Bun: **60 passed / 328 assertions**; strict TypeScript check and browser build passed.
+- Bun: **62 passed / 338 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit
