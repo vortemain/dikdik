@@ -30,9 +30,9 @@ OpenHands app map (844 entries) and the agent-server/SDK map
 
 | Status | First audit | After the build phases |
 |---|---|---|
-| Has (equivalent behaviour) | 89 | 226 |
-| Partly (note says what is missing) | 91 | 168 |
-| Missing | 1,534 | 1,317 |
+| Has (equivalent behaviour) | 89 | 229 |
+| Partly (note says what is missing) | 91 | 167 |
+| Missing | 1,534 | 1,315 |
 | Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 70 | 70 |
 | Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 20 |
 | **Total** | **1,801** | **1,801** |
@@ -59,6 +59,10 @@ revisioned PLAN.md artifacts, review/identity-checked Build, bare and payload
 The full HTTP/SSE/provider-adapter flow was checked in real Chrome using a local
 streamed model stand-in; Build stayed syntax-only. Workspace `.agents_tmp/PLAN.md`
 import remains partial.
+The fourth increment adds private Home/conversation drafts with revision conflict
+choices, failed-send retention, acknowledgment-based clearing and empty Send
+gating. Real Chrome checked persistence and conflicts against real HTTP/SQLite;
+offline syntax-only submissions needed no model or Docker stand-in.
 
 Gaps the first audit found in features that looked present, all fixed: unused
 model profiles and keys, unused skills, the unloaded Rust indexer, automations
@@ -79,7 +83,7 @@ recorded run against a live model provider or Docker engine.
 | F02 Shell/navigation | Partial: responsive single-workspace UI. Missing project/sidebar/command navigation. Keyboard-only task switching, small-screen navigation and meaningful errors must work. | P1 |
 | F03 Starting work | Partial: approved startup workspace and objective submission. Missing in-product workspace selection and richer launch choices. Open an approved project and start an actual objective without manual edits. | P0 |
 | F04 History/organization | Partial: durable task list. Missing folders/tags/rename/pin/archive. Persist all CRUD/default transitions without losing the selected work item. | P1 |
-| F05 Conversation/composer | Partial: objective-driven conversation with message stream, composer (Enter-to-send), conversation sidebar with state badges. Missing follow-ups within a task, drafts, attachments, slash commands and planning mode. | P0/P1 |
+| F05 Conversation/composer | Partial: objective-driven follow-ups, Enter-to-send, private scoped drafts, explicit tab conflicts, separate planning and /plan /code commands. Missing full slash menu, attachments, side questions, goals and context meter. | P0/P1 |
 | F06 Agent lifecycle | Partial: bounded tools/repair, cancellation and persisted events. Live model/container validation and exact resume absent. Failing test → focused repair → current pass, with no post-cancellation completion. | P0 |
 | F07 Task detail/actions | Partial: actual events, checks, counters and diff. Missing export/download, conversation menus and broader controls. Export reproducible evidence, not model claims. | P1 |
 | F08 Files/Git/review | Partial: new candidate files/tests and per-file added/modified diff review implemented in this increment. Missing full file viewer, Git history/branch/status integration and deletion. Review nested/empty/Unicode additions and edits without source writes. | P0 |

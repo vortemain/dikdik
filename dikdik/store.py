@@ -144,5 +144,7 @@ class Store:
                 for table in ('bash_events', 'browser_snapshots', 'task_progress'):
                     if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
                         db.execute(f'DELETE FROM {table} WHERE task_id=?', (identity,))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='composer_drafts'").fetchone():
+                    db.execute('DELETE FROM composer_drafts WHERE scope=?', (identity,))
                 if has_plans:
                     db.execute('DELETE FROM plans WHERE task_id=? OR planner_id=?', (identity, identity))

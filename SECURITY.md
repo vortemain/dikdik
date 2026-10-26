@@ -73,6 +73,13 @@ proposals and tool output are untrusted. An objective cannot change policy.
   existing `running` event for each turn. Task APIs use those persisted approvals,
   with old-data fallback to the original request, rather than borrowing grants
   from a related conversation. Checklist completion never establishes verification.
+- Composer drafts are bounded plain text in the private workspace data database,
+  scoped to Home or an existing conversation. Authenticated saves cannot submit
+  tasks, grant approvals, contact a provider or write workspace files. Revision
+  checks prevent stale tabs overwriting or resurrecting cleared drafts. Draft text
+  may contain sensitive material and is not encrypted; protect the data directory.
+  Conversation deletion removes its draft. Failed saves retain text in memory and
+  warn before leaving; no browser-local plaintext fallback is stored.
 - **Skills** reach the model inside an untrusted-data marker and cannot change
   tools, approvals or limits. **Agent profiles** can only narrow tool access.
 - **Automations** store the mode and approvals the user chose; a schedule never

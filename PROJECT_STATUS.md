@@ -14,11 +14,11 @@ with conflict detection; Files and Git; model profiles and
 encrypted keys driving every call; skills, MCP servers (HTTP and stdio) and agent
 profiles; streamed replies over server-sent events; automations with stored
 approvals; a Python client/CLI; and the Rust indexer loaded by default. The parity
-audit (docs/PARITY.md) moved from 89 to 226 fully matched OpenHands sub-features
+audit (docs/PARITY.md) moved from 89 to 229 fully matched OpenHands sub-features
 of 1,801. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **263 passed, 2 live-runtime tests skipped**; Bun
-**54 passed**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-27): Python **269 passed, 2 live-runtime tests skipped**; Bun
+**60 passed**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -38,6 +38,9 @@ Test status (2026-10-27): Python **263 passed, 2 live-runtime tests skipped**; B
 - Added separate read-only planning conversations, private revisioned PLAN.md,
   explicit review/identity-checked Build, `/plan`/`/code` handoff and durable task
   checklists. Plan text and reported completion cannot grant permissions or tests.
+- Added private home/conversation composer drafts, revision conflicts with explicit
+  resolution, failed-send retention and clearing only after successful submission.
+  Empty and whitespace-only text disables Send.
 - Independent review findings fixed: early-exit verification bypass, finalization
   cancellation race, component-token undercount; reviewer reran regressions.
 - Built wheel offline, inspected its 22 entries (no upstream/Python runtime deps),
@@ -48,8 +51,8 @@ Test status (2026-10-27): Python **263 passed, 2 live-runtime tests skipped**; B
 
 ## Test status
 
-- Python: **263 passed, 2 live-runtime tests skipped** (265 total).
-- Bun: **54 passed / 302 assertions**; strict TypeScript check and browser build passed.
+- Python: **269 passed, 2 live-runtime tests skipped** (271 total).
+- Bun: **60 passed / 328 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit
@@ -68,6 +71,10 @@ Test status (2026-10-27): Python **263 passed, 2 live-runtime tests skipped**; B
   IDs, reload, bare/payload slash commands and focused Ctrl+Enter. The syntax-only
   candidate left source unchanged. Planner and Task List each passed desktop/phone
   light/dark checks with no page errors, console errors or horizontal page overflow.
+- Real Chrome checked Home/conversation drafts, rejected sends, immediate navigation,
+  reload, explicit two-tab conflicts and acknowledged offline submission against
+  real HTTP/SQLite. Desktop/phone light/dark screenshots showed the composer without
+  overflow; no page errors or unexpected console errors. No model or Docker used.
 - Reference-only results: Canvas **74 passed / 1 skipped** after serial thread-pool
   retry; one SDK Stop-hook regression passed. Neither count belongs to DIKDIK.
 
@@ -92,7 +99,7 @@ contracts and measured benefit. See `docs/DECISIONS.md` and `SECURITY.md`.
 
 ## Next highest-value action
 
-Continue Phase A with the full slash-command composer, drafts and attachments while preserving the same
+Continue Phase A with the full slash-command composer and attachments while preserving the same
 task-scoped, local-first security boundary. Separately, enable a reviewed Linux
 Docker runtime and explicitly configure/approve a tool-capable model to record
 the still-missing live execution evidence.

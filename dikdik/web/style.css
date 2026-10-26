@@ -484,6 +484,9 @@ pre.numbered .ln::before { content: attr(data-n); position: absolute; left: 0; w
 .checklist-step { display: flex; gap: 12px; padding: 12px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .checklist-step[data-active=true] { background: var(--surface-3); border-left: 3px solid var(--accent); }
 .checklist-status { font-size: 12px; flex: 0 0 80px; color: var(--muted); }
+.draft-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 18px 8px; color: var(--muted); font-size: 12px; }
+.draft-conflict { margin: 0 18px 10px; color: var(--muted); font-size: 12px; }
+.draft-conflict pre { margin-top: 8px; max-height: 120px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* --- settings dialog ----------------------------------------------------- */
 dialog { padding: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); }

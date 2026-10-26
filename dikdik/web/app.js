@@ -1313,6 +1313,184 @@ ${c.output}` : "";
     return isTerminal(state) ? "Task stopped without a result. Inspect the persisted events above." : "Work is running. Events are persisted backend activity.";
   }
 
+  // dikdik/web/drafts.ts
+  function parseDraft(value) {
+    if (typeof value !== "object" || value === null)
+      return null;
+    const row = value;
+    if (typeof row.scope !== "string" || !/^(home|[a-f0-9]{32})$/.test(row.scope) || typeof row.content !== "string" || row.content.length > 8000 || row.content.includes("\x00") || typeof row.revision !== "number" || !Number.isSafeInteger(row.revision) || row.revision < 0 || typeof row.updated !== "number" || !Number.isFinite(row.updated))
+      return null;
+    return { scope: row.scope, content: row.content, revision: row.revision, updated: row.updated };
+  }
+
+  class ComposerDrafts {
+    request;
+    render;
+    scope = "home";
+    entries = new Map;
+    constructor(request, render) {
+      this.request = request;
+      this.render = render;
+    }
+    entry(scope) {
+      let entry = this.entries.get(scope);
+      if (!entry) {
+        entry = { scope, content: "", revision: null, dirty: false, sequence: 0, conflict: null, error: false, loading: null, saving: null };
+        this.entries.set(scope, entry);
+      }
+      return entry;
+    }
+    paint(entry, apply = false) {
+      if (entry.scope !== this.scope)
+        return;
+      const state = entry.conflict ? "conflict" : entry.error ? "unsaved" : entry.saving || entry.dirty ? "saving" : entry.loading ? "loading" : "saved";
+      this.render(apply ? entry.content : null, { state, dirty: entry.dirty || !!entry.conflict, ...entry.conflict ? { remote: entry.conflict.content } : {} });
+    }
+    display() {
+      this.paint(this.entry(this.scope), true);
+    }
+    hasUnsaved() {
+      return [...this.entries.values()].some((entry) => entry.dirty || entry.conflict);
+    }
+    async select(scope) {
+      const previous = this.scope;
+      if (previous !== scope)
+        this.flush(previous);
+      this.scope = scope;
+      const entry = this.entry(scope);
+      this.paint(entry, true);
+      await this.load(entry);
+    }
+    async load(entry) {
+      if (entry.loading)
+        return entry.loading;
+      entry.loading = (async () => {
+        await Promise.resolve();
+        if (entry.saving)
+          await entry.saving;
+        try {
+          const row = parseDraft(await this.request(`/api/drafts/${entry.scope}`, "GET"));
+          if (!row || row.scope !== entry.scope)
+            throw new Error("Invalid draft response");
+          if (entry.dirty && row.content !== entry.content && (entry.revision === null ? !!row.content : entry.revision !== row.revision))
+            entry.conflict = row;
+          else {
+            entry.revision = row.revision;
+            if (!entry.dirty)
+              entry.content = row.content;
+            else if (row.content === entry.content)
+              entry.dirty = false;
+          }
+          entry.error = false;
+        } catch {
+          entry.error = true;
+        } finally {
+          entry.loading = null;
+          this.paint(entry, true);
+        }
+      })();
+      this.paint(entry);
+      return entry.loading;
+    }
+    update(content) {
+      const entry = this.entry(this.scope);
+      entry.content = content;
+      entry.dirty = true;
+      entry.sequence++;
+      entry.error = false;
+      this.paint(entry);
+      this.schedule(entry);
+    }
+    schedule(entry) {
+      if (entry.timer !== undefined)
+        clearTimeout(entry.timer);
+      entry.timer = setTimeout(() => {
+        entry.timer = undefined;
+        this.flush(entry.scope);
+      }, 300);
+    }
+    async flush(scope = this.scope) {
+      const entry = this.entry(scope);
+      if (entry.timer !== undefined) {
+        clearTimeout(entry.timer);
+        entry.timer = undefined;
+      }
+      if (!entry.dirty || entry.conflict)
+        return;
+      if (entry.saving)
+        return entry.saving;
+      if (entry.revision === null)
+        await this.load(entry);
+      if (entry.saving)
+        return entry.saving;
+      if (!entry.dirty)
+        return;
+      if (entry.revision === null || entry.conflict || entry.error) {
+        this.paint(entry);
+        return;
+      }
+      entry.saving = (async () => {
+        await Promise.resolve();
+        try {
+          for (let attempt = 0;attempt < 3 && entry.dirty && !entry.conflict; attempt++) {
+            const { content, sequence, revision } = entry;
+            const row = parseDraft(await this.request(`/api/drafts/${scope}`, "PATCH", { content, revision }));
+            if (!row || row.scope !== scope || row.revision <= revision)
+              throw new Error("Invalid draft response");
+            entry.revision = row.revision;
+            entry.error = false;
+            if (entry.sequence === sequence && entry.content === content)
+              entry.dirty = false;
+          }
+        } catch (error) {
+          const failure = error;
+          const current = failure?.status === 409 ? parseDraft(failure.data?.current) : null;
+          if (current && current.scope === scope)
+            entry.conflict = current;
+          else
+            entry.error = true;
+        } finally {
+          entry.saving = null;
+          this.paint(entry);
+          if (entry.dirty && !entry.conflict && !entry.error)
+            this.schedule(entry);
+        }
+      })();
+      this.paint(entry);
+      return entry.saving;
+    }
+    async resolve(keep) {
+      const entry = this.entry(this.scope), current = entry.conflict;
+      if (!current) {
+        entry.error = false;
+        await this.flush();
+        return;
+      }
+      entry.revision = current.revision;
+      entry.conflict = null;
+      entry.error = false;
+      entry.sequence++;
+      if (keep === "server") {
+        entry.content = current.content;
+        entry.dirty = false;
+        this.paint(entry, true);
+      } else {
+        entry.dirty = true;
+        await this.flush();
+      }
+    }
+    async sent(scope, content) {
+      const entry = this.entry(scope);
+      if (entry.content !== content || entry.conflict)
+        return;
+      entry.content = "";
+      entry.dirty = true;
+      entry.sequence++;
+      this.paint(entry, true);
+      await this.flush(scope);
+    }
+  }
+
   // dikdik/web/app.ts
   function element(id, kind) {
     const found = document.getElementById(id);
@@ -1346,6 +1524,7 @@ ${c.output}` : "";
   var observedTaskMode = "";
   var viewEpoch = 0;
   var observeQueued = false;
+  var submitting = false;
   function make(tag, className = "", text = "") {
     const node = document.createElement(tag);
     if (className)
@@ -2323,6 +2502,10 @@ ${c.output}` : "";
   function syncComposer() {
     textarea("objective").placeholder = select("mode").value === "plan" ? "Let’s work on a plan" : selected ? "Reply to Dikdik…" : "Ask Dikdik to build, fix or change something…";
     el("task-actions").hidden = !selected;
+    syncSend();
+  }
+  function syncSend() {
+    button("start").disabled = submitting || !textarea("objective").value.trim();
   }
   function selectTask(id) {
     stopStream();
@@ -2337,6 +2520,7 @@ ${c.output}` : "";
     closeSidebarDrawer();
     setUrl(id);
     syncComposer();
+    composerDrafts.select(id);
   }
   function newTask() {
     stopStream();
@@ -2354,6 +2538,7 @@ ${c.output}` : "";
     closeSidebarDrawer();
     setUrl(null);
     syncComposer();
+    composerDrafts.select("home");
     textarea("objective").focus?.();
   }
   function setTitle(title) {
@@ -2380,9 +2565,11 @@ ${c.output}` : "";
 
   class RequestError extends Error {
     status;
-    constructor(message2, status) {
+    data;
+    constructor(message2, status, data) {
       super(message2);
       this.status = status;
+      this.data = data;
     }
   }
   async function request(path, method, body) {
@@ -2396,12 +2583,42 @@ ${c.output}` : "";
     const data = await response.json().catch(() => null);
     if (!response.ok) {
       const detail = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string" ? data.error : "Request failed";
-      throw new RequestError(detail, response.status);
+      throw new RequestError(detail, response.status, data);
     }
     return data;
   }
   var api = (path, body) => request(path, body === undefined ? "GET" : "POST", body);
   var apiM4 = (path, method, body) => request(path, method, body);
+  var composerDrafts = new ComposerDrafts(request, (content, status) => {
+    if (content !== null) {
+      textarea("objective").value = content;
+      autosize();
+    }
+    const labels = { loading: "Loading draft…", saving: "Saving draft…", saved: "Draft saved", unsaved: "Draft not saved. Keep this tab open.", conflict: "This draft changed in another tab. Choose which version to keep." };
+    el("draft-status").textContent = labels[status.state];
+    el("draft-status-row").hidden = status.state === "saved" && !textarea("objective").value;
+    el("draft-use-saved").hidden = status.state !== "conflict";
+    el("draft-keep-local").hidden = status.state !== "conflict";
+    el("draft-retry").hidden = status.state !== "unsaved";
+    el("draft-conflict").hidden = status.state !== "conflict";
+    el("draft-remote").textContent = status.remote ?? "";
+    syncSend();
+  });
+  el("draft-use-saved").addEventListener("click", () => {
+    composerDrafts.resolve("server");
+  });
+  el("draft-keep-local").addEventListener("click", () => {
+    composerDrafts.resolve("local");
+  });
+  el("draft-retry").addEventListener("click", () => {
+    composerDrafts.resolve("local");
+  });
+  globalThis.addEventListener?.("beforeunload", (event) => {
+    if (composerDrafts.hasUnsaved()) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
   async function loadModel() {
     const info = await api("/api/model");
     const pill = el("model-pill");
@@ -2801,6 +3018,8 @@ ${c.output}` : "";
     const linked = globalThis.location ? new URLSearchParams(globalThis.location.search).get("task") : null;
     if (linked && !selected && lastTasks.some((task) => task.id === linked))
       selectTask(linked);
+    else
+      await composerDrafts.select(selected ?? "home");
     observe();
   }
   function showSignIn() {
@@ -3281,6 +3500,7 @@ ${c.output}` : "";
     });
   }
   function autosize() {
+    syncSend();
     const area = textarea("objective");
     if (!area.style)
       return;
@@ -3326,7 +3546,11 @@ ${c.output}` : "";
   el("browser-approval").addEventListener("change", syncMode);
   el("options-toggle").addEventListener("click", () => setOptions(el("options-panel").hidden === true));
   syncMode();
-  textarea("objective").addEventListener("input", autosize);
+  textarea("objective").addEventListener("input", () => {
+    autosize();
+    syncSend();
+    composerDrafts.update(textarea("objective").value);
+  });
   textarea("objective").addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && select("mode").value === "plan" && !textarea("objective").value.trim()) {
       event.preventDefault();
@@ -3346,6 +3570,7 @@ ${c.output}` : "";
     for (const suggestion of document.querySelectorAll(".suggestion")) {
       suggestion.addEventListener("click", () => {
         textarea("objective").value = suggestion.dataset.prompt ?? "";
+        composerDrafts.update(textarea("objective").value);
         autosize();
         textarea("objective").focus();
       });
@@ -3467,21 +3692,35 @@ ${c.output}` : "";
   });
   async function sendMessage(text) {
     if (!selected)
-      return;
+      return false;
+    const task = selected;
     try {
-      const reply = await api(`/api/tasks/${encodeURIComponent(selected)}/messages`, composerRequest(text));
-      watching = true;
+      const reply = await api(`/api/tasks/${encodeURIComponent(task)}/messages`, composerRequest(text));
+      if (task === selected)
+        watching = true;
       if (reply.queued)
         message("Queued. Dikdik will reply when the current step finishes.");
-      await loadHistory();
-      await observe(true);
     } catch (error) {
       message(error instanceof Error ? error.message : "Message failed", true);
+      return false;
     }
+    try {
+      await loadHistory();
+      if (task === selected)
+        await observe(true);
+    } catch {
+      message("Message sent. Refresh to load the latest conversation.", true);
+    }
+    return true;
   }
   el("task-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    button("start").disabled = true;
+    if (submitting || !textarea("objective").value.trim())
+      return;
+    submitting = true;
+    syncSend();
+    textarea("objective").disabled = true;
+    const originalScope = composerDrafts.scope, originalText = textarea("objective").value;
     try {
       let text = textarea("objective").value;
       const command = /^\/(plan|code)(?:\s+([\s\S]*))?$/.exec(text.trim());
@@ -3492,28 +3731,32 @@ ${c.output}` : "";
           await enterCode();
         text = command[2]?.trim() ?? "";
         textarea("objective").value = text;
-        if (!text)
+        if (!text) {
+          await composerDrafts.sent(originalScope, originalText);
           return;
+        }
       }
       if (selected && select("mode").value === "plan" && observedTaskMode !== "plan" && command?.[1] !== "plan")
         await enterPlanning();
       if (selected) {
         composerRequest(text);
-        textarea("objective").value = "";
-        autosize();
-        await sendMessage(text);
+        if (await sendMessage(text))
+          await composerDrafts.sent(originalScope, originalText);
         return;
       }
       const task = await api("/api/tasks", composerRequest(text));
-      textarea("objective").value = "";
-      autosize();
+      await composerDrafts.sent(originalScope, originalText);
       selectTask(task.id);
       await loadHistory();
       await observe();
     } catch (error) {
       message(error instanceof Error ? error.message : "Task failed", true);
     } finally {
-      button("start").disabled = false;
+      submitting = false;
+      textarea("objective").disabled = false;
+      composerDrafts.display();
+      autosize();
+      syncSend();
     }
   });
   button("cancel").onclick = async () => {

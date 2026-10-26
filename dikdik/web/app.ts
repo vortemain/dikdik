@@ -1,6 +1,7 @@
 import { browserView, buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries, profilesPanel, secretsPanel, skillsPanel } from "./contracts";
 import type { ActiveModel, AgentProfile, Automation, ChatMessage, DiffReview, M4Factory, M4Node, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
+import { ComposerDrafts } from './drafts';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
   const found = document.getElementById(id);
@@ -21,6 +22,7 @@ let lastMessages: ChatMessage[] = [];
 let agentProfiles: AgentProfile[] = [];  // read by syncMode at load time, so declared up here
 let currentPlan: PlanView | null = null, parentTask: string | null = null, observedTaskMode = '';
 let viewEpoch = 0, observeQueued = false;
+let submitting = false;
 
 // --- small DOM helpers ----------------------------------------------------
 function make<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
@@ -796,7 +798,9 @@ function setUrl(task: string | null): void {
 function syncComposer(): void {
   textarea("objective").placeholder = select('mode').value === 'plan' ? 'Let’s work on a plan' : selected ? "Reply to Dikdik…" : "Ask Dikdik to build, fix or change something…";
   el("task-actions").hidden = !selected;
+  syncSend();
 }
+function syncSend(): void { button('start').disabled = submitting || !textarea('objective').value.trim(); }
 function selectTask(id: string): void {
   stopStream();
   viewEpoch++;
@@ -808,6 +812,7 @@ function selectTask(id: string): void {
   closeSidebarDrawer();
   setUrl(id);
   syncComposer();
+  void composerDrafts.select(id);
 }
 function newTask(): void {
   stopStream();
@@ -821,6 +826,7 @@ function newTask(): void {
   closeSidebarDrawer();
   setUrl(null);
   syncComposer();
+  void composerDrafts.select('home');
   textarea("objective").focus?.();
 }
 function setTitle(title: string): void {
@@ -843,7 +849,7 @@ function message(value: string, error = false): void {
 }
 
 class RequestError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
+  constructor(message: string, readonly status: number, readonly data?: unknown) { super(message); }
 }
 async function request<T>(path: string, method: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -854,12 +860,26 @@ async function request<T>(path: string, method: string, body?: unknown): Promise
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const detail = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string" ? data.error : "Request failed";
-    throw new RequestError(detail, response.status);
+    throw new RequestError(detail, response.status, data);
   }
   return data as T;
 }
 const api = <T>(path: string, body?: unknown): Promise<T> => request<T>(path, body === undefined ? "GET" : "POST", body);
 const apiM4 = <T>(path: string, method: string, body?: unknown): Promise<T> => request<T>(path, method, body);
+const composerDrafts = new ComposerDrafts(request, (content, status) => {
+  if (content !== null) { textarea('objective').value = content; autosize(); }
+  const labels = { loading: 'Loading draft…', saving: 'Saving draft…', saved: 'Draft saved', unsaved: 'Draft not saved. Keep this tab open.', conflict: 'This draft changed in another tab. Choose which version to keep.' };
+  el('draft-status').textContent = labels[status.state];
+  el('draft-status-row').hidden = status.state === 'saved' && !textarea('objective').value;
+  el('draft-use-saved').hidden = status.state !== 'conflict'; el('draft-keep-local').hidden = status.state !== 'conflict';
+  el('draft-retry').hidden = status.state !== 'unsaved'; el('draft-conflict').hidden = status.state !== 'conflict';
+  el('draft-remote').textContent = status.remote ?? '';
+  syncSend();
+});
+el('draft-use-saved').addEventListener('click', () => { void composerDrafts.resolve('server'); });
+el('draft-keep-local').addEventListener('click', () => { void composerDrafts.resolve('local'); });
+el('draft-retry').addEventListener('click', () => { void composerDrafts.resolve('local'); });
+globalThis.addEventListener?.('beforeunload', event => { if (composerDrafts.hasUnsaved()) { event.preventDefault(); (event as BeforeUnloadEvent).returnValue = ''; } });
 
 // The composer names the model the next task will use, or says what's missing.
 async function loadModel(): Promise<void> {
@@ -1164,6 +1184,7 @@ async function connect(): Promise<void> {
   textarea("objective").focus?.();
   const linked = globalThis.location ? new URLSearchParams(globalThis.location.search).get("task") : null;
   if (linked && !selected && lastTasks.some(task => task.id === linked)) selectTask(linked);
+  else await composerDrafts.select(selected ?? 'home');
   void observe();
 }
 function showSignIn(): void {
@@ -1503,6 +1524,7 @@ if (typeof document.addEventListener === "function") {
 
 // --- composer / task submission -------------------------------------------
 function autosize(): void {
+  syncSend();
   const area = textarea("objective");
   if (!area.style) return;
   area.style.height = "auto";
@@ -1544,7 +1566,7 @@ el("browser-approval").addEventListener("change", syncMode);
 el("options-toggle").addEventListener("click", () => setOptions(el("options-panel").hidden === true));
 syncMode();
 
-textarea("objective").addEventListener("input", autosize);
+textarea("objective").addEventListener("input", () => { autosize(); syncSend(); composerDrafts.update(textarea('objective').value); });
 textarea("objective").addEventListener("keydown", (event: KeyboardEvent) => {
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && select('mode').value === 'plan' && !textarea('objective').value.trim()) { event.preventDefault(); void buildReviewedPlan(); return; }
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -1558,6 +1580,7 @@ if (typeof document.querySelectorAll === "function") {
   for (const suggestion of document.querySelectorAll<HTMLButtonElement>(".suggestion")) {
     suggestion.addEventListener("click", () => {
       textarea("objective").value = suggestion.dataset.prompt ?? "";
+      composerDrafts.update(textarea('objective').value);
       autosize();
       textarea("objective").focus();
     });
@@ -1659,41 +1682,44 @@ el("agent-form").addEventListener("submit", async event => {
   } catch (error) { message(error instanceof Error ? error.message : "Could not save the agent profile", true); }
 });
 /** A follow-up on the open task; queued by the server if that task is still running. */
-async function sendMessage(text: string): Promise<void> {
-  if (!selected) return;
+async function sendMessage(text: string): Promise<boolean> {
+  if (!selected) return false;
+  const task = selected;
   try {
-    const reply = await api<{ queued: boolean }>(`/api/tasks/${encodeURIComponent(selected)}/messages`, composerRequest(text));
-    watching = true;
+    const reply = await api<{ queued: boolean }>(`/api/tasks/${encodeURIComponent(task)}/messages`, composerRequest(text));
+    if (task === selected) watching = true;
     if (reply.queued) message("Queued. Dikdik will reply when the current step finishes.");
-    await loadHistory(); await observe(true);
-  } catch (error) { message(error instanceof Error ? error.message : "Message failed", true); }
+  } catch (error) { message(error instanceof Error ? error.message : "Message failed", true); return false; }
+  try { await loadHistory(); if (task === selected) await observe(true); }
+  catch { message('Message sent. Refresh to load the latest conversation.', true); }
+  return true;
 }
 
 el("task-form").addEventListener("submit", async event => {
-  event.preventDefault(); button("start").disabled = true;
+  event.preventDefault();
+  if (submitting || !textarea('objective').value.trim()) return;
+  submitting = true; syncSend(); textarea('objective').disabled = true;
+  const originalScope = composerDrafts.scope, originalText = textarea('objective').value;
   try {
     let text = textarea("objective").value;
     const command = /^\/(plan|code)(?:\s+([\s\S]*))?$/.exec(text.trim());
     if (command) {
       if (command[1] === 'plan') await enterPlanning(); else await enterCode();
       text = command[2]?.trim() ?? ''; textarea('objective').value = text;
-      if (!text) return;
+      if (!text) { await composerDrafts.sent(originalScope, originalText); return; }
     }
     if (selected && select('mode').value === 'plan' && observedTaskMode !== 'plan' && command?.[1] !== 'plan') await enterPlanning();
     if (selected) {
       composerRequest(text);  // validate before clearing the field
-      textarea("objective").value = "";
-      autosize();
-      await sendMessage(text);
+      if (await sendMessage(text)) await composerDrafts.sent(originalScope, originalText);
       return;
     }
     const task = await api<TaskSummary>("/api/tasks", composerRequest(text));
-    textarea("objective").value = "";
-    autosize();
+    await composerDrafts.sent(originalScope, originalText);
     selectTask(task.id);
     await loadHistory(); await observe();
   } catch (error) { message(error instanceof Error ? error.message : "Task failed", true); }
-  finally { button("start").disabled = false; }
+  finally { submitting = false; textarea('objective').disabled = false; composerDrafts.display(); autosize(); syncSend(); }
 });
 
 button("cancel").onclick = async () => {

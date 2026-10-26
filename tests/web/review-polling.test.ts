@@ -61,6 +61,7 @@ test("actual polling retains file selection and control nodes, with safe fallbac
       if (url === "/api/session") return Response.json({ signed_in: true });
       if (url === "/api/model") return Response.json({ configured: false, source: "none", problem: "No model is set up." });
       if (url === "/api/project") return Response.json({ name: "fixture", files: [], python_tests: [], manifests: [], limitations: "fixture" });
+      if (url.startsWith('/api/drafts/')) return Response.json({ scope: url.split('/').at(-1), content: '', revision: 0, updated: 0 });
       if (url.endsWith('/planner')) return Response.json({ task_id: 'a'.repeat(32), planner_id: null, content: '', revision: 0, built_revision: 0 });
       if (url === "/api/tasks") return Response.json([{ id: "task-1", state }]);
       if (url === '/api/tasks/task-1/messages') { state = 'running'; result = null; return Response.json({ queued: false }); }

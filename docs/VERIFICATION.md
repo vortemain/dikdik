@@ -1,6 +1,32 @@
 # Verification record — updated 2026-10-27
 
-## Phase A — Planning and task list (latest)
+## Phase A — Composer drafts (latest)
+
+- Full checks: **269 Python passes / 2 explicit live-runtime skips** (271 total),
+  **60 Bun tests / 328 assertions**, **15 Rust tests**, strict TypeScript check
+  and build, deterministic syntax-only evaluation **4/4**.
+- Real Chrome against the actual HTTP server and SQLite checked Home reload,
+  separate conversation drafts, immediate navigation flush, reload, suggestion
+  persistence, whitespace/empty Send gating, Shift+Enter, Enter submission and
+  acknowledged clearing. Missing approval preserved the rejected message. The
+  two real offline syntax-only candidates left workspace source unchanged;
+  no model, Docker or stand-in was involved in this feature's browser flow.
+- Two tabs exercised 409 conflicts without overwriting the saved text, the remote
+  preview, explicit Keep my draft and Use saved draft, and reload after resolution.
+  Draft text did not appear in task events. Four inspected screenshots cover
+  **1440×900** and **390×844**, light and dark, without horizontal page overflow.
+  Page errors and unexpected console errors were empty; two deliberate conflict
+  fetches produced the expected 409 console entries.
+- Backend tests cover authentication, bounded input, missing task scope, real
+  concurrent SQLite writes, revisioned clears and deletion cleanup. Frontend
+  tests cover delayed navigation, concurrent clear, send acknowledgment matching,
+  failed saves/retry, two initial-read flushes sharing one save and explicit
+  conflict choices. No existing test was removed.
+- Early QA runs used an incorrect startup selector or left the Changes drawer
+  over the phone composer. The final capture closes that drawer and waits for
+  theme transitions before taking the actual composer screenshots.
+
+## Phase A — Planning and task list
 
 - Final full checks: **263 Python passes / 2 explicit live-runtime skips** (265
   total), **54 Bun tests / 302 assertions**, **15 Rust tests**, strict TypeScript

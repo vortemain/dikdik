@@ -11,12 +11,13 @@ import urllib.parse
 
 from .agent_profiles import AgentProfiles
 from .automation import validate_schedule
+from .drafts import DraftConflict, Drafts
 from .mcp import McpStore, test_server
 from .profiles import ApiError, ProfileStore
 from .secrets_store import SecretsError, SecretsStore
 from .skills import SkillIndex
 
-ROUTE_PREFIXES = ("/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles")
+ROUTE_PREFIXES = ("/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts")
 
 
 def build_routes(engine_or_stores):
@@ -25,6 +26,19 @@ def build_routes(engine_or_stores):
     secrets = SecretsStore(stores.data / "secrets.bin", stores.data / "secrets.key")
     skills = SkillIndex(stores.store, stores.data / "skills", stores.root / ".dikdik" / "skills")
     automations = stores.automation
+    drafts = Drafts(stores.store)
+
+    def draft_routes(method, parts, body, query):
+        if len(parts) != 3:
+            return None
+        if method == 'GET':
+            return 200, drafts.get(parts[2])
+        if method == 'PATCH':
+            try:
+                return 200, drafts.save(parts[2], body)
+            except DraftConflict as exc:
+                return 409, {'error': 'This draft changed in another tab. Choose which version to keep.', 'current': exc.current}
+        return None
 
     def profiles_routes(method: str, parts: list[str], body: dict, query: dict):
         if method == "GET" and len(parts) == 2:
@@ -112,6 +126,7 @@ def build_routes(engine_or_stores):
         return None
 
     TABLE = {
+        '/api/drafts': draft_routes,
         "/api/profiles": profiles_routes,
         "/api/secrets": secrets_routes,
         "/api/skills": skills_routes,
