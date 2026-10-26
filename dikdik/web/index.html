@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Dikdik</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true">
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.6l2 2.2h7.4A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8m0-4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16m0 4v-4h-4"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></symbol>
+    <symbol id="i-diff" viewBox="0 0 24 24"><path d="M14 3h-4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M11.5 11v4m-2-2h4M9.5 18h4"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-file-plus" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M12 11v6m-3-3h6"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16Z"/><path d="m13.5 6.5 4 4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7.5 9.5 3 2.5-3 2.5M13 15h4"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4m0 0h11l-2 4 2 4H5"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5 13.8 10l6.7 2-6.7 2L12 20.5 10.2 14l-6.7-2 6.7-2Z"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 8v5m0 3.5h.01"/><circle cx="12" cy="12" r="9"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10m4 0h2M4 17h4m4 0h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.4 3 8.2 7 9.5 4-1.3 7-5.1 7-9.5V6Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9.5 3v3m5-3v3m-5 12v3m5-3v3M3 9.5h3m-3 5h3m12-5h3m-3 5h3"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8.5-8.5M16 7l2.5 2.5M14 9l2 2"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5Zm0 15A1.5 1.5 0 0 0 6.5 21H19"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2m0 15v2M4.6 4.6l1.4 1.4m12 12 1.4 1.4M2.5 12h2m15 0h2M4.6 19.4 6 18M18 6l1.4-1.4"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5m6-5v5M6.5 8h11v3a5.5 5.5 0 0 1-11 0Zm5.5 8.5V21"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 6 3 3H7l3-3ZM12 13v7"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="4.5" rx="1.5"/><path d="M5.5 9v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V9M10 13h4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M10 11v6m4-6v6M6.5 7l1 12a2 2 0 0 0 2 1.8h5a2 2 0 0 0 2-1.8l1-12M9.5 7V4.5h5V7"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19.5h14"/></symbol>
+  </svg>
+
+  <div id="boot" class="boot" aria-hidden="true"><img src="/icon.svg" alt=""></div>
+
+  <div id="connect-view" class="connect-view" hidden>
+    <section class="connect-card" aria-labelledby="connect-title">
+      <img src="/icon.svg" alt="">
+      <h1 id="connect-title">Open Dikdik from your terminal</h1>
+      <p>Dikdik opens this page for you when it starts. If it didn’t, use the sign-in link it printed — you only need it once per browser.</p>
+      <pre><code>python -m dikdik.server --workspace .</code></pre>
+      <details>
+        <summary>Paste a sign-in token instead</summary>
+        <form id="connect-form">
+          <label for="token" class="sr-only">Sign-in token</label>
+          <div class="row"><input id="token" type="password" autocomplete="off" placeholder="Token from the sign-in link" required><button type="submit" class="primary">Continue</button></div>
+        </form>
+      </details>
+    </section>
+  </div>
+
+  <p id="message" role="status" aria-live="polite"></p>
+  <div id="task-menu" class="menu" role="menu" aria-label="Task actions" hidden>
+    <button type="button" role="menuitem" data-action="rename"><svg class="i"><use href="#i-pencil"/></svg><span>Rename</span></button>
+    <button type="button" role="menuitem" data-action="pin"><svg class="i"><use href="#i-pin"/></svg><span>Pin</span></button>
+    <button type="button" role="menuitem" data-action="archive"><svg class="i"><use href="#i-archive"/></svg><span>Archive</span></button>
+    <button type="button" role="menuitem" data-action="export"><svg class="i"><use href="#i-download"/></svg><span>Export transcript</span></button>
+    <button type="button" role="menuitem" data-action="delete" class="danger-item"><svg class="i"><use href="#i-trash"/></svg><span>Delete</span></button>
+  </div>
+
+  <div id="workspace" class="app" hidden>
+    <aside class="sidebar" aria-label="Tasks">
+      <div class="sidebar-top">
+        <a class="brand" href="/" aria-label="Dikdik home"><img src="/icon.svg" alt="" width="26" height="26">dikdik</a>
+        <button id="toggle-sidebar" class="ghost icon" type="button" aria-label="Hide sidebar" title="Hide sidebar"><svg class="i"><use href="#i-sidebar"/></svg></button>
+      </div>
+      <button id="new-task" class="new-task" type="button"><svg class="i"><use href="#i-plus"/></svg>New task<kbd>Ctrl K</kbd></button>
+      <label class="task-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Search tasks</span><input id="task-search" type="search" placeholder="Search tasks" autocomplete="off"></label>
+      <p id="recent-head" class="list-head">Recent</p>
+      <nav id="conv-list" class="conv-list" aria-label="Recent tasks">
+        <div id="history" class="conv-history"></div>
+        <button id="show-archived" class="ghost small show-archived" type="button" hidden>Show archived</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="project">
+          <span class="project-icon"><svg class="i"><use href="#i-folder"/></svg></span>
+          <div class="project-text"><h2 id="project-name">—</h2><p id="project-summary"></p></div>
+          <button id="refresh" type="button" class="ghost icon" aria-label="Refresh inventory" title="Refresh inventory"><svg class="i"><use href="#i-refresh"/></svg></button>
+        </div>
+        <button id="open-settings" class="foot-button" type="button"><svg class="i"><use href="#i-gear"/></svg>Settings</button>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim"></div>
+
+    <main id="main" class="main" aria-label="Conversation">
+      <header class="topbar">
+        <button id="show-sidebar" class="ghost icon" type="button" aria-label="Show sidebar" title="Show sidebar" hidden><svg class="i"><use href="#i-sidebar"/></svg></button>
+        <button id="toggle-sidebar-mobile" class="ghost icon" type="button" aria-label="Open menu"><svg class="i"><use href="#i-menu"/></svg></button>
+        <div class="topbar-title"><h1 id="chat-title">New task</h1><span id="task-state" class="state-pill" role="status" aria-live="polite"></span></div>
+        <div class="topbar-actions">
+          <button id="task-actions" class="ghost icon" type="button" aria-label="Task actions" title="Task actions" hidden><svg class="i"><use href="#i-more"/></svg></button>
+          <button id="cancel" class="secondary small" type="button" disabled><svg class="i"><use href="#i-stop"/></svg>Stop</button>
+          <button id="open-files" class="ghost icon" type="button" aria-label="Files and Git" title="Files and Git"><svg class="i"><use href="#i-folder"/></svg></button>
+          <button id="toggle-canvas" class="ghost small changes-button" type="button" aria-pressed="false" aria-controls="canvas" hidden><svg class="i"><use href="#i-diff"/></svg><span class="label">Changes</span><span id="changes-count" class="count"></span></button>
+        </div>
+      </header>
+
+      <div id="thread" class="thread">
+        <section class="welcome" aria-label="Welcome">
+          <img class="welcome-mark" src="/icon.svg" alt="">
+          <h1>What should we build?</h1>
+          <p id="welcome-sub">Describe a bug, feature or change. Dikdik works on an isolated copy and shows you every diff.</p>
+          <div class="suggestions">
+            <button class="suggestion" type="button" data-prompt="Fix the failing tests without changing the tests."><strong>Fix failing tests</strong><span>Find the bug and repair it; tests stay untouched.</span></button>
+            <button class="suggestion" type="button" data-prompt="Find a likely bug in this project and fix it."><strong>Hunt a bug</strong><span>Investigate the code and propose a fix.</span></button>
+            <button class="suggestion" type="button" data-prompt="Add input validation and clear error messages to the main module."><strong>Harden inputs</strong><span>Validate arguments with clear errors.</span></button>
+            <button class="suggestion" type="button" data-prompt="Add a unit test that covers the main function's edge cases."><strong>Add test coverage</strong><span>Write a new test for edge cases.</span></button>
+          </div>
+        </section>
+        <ol id="message-stream" class="message-stream" aria-label="Conversation messages"></ol>
+        <div id="working" class="working" hidden><span class="working-dots" aria-hidden="true"><i></i><i></i><i></i></span><span id="working-label">Working</span></div>
+      </div>
+
+      <section class="composer" aria-label="Send a message">
+        <div class="composer-inner">
+          <form id="task-form">
+            <label for="objective" class="sr-only">Objective</label>
+            <textarea id="objective" rows="1" maxlength="4000" placeholder="Ask Dikdik to build, fix or change something…" required></textarea>
+            <div id="options-panel" class="options-panel" hidden>
+              <div id="offline-fields"><label for="edits">Exact replacements (JSON)</label><textarea id="edits" rows="5" spellcheck="false">[{"path":"calculator.py","before":"return a - b","after":"return a + b"}]</textarea><p class="hint">Existing inventoried files only. Each match must be unique; existing tests are protected.</p></div>
+              <div id="model-fields"><p id="model-hint" class="hint">One bounded model proposal using your default model profile. No repair loop.</p><p id="agent-hint" class="hint" hidden>The agent inspects files, edits or creates candidate files inside the safety limits, and runs checks. Your source stays unchanged.</p></div>
+            </div>
+            <div id="approvals" class="approvals">
+              <span class="approvals-label">Allow for this task</span>
+              <label id="external-field" class="toggle" title="Sends the objective, bounded repository text and tool output to your configured model provider."><input id="external" type="checkbox">Share code with model</label>
+              <label id="execution-field" class="toggle" title="Runs this repository’s tests inside the restricted Docker container." hidden><input id="execution" type="checkbox">Run tests in Docker</label>
+            </div>
+            <div class="composer-controls">
+              <label class="pill" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
+              <label class="pill" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="docker">Docker tests</option></select></label>
+              <label id="agent-profile-pill" class="pill" title="Agent profile"><span class="sr-only">Agent profile</span><svg class="i"><use href="#i-book"/></svg><select id="agent-profile"><option value="">Default agent</option></select></label>
+              <button id="model-pill" class="ghost small model-pill" type="button" title="Model used by model and agent tasks"><svg class="i"><use href="#i-cpu"/></svg><span id="model-label">Model</span></button>
+              <button id="options-toggle" class="ghost icon options-toggle" type="button" aria-expanded="false" aria-controls="options-panel" aria-label="Mode options" title="Mode options"><svg class="i"><use href="#i-sliders"/></svg></button>
+              <span class="composer-spacer"></span>
+              <button id="start" type="submit" class="primary" aria-label="Start task" title="Start task (Enter)"><svg class="i"><use href="#i-arrow-up"/></svg></button>
+            </div>
+          </form>
+          <p class="composer-footnote">Dikdik works on an isolated copy. Your files change only when you apply.</p>
+        </div>
+      </section>
+    </main>
+
+    <aside id="canvas" class="canvas" aria-label="Workspace panel" hidden>
+      <div class="canvas-head">
+        <div class="canvas-tabs" role="tablist" aria-label="Panel">
+          <button class="canvas-tab" type="button" role="tab" data-tab="changes" aria-selected="true"><span id="review-title">Changes</span><span id="canvas-count" class="tab-count"></span></button>
+          <button class="canvas-tab" type="button" role="tab" data-tab="files" aria-selected="false">Files</button>
+          <button class="canvas-tab" type="button" role="tab" data-tab="git" aria-selected="false">Git<span id="git-count" class="tab-count"></span></button>
+        </div>
+        <span class="grow"></span>
+        <button id="close-canvas" class="ghost icon" type="button" aria-label="Close panel" title="Close"><svg class="i"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="canvas-body" data-pane="changes">
+        <div id="apply-bar" class="apply-bar" hidden>
+          <p id="apply-note">Changes live in an isolated copy until you apply them.</p>
+          <button id="apply-cancel" class="ghost small" type="button" hidden>Cancel</button>
+          <button id="apply-commit" class="small" type="button" hidden><svg class="i"><use href="#i-check"/></svg>Commit…</button>
+          <button id="apply" class="primary small" type="button"><svg class="i"><use href="#i-download"/></svg><span id="apply-label">Apply to workspace</span></button>
+        </div>
+        <div id="review-controls" role="group" aria-label="Changed files" hidden></div>
+        <p id="review-note">Run a task to produce a real diff.</p>
+        <div class="diff-view">
+          <div class="code-block">
+            <div class="code-head"><h3 id="selected-file" hidden></h3><button id="copy-diff" class="copy" type="button"><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button></div>
+            <pre id="diff" tabindex="0" aria-labelledby="selected-file" hidden></pre>
+          </div>
+        </div>
+      </div>
+      <div class="canvas-body" data-pane="files" hidden>
+        <label class="file-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Find a file</span><input id="file-search" type="search" placeholder="Find a file" autocomplete="off"></label>
+        <div id="file-list" class="file-list" role="listbox" aria-label="Workspace files"></div>
+        <div class="diff-view">
+          <div class="code-block">
+            <div class="code-head">
+              <h3 id="file-name" class="code-lang">Choose a file</h3>
+              <div id="file-version" class="segmented" role="group" aria-label="Version" hidden>
+                <button type="button" data-version="workspace" aria-pressed="true">Workspace</button>
+                <button type="button" data-version="candidate" aria-pressed="false">Candidate</button>
+              </div>
+              <button id="copy-file" class="copy" type="button" hidden><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button>
+            </div>
+            <pre id="file-view" class="numbered" tabindex="0"></pre>
+          </div>
+        </div>
+      </div>
+      <div class="canvas-body" data-pane="git" hidden>
+        <div id="git-panel" class="git-panel"><p class="muted">Loading Git status…</p></div>
+      </div>
+    </aside>
+  </div>
+
+  <dialog id="settings" class="settings" aria-labelledby="settings-title">
+    <nav class="settings-nav" role="tablist" aria-label="Settings sections">
+      <h2 id="settings-title">Settings</h2>
+      <button class="settings-tab" type="button" role="tab" data-pane="general" aria-selected="true"><svg class="i"><use href="#i-sun"/></svg>General</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="models" aria-selected="false"><svg class="i"><use href="#i-cpu"/></svg>Models</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="agents" aria-selected="false"><svg class="i"><use href="#i-sparkle"/></svg>Agents</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="secrets" aria-selected="false"><svg class="i"><use href="#i-key"/></svg>API keys</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="skills" aria-selected="false"><svg class="i"><use href="#i-book"/></svg>Skills</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="mcp" aria-selected="false"><svg class="i"><use href="#i-plug"/></svg>MCP servers</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="automations" aria-selected="false"><svg class="i"><use href="#i-clock"/></svg>Automations</button>
+    </nav>
+    <div class="settings-main">
+      <div class="settings-head"><h3 id="settings-pane-title">General</h3><button id="close-settings" class="ghost icon" type="button" aria-label="Close settings"><svg class="i"><use href="#i-x"/></svg></button></div>
+      <section class="settings-pane" data-pane="general" role="tabpanel">
+        <div class="setting-row"><div><h4>Appearance</h4><p>Match your system, or pick light or dark.</p></div><select id="theme" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+        <div class="setting-row"><div><h4>Workspace</h4><p>The only folder Dikdik may read. Candidates are written to the private data directory.</p></div></div>
+        <dl class="kv"><dt>Project</dt><dd id="settings-project">—</dd><dt>Inventory</dt><dd id="settings-inventory">—</dd><dt>Indexer</dt><dd id="settings-indexer">—</dd><dt>Network</dt><dd>Loopback only (127.0.0.1)</dd><dt>Sign-in</dt><dd>Remembered in this browser for 30 days. Restart with <code>--rotate-token</code> to sign out everywhere.</dd></dl>
+      </section>
+      <section class="settings-pane" data-pane="models" role="tabpanel" hidden><p class="lead">Profiles choose the provider and model the agent uses. Keys live under API keys and are referenced by name.</p><div id="panel-profiles" class="m4-panel-mount"></div></section>
+      <section class="settings-pane" data-pane="agents" role="tabpanel" hidden>
+        <p class="lead">Agent profiles are ready-made setups you pick in the composer: your instructions, which model to use, how long it may work, and which tools it may use. Tool switches only narrow what a task's approvals allow.</p>
+        <form id="agent-form" class="skill-form">
+          <input id="agent-id" type="hidden">
+          <div class="skill-fields">
+            <label for="agent-name">Name</label><input id="agent-name" required maxlength="64" placeholder="Careful reviewer">
+            <label for="agent-instructions">Instructions</label><textarea id="agent-instructions" rows="4" placeholder="Explain the plan before editing. Keep changes minimal. Always add a test."></textarea>
+            <label for="agent-model">Model</label><select id="agent-model"><option value="">Default model profile</option></select>
+            <label for="agent-steps">Max model calls</label><input id="agent-steps" type="number" min="1" max="60" placeholder="12">
+            <label for="agent-minutes">Time limit (seconds)</label><input id="agent-minutes" type="number" min="30" max="1800" placeholder="180">
+            <span>Tools</span>
+            <div class="agent-flags">
+              <label class="check"><input id="agent-shell" type="checkbox" checked>Shell in Docker</label>
+              <label class="check"><input id="agent-mcp" type="checkbox" checked>MCP servers</label>
+              <label class="check"><input id="agent-skills" type="checkbox" checked>Skills</label>
+            </div>
+          </div>
+          <div class="row"><button id="agent-save" type="submit" class="primary small">Add agent</button><button id="agent-cancel" type="button" class="ghost small" hidden>Cancel edit</button></div>
+        </form>
+        <ol id="agent-list" class="m4-list"></ol>
+      </section>
+      <section class="settings-pane" data-pane="secrets" role="tabpanel" hidden><p class="lead">Store provider keys encrypted on this machine. Values are never shown again after saving.</p><div id="panel-secrets" class="m4-panel-mount"></div></section>
+      <section class="settings-pane" data-pane="skills" role="tabpanel" hidden>
+        <p class="lead">Reusable guidance the agent reads at the start of every task: conventions, how to run things, what to avoid. Project skills live in <code>.dikdik/skills/</code>; personal ones stay on this machine.</p>
+        <form id="skill-form" class="skill-form">
+          <div class="skill-fields">
+            <label for="skill-name">Name</label><input id="skill-name" required maxlength="64" placeholder="python-style">
+            <label for="skill-scope">Where</label><select id="skill-scope"><option value="project">This project</option><option value="personal">Personal (all projects)</option></select>
+            <label for="skill-description">Description</label><input id="skill-description" maxlength="300" placeholder="When to use it (optional)">
+            <label for="skill-content">Guidance</label><textarea id="skill-content" rows="5" required placeholder="Use type hints. Run tests with python -m unittest. Never edit migrations."></textarea>
+          </div>
+          <button type="submit" class="primary small">Add skill</button>
+        </form>
+        <div id="panel-skills" class="m4-panel-mount"></div>
+      </section>
+      <section class="settings-pane" data-pane="mcp" role="tabpanel" hidden>
+        <p class="lead">Give the agent tools from Model Context Protocol servers: issue trackers, databases, docs search. Servers start disabled; agent tasks connect to the ones you enable. A command server runs on this machine with only the key you give it.</p>
+        <form id="mcp-form" class="skill-form">
+          <div class="skill-fields">
+            <label for="mcp-name">Name</label><input id="mcp-name" required maxlength="32" placeholder="github">
+            <label for="mcp-transport">Type</label><select id="mcp-transport"><option value="http">Remote (HTTP)</option><option value="stdio">Local command</option></select>
+            <label for="mcp-url" class="mcp-http">Server URL</label><input id="mcp-url" class="mcp-http" placeholder="https://mcp.example.com/mcp">
+            <label for="mcp-command" class="mcp-stdio" hidden>Command</label><input id="mcp-command" class="mcp-stdio" placeholder="npx -y @modelcontextprotocol/server-github" hidden>
+            <label for="mcp-secret">API key name</label><input id="mcp-secret" placeholder="Optional: a name from API keys">
+            <label for="mcp-env" class="mcp-stdio" hidden>Key variable</label><input id="mcp-env" class="mcp-stdio" placeholder="GITHUB_PERSONAL_ACCESS_TOKEN" hidden>
+          </div>
+          <button type="submit" class="primary small">Add server</button>
+        </form>
+        <ol id="mcp-list" class="m4-list"></ol>
+      </section>
+      <section class="settings-pane" data-pane="automations" role="tabpanel" hidden>
+        <p class="lead">Run a task on a schedule, like a nightly dependency check or a weekly tidy-up. Each run is an ordinary task you can open, review and apply. Runs use exactly the mode and approvals you set here.</p>
+        <form id="auto-form" class="skill-form">
+          <input id="auto-id" type="hidden">
+          <div class="skill-fields">
+            <label for="auto-name">Name</label><input id="auto-name" required maxlength="64" placeholder="Nightly test check">
+            <label for="auto-objective">Task</label><textarea id="auto-objective" rows="3" required placeholder="Run the tests and fix anything that fails, without changing the tests."></textarea>
+            <label for="auto-kind">When</label>
+            <div class="row auto-when">
+              <select id="auto-kind"><option value="daily">Every day at</option><option value="interval">Every N minutes</option></select>
+              <input id="auto-daily" type="time" value="07:00" aria-label="Time of day">
+              <input id="auto-minutes" type="number" min="1" value="60" aria-label="Minutes between runs" hidden>
+            </div>
+            <label for="auto-mode">Mode</label>
+            <div class="row auto-when">
+              <select id="auto-mode"><option value="agent">Agent</option><option value="model">Single proposal</option></select>
+              <select id="auto-verification" aria-label="Verification"><option value="syntax">Syntax check</option><option value="docker">Docker tests</option></select>
+              <select id="auto-profile" aria-label="Agent profile"><option value="">Default agent</option></select>
+            </div>
+            <span>Approvals</span>
+            <div class="agent-flags">
+              <label class="check"><input id="auto-external" type="checkbox">Send code to my model provider on each run</label>
+              <label class="check" id="auto-execution-field" hidden><input id="auto-execution" type="checkbox">Run tests in Docker on each run</label>
+            </div>
+          </div>
+          <div class="row"><button id="auto-save" type="submit" class="primary small">Add automation</button><button id="auto-cancel" type="button" class="ghost small" hidden>Cancel edit</button></div>
+        </form>
+        <ol id="auto-list" class="m4-list"></ol>
+      </section>
+    </div>
+  </dialog>
+</body>
+</html>

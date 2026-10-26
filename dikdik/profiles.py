@@ -1,0 +1,162 @@
+"""Model profiles: SQLite-backed CRUD with contract validation.
+
+Credentials never live here; only an opaque `credential_secret_ref` pointing
+into the secrets store is accepted, and it is never returned by reads.
+"""
+
+import time
+import urllib.parse
+import uuid
+
+PROVIDERS = {"openai", "anthropic", "azure", "local"}
+FIXED_ENDPOINTS = {
+    "https://api.openai.com/v1",
+    "https://api.anthropic.com/v1",
+    "https://mojave.cloud/v1",
+}
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
+
+# Additive, defensive hook for the agent-layer whitelist; profiles carry no
+# permission semantics, but a shared referral prevents accidental key reuse.
+NON_PATCHABLE_KEYS = {"name", "provider", "id", "credential_secret_ref"}
+
+
+class ApiError(Exception):
+    def __init__(self, status: int, error: str):
+        super().__init__(error)
+        self.status = status
+        self.error = error
+
+
+def _ref_valid(ref) -> bool:
+    return isinstance(ref, str) and len(ref) <= 64 and len(ref) >= 1 and all((c.isalnum() or c in "_.-") for c in ref) and not ref.startswith(".")
+
+
+def _endpoint_valid(endpoint) -> bool:
+    if not isinstance(endpoint, str) or not endpoint or len(endpoint) > 400:
+        return False
+    if endpoint in FIXED_ENDPOINTS:
+        return True
+    parts = urllib.parse.urlsplit(endpoint)
+    if parts.scheme not in {"http", "https"}:
+        return False
+    host = parts.hostname
+    return host is not None and host.lower() in {"localhost", "127.0.0.1", "::1"}
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS profiles (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, provider TEXT NOT NULL,
+    model TEXT NOT NULL, endpoint TEXT, timeout_seconds INTEGER,
+    credential_secret_ref TEXT, is_default INTEGER NOT NULL DEFAULT 0,
+    created REAL NOT NULL
+);
+"""
+
+
+class ProfileStore:
+    """All state lives in the shared Store; instances are stateless."""
+
+    def __init__(self, store):
+        self.store = store
+
+    # --- validation ----------------------------------------------------
+    def _validate(self, body, *, require_core: bool):
+        if not isinstance(body, dict):
+            raise ApiError(400, "Body must be a JSON object")
+        out = {}
+        if require_core:
+            name = body.get("name")
+            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 64:
+                raise ApiError(400, "Name must contain 1–64 characters")
+            provider = body.get("provider")
+            if provider not in PROVIDERS:
+                raise ApiError(400, "Provider must be one of openai, anthropic, azure, local")
+            model = body.get("model")
+            if not isinstance(model, str) or not 1 <= len(model.strip()) <= 128:
+                raise ApiError(400, "Model must contain 1–128 characters")
+            out.update(name=name.strip(), provider=provider, model=model.strip())
+        if "endpoint" in body:
+            endpoint = body["endpoint"]
+            if endpoint is not None and not _endpoint_valid(endpoint):
+                raise ApiError(400, "Endpoint must be an http(s) loopback URL or an approved public provider URL")
+            out["endpoint"] = endpoint
+        if "timeout_seconds" in body:
+            value = body["timeout_seconds"]
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 600:
+                raise ApiError(400, "Timeout must be an integer of 1–600 seconds")
+            out["timeout_seconds"] = value
+        if "credential_secret_ref" in body:
+            ref = body["credential_secret_ref"]
+            if ref is not None and not _ref_valid(ref):
+                raise ApiError(400, "Credential secret reference must be 1–64 characters of letters, digits, '.', '_' or '-'")
+            out["credential_secret_ref"] = ref
+        if "is_default" in body:
+            if not isinstance(body["is_default"], bool):
+                raise ApiError(400, "Default flag must be boolean")
+            out["is_default"] = body["is_default"]
+        return out
+
+    # --- CRUD ----------------------------------------------------------
+    def create(self, body):
+        fields = self._validate(body, require_core=True)
+        profile_id = uuid.uuid4().hex
+        with self.store.connect() as db:
+            db.execute(SCHEMA)
+            row = db.execute("SELECT 1 FROM profiles WHERE name=?", (fields["name"],)).fetchone()
+            if row:
+                raise ApiError(400, "A profile with this name already exists")
+            default = 0 if db.execute("SELECT 1 FROM profiles LIMIT 1").fetchone() else 1
+            db.execute(
+                "INSERT INTO profiles(id,name,provider,model,endpoint,timeout_seconds,credential_secret_ref,is_default,created) VALUES(?,?,?,?,?,?,?,?,?)",
+                (profile_id, fields["name"], fields["provider"], fields["model"], fields.get("endpoint"), fields.get("timeout_seconds"), fields.get("credential_secret_ref"), default, time.time()),
+            )
+        return 201, {"id": profile_id}
+
+    def list_profiles(self):
+        with self.store.connect() as db:
+            db.execute(SCHEMA)
+            rows = db.execute("SELECT id,name,provider,model,endpoint,timeout_seconds,is_default FROM profiles ORDER BY created").fetchall()
+        # Normalize nulls to the contract's documented defaults so the response shape
+        # is stable: endpoint defaults to "" (no override), timeout to 60s.
+        return 200, [{"id": r["id"], "name": r["name"], "provider": r["provider"], "model": r["model"], "endpoint": r["endpoint"] or "", "timeout_seconds": r["timeout_seconds"] if r["timeout_seconds"] is not None else 60, "is_default": bool(r["is_default"])} for r in rows]
+
+    def patch(self, profile_id: str, body):
+        if not isinstance(body, dict):
+            raise ApiError(400, "Body must be a JSON object")
+        with self.store.connect() as db:
+            db.execute(SCHEMA)
+            row = db.execute("SELECT id FROM profiles WHERE id=?", (profile_id,)).fetchone()
+            if row is None:
+                raise ApiError(404, "Profile not found")
+        unknown = set(body) - {"model", "endpoint", "timeout_seconds", "is_default", "credential_secret_ref"}
+        if unknown:
+            raise ApiError(400, "Only model, endpoint, timeout_seconds, is_default and the secret reference are patchable here")
+        fields = self._validate(body, require_core=False)
+        if not fields:
+            raise ApiError(400, "Nothing to update")
+        if "is_default" in fields and not isinstance(fields["is_default"], bool):
+            raise ApiError(400, "Default flag must be boolean")
+        with self.store.connect() as db:
+            row = db.execute("SELECT id FROM profiles WHERE id=?", (profile_id,)).fetchone()
+            if row is None:
+                raise ApiError(404, "Profile not found")
+            for key, value in fields.items():
+                db.execute(f"UPDATE profiles SET {key}=? WHERE id=?", (int(value) if key == "is_default" else value, profile_id))
+            if fields.get("is_default"):
+                db.execute("UPDATE profiles SET is_default=0 WHERE id<>?", (profile_id,))
+        return 200, {"id": profile_id, **{k: (v if k != "is_default" else bool(v)) for k, v in fields.items()}}
+
+    def delete(self, profile_id: str, confirm_default: bool):
+        with self.store.connect() as db:
+            db.execute(SCHEMA)
+            row = db.execute("SELECT is_default FROM profiles WHERE id=?", (profile_id,)).fetchone()
+            if row is None:
+                raise ApiError(404, "Profile not found")
+            if row["is_default"] and not confirm_default:
+                raise ApiError(409, "Deleting the default profile requires explicit confirmation (confirm_default=1)")
+            db.execute("DELETE FROM profiles WHERE id=?", (profile_id,))
+            remaining = db.execute("SELECT id FROM profiles ORDER BY created LIMIT 1").fetchall()
+            if remaining:
+                db.execute("UPDATE profiles SET is_default=1 WHERE id=?", (remaining[0]["id"],))
+        return 200, {"deleted": profile_id}

@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = ["crates/dikdik-index"]
+
+[profile.release]
+lto = "thin"

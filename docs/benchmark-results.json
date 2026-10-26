@@ -1,0 +1,42 @@
+{
+  "scope": "Synthetic 500-file UTF-8 inventory + SHA256 metadata; no model, Docker, retrieval-quality or end-to-end agent performance claims",
+  "baseline": "First implementation; no preexisting application or comparative optimization baseline",
+  "environment": {
+    "python": "3.13.6",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "Intel64 Family 6 Model 142 Stepping 12, GenuineIntel",
+    "logical_cpus": 8
+  },
+  "fixture": {
+    "files": 500,
+    "bytes": 495600,
+    "excluded_hidden_files": 1
+  },
+  "samples": 20,
+  "first_scan_ms": 13102.409,
+  "repeated_scan_median_ms": 137.301,
+  "all_samples_ms": [
+    13102.409,
+    171.357,
+    136.868,
+    138.791,
+    134.213,
+    134.519,
+    139.619,
+    141.456,
+    150.366,
+    142.891,
+    133.191,
+    133.058,
+    131.364,
+    136.414,
+    139.302,
+    142.77,
+    134.273,
+    137.301,
+    140.609,
+    131.469
+  ],
+  "one_file_change_full_refresh_ms": 152.152,
+  "methodology": "perf_counter wall time; freshly written synthetic fixture; sequential same-process scans; OS cache not flushed; first scan is NOT a cold-cache measurement; no tail percentile claimed at this sample count; no incremental cache yet"
+}

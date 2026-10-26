@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dikdik"
+version = "0.1.0"
+description = "Small name. Serious intelligence. Evidence-first engineering workspace."
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+dikdik = "dikdik.server:main"
+
+[tool.setuptools.package-data]
+dikdik = ["web/*", "web/fonts/*", "dikdik_index*"]
+
+[tool.setuptools.packages.find]
+include = ["dikdik", "dikdik.*"]

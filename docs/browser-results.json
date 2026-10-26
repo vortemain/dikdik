@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-26",
+  "method": "Real browser interactions against the running loopback Python service; no simulated backend events",
+  "workspace": "examples/repair",
+  "installation": "Built wheel installed into fresh venv; app served from installed site-packages without upstream runtime dependencies",
+  "checks": {
+    "authenticated_connection": "passed",
+    "offline_candidate_workflow": "completed",
+    "candidate_diff_contains_addition_fix": true,
+    "syntax_only_result_explicitly_not_test_verified": true,
+    "history_restored_after_service_restart": true,
+    "original_agent_mode_present": true,
+    "agent_mode_locks_docker": true,
+    "agent_mode_hides_user_edit_json": true,
+    "agent_mode_requires_both_approvals": true,
+    "agent_submission_without_approvals_prevented": true,
+    "live_agent_provider_call_executed": false,
+    "real_docker_daemon_failure_state_after_fix": "blocked",
+    "docker_failure_retains_diff": true,
+    "result_text": "NOT TEST-VERIFIED. python_syntax: passed · unittest: blocked. Source repository unchanged. Inspect the check evidence above.",
+    "viewport": {"width": 800, "height": 526},
+    "horizontal_overflow": false,
+    "console_errors_current_document": 0
+  },
+  "limitations": "Not a comprehensive automated browser/accessibility suite; no container test pass or live model execution is claimed. Reproduce the UI steps in README.md."
+}

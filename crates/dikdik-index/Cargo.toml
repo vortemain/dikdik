@@ -1,0 +1,15 @@
+[package]
+name = "dikdik-index"
+version = "0.1.0"
+edition = "2021"
+description = "Rust accelerated bounded repository scanner for DIKDIK (PyO3, abi3)"
+license = "MIT"
+
+[lib]
+name = "dikdik_index"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["abi3-py312"] }
+rayon = "1.10"
+blake3 = "1.5"

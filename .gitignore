@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+.dikdik/
+node_modules/
+target/
+dikdik/dikdik_index.pyd
+dikdik/dikdik_index*.so
+upstream/
+.env
+.env.*
+!.env.example
