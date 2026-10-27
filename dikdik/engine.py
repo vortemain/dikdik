@@ -41,6 +41,7 @@ from .store import Store
 from .webhooks import WebhookStore
 from .workspace_registry import WorkspaceRegistry
 from .backends import BackendStore
+from .acp_agents import AcpAgentStore
 
 
 TERMINAL = {"completed", "failed", "blocked", "cancelled", "interrupted", "draft", "paused"}
@@ -162,6 +163,7 @@ class Engine:
         self.webhooks = WebhookStore(self.store)
         self.workspaces = WorkspaceRegistry(data)
         self.backends = BackendStore(self.store)
+        self.acp_agents = AcpAgentStore(self.store)
         # Register the current workspace on startup.
         try:
             self.workspaces.add(str(root))

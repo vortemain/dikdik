@@ -31,9 +31,10 @@ from .plugins import fill_prompt
 from .skills_market import InstallConflict, SkillStore
 from .webhooks import WebhookStore
 from .backends import BackendStore as _BackendStore
+from .acp_agents import AcpAgentStore as _AcpAgentStore
 
 ROUTE_PREFIXES = ("/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts",
-                  "/api/connections", "/api/routers", "/api/model-catalog", "/api/plugins", "/api/webhooks", "/api/backends")
+                  "/api/connections", "/api/routers", "/api/model-catalog", "/api/plugins", "/api/webhooks", "/api/backends", "/api/acp-agents")
 MANAGED_PREFIX = ("conn.", OAUTH_PREFIX)  # provider connection keys and MCP sign-ins; managed there, hidden from API keys
 
 
@@ -49,6 +50,7 @@ def build_routes(engine_or_stores):
     automation_git = AutomationGitSync(stores, automations)
     webhooks = getattr(stores, "webhooks", None) or WebhookStore(stores.store)
     backends = getattr(stores, "backends", None) or _BackendStore(stores.store)
+    acp_agents = getattr(stores, "acp_agents", None) or _AcpAgentStore(stores.store)
     drafts = Drafts(stores.store)
     connections = ConnectionStore(stores.store, secrets)
     routers = getattr(stores, "routers", None) or RouterStore(stores.store)
@@ -393,6 +395,25 @@ def build_routes(engine_or_stores):
                 return 200, {"deleted": parts[2]}
         return None
 
+    def acp_routes(method, parts, body, query):
+        if method == "GET" and len(parts) == 2:
+            return 200, {"agents": acp_agents.list(), "presets": acp_agents.presets()}
+        if method == "POST" and len(parts) == 2:
+            return 201, acp_agents.create(body, time.time())
+        if len(parts) == 3:
+            if method == "GET":
+                return 200, acp_agents.get(parts[2])
+            if method == "PATCH":
+                return 200, acp_agents.update(parts[2], body)
+            if method == "DELETE":
+                acp_agents.delete(parts[2])
+                return 200, {"deleted": parts[2]}
+        if len(parts) == 4 and parts[2] and parts[3] == "models":
+            return 200, {"models": acp_agents.discover_models(parts[2])}
+        if len(parts) == 4 and parts[2] and parts[3] == "available":
+            return 200, {"available": acp_agents.available(parts[2])}
+        return None
+
     def rename_references(old: str, new: str) -> None:
         """Model profiles, MCP servers and agent profiles keep pointing at a renamed key."""
         with stores.store.connect() as db:
@@ -423,6 +444,7 @@ def build_routes(engine_or_stores):
         "/api/agent-profiles": agent_routes,
         "/api/webhooks": webhook_routes,
         "/api/backends": backend_routes,
+        "/api/acp-agents": acp_routes,
     }
 
     def ref_valid(ref) -> bool:
