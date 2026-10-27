@@ -1,4 +1,6 @@
-"""Docker browser lifecycle and durable screenshots; no workspace mount or host JS."""
+"""Browser captures and durable screenshots: in Docker when its browser image is ready,
+otherwise with the computer's own Edge or Chrome (`host_browser`: fresh profile, every
+request through a public-only proxy). No workspace mount either way."""
 
 import base64
 import http.client
@@ -13,12 +15,14 @@ from urllib.parse import urlsplit
 
 from .agent import BROWSER_TOOL, SHELL_TOOL, TOOLS
 from .browser_network import fetch_public, public_url
+from . import host_browser
 from .sandbox import cleanup_container
 from .planning import TASK_TRACKER, WRITE_PLAN, READ_PLAN
 
 
 IMAGE = "dikdik-browser:1"
 PNG_LIMIT = 2 * 1024 * 1024
+HOST_PNG_LIMIT = 8 * 1024 * 1024  # a full-colour 1440x900 page from a real browser
 FRAME_LIMIT = 3 * 1024 * 1024
 NETWORK_LIMIT = 8 * 1024 * 1024
 
@@ -218,9 +222,12 @@ class BrowserService:
                     self._image_ready = False
                 self._probe_at = now
             image_ready = self._image_ready
-        return {"enabled": self.enabled(), "image": IMAGE, "runtime": "docker", "network": "public_get_relay",
-                "availability": "image_ready" if image_ready else "unavailable", "launch_verified": self._launch_verified,
-                "approval_required": ["approve_execution", "approve_browser"]}
+        host = None if image_ready else host_browser.find_browser()
+        return {"enabled": self.enabled(), "image": IMAGE, "runtime": "docker" if image_ready or not host else "this computer",
+                "browser": host and host.replace("\\", "/").rsplit("/", 1)[-1],
+                "network": "public_get_relay" if image_ready or not host else "public_only_proxy",
+                "availability": "image_ready" if image_ready else "host_ready" if host else "unavailable",
+                "launch_verified": self._launch_verified, "approval_required": ["approve_execution", "approve_browser"]}
 
     def busy(self, task):
         with self._lock:
@@ -245,7 +252,7 @@ class BrowserService:
     def visit(self, task, url, approval, cancel=None):
         self.store.get(task)
         if approval.get("approve_execution") is not True or approval.get("approve_browser") is not True:
-            raise PermissionError("Approve Docker execution and public web browsing for this task")
+            raise PermissionError("Approve running tools and public web browsing for this task")
         url = public_url(url)
         if not self.enabled():
             raise PermissionError("Browser tools are disabled in Settings")
@@ -261,11 +268,14 @@ class BrowserService:
                 self._idle.clear()
         started, snapshot = time.monotonic(), uuid.uuid4().hex
         try:
-            self.store.event(task, "browser_started", {"url": url, "container": "dikdik-" + snapshot})
+            on_host = self.info()["availability"] == "host_ready"
+            self.store.event(task, "browser_started", {"url": url, **({"runtime": "this computer"} if on_host else {"container": "dikdik-" + snapshot})})
             try:
-                result = capture(url, cancel, name="dikdik-" + snapshot)
+                result = host_browser.capture(url, cancel) if on_host else capture(url, cancel, name="dikdik-" + snapshot)
             except Exception:
                 result = {"status": "inconclusive", "error": "Browser capture failed"}
+            if on_host and len(result.get("png") or b"") > HOST_PNG_LIMIT:
+                result = {"status": "failed", "error": "The page screenshot was too large to keep"}
             if cancel.is_set():
                 result = {"status": "cancelled", "error": "Browser capture cancelled"}
             png = result.pop("png", None)
@@ -302,7 +312,7 @@ class BrowserService:
                 return 200, [tool['function']['name'] for tool in tools]
             if method == 'GET' and path in {'/api/tools/catalog', '/server_info'}:
                 info = self.info()
-                browser_usable = info['enabled'] and info['availability'] == 'image_ready'
+                browser_usable = info['enabled'] and info['availability'] in {'image_ready', 'host_ready'}
                 if path == '/server_info':
                     return 200, {'conversation_runtime': 'docker', 'browser': info, 'usable_tools': [tool['function']['name'] for tool in tools if tool is not BROWSER_TOOL or browser_usable]}
                 return 200, {'tools': [{'name': tool['function']['name'], 'user_selectable': tool not in [WRITE_PLAN, READ_PLAN], 'usable': tool is not BROWSER_TOOL or browser_usable,

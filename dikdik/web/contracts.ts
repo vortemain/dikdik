@@ -643,6 +643,17 @@ export function taskChecklist(events: TaskEvent[]): { used: boolean; tasks: Chec
   }
   return { used, tasks };
 }
+export interface BrowserPage { url: string; title: string; screenshot: string }
+/** Every page captured in this conversation, oldest first, for Back and Forward. */
+export function browserHistory(events: TaskEvent[]): BrowserPage[] {
+  const pages: BrowserPage[] = [];
+  for (const event of events) {
+    if (event.kind !== "browser_result") continue;
+    const one = browserView([event]);
+    if (one.screenshot) pages.push({ url: one.url, title: one.title, screenshot: one.screenshot });
+  }
+  return pages;
+}
 export function browserView(events: TaskEvent[]): BrowserView {
   const view = { url: "", title: "", text: "", screenshot: "", status: "", error: "" };
   for (const event of events) {

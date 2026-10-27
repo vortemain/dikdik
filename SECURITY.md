@@ -26,6 +26,24 @@ no repository code runs on the host. What protects you instead:
   rights and can reach the network and any file you can. Use *Classic* mode (an
   isolated copy, Docker for tests, Apply to write) for repositories you do not trust.
 
+## The computer's own browser
+
+When Docker's browser image is not ready, page captures use the Edge or Chrome on
+this computer: headless, a new empty profile per capture (no cookies, logins or
+extensions), deleted afterwards. The browser is pointed at a proxy inside Dikdik that
+resolves every host itself and connects only to public addresses on ports 443
+(CONNECT) and 80 (GET/HEAD); localhost, private, link-local and special-use targets,
+including redirects and page resources, are refused. Page text and screenshots are
+untrusted data, as before.
+
+## On a server
+
+See `docs/CLOUD.md`. Listening beyond loopback needs `--listen` plus `--public-url`,
+HTTPS (built in or `--behind-proxy`), and then only that host/origin and 127.0.0.1 are
+accepted; cookies are `Secure`; ten failed sign-ins per address lock it for ten
+minutes; `--projects-root` confines projects; the folder picker and Open in VS Code
+are disabled. It is single-owner: anyone with the sign-in link has full control.
+
 ## Trust and permissions (Classic mode)
 
 The local operator, host OS, Python installation, Docker CLI/daemon/image and

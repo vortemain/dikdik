@@ -194,8 +194,25 @@ class Engine:
             except Exception:
                 pass  # a failed purge at startup should never break the server
 
+    def _wait_until_idle(self, seconds=2.0):
+        """A task's terminal state is published a moment before its worker lets go, so a
+        message sent the instant one finishes waits briefly instead of being refused."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            with self.lock:
+                if not self.active or not all(self._finished(t) for t in self.active):
+                    return
+            time.sleep(0.05)
+
+    def _finished(self, task) -> bool:
+        try:
+            return self.store.get(task)["state"] in TERMINAL
+        except KeyError:
+            return False  # unknown here: treat as still running
+
     def submit(self, request):
         clean = self._validate(request)
+        self._wait_until_idle()
         with self.lock:
             if self.active:
                 raise ValueError("One task at a time; wait or cancel the active task")
@@ -224,6 +241,8 @@ class Engine:
     def send(self, task, request):
         """A follow-up message: runs on the same task, continuing from its last candidate."""
         clean = self._validate(request)
+        if task not in self.active:
+            self._wait_until_idle()
         with self.lock:
             plan = self.planning.get(task)
             if plan['planner_id'] == task and clean['mode'] != 'plan':

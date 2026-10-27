@@ -2,7 +2,8 @@
 
 > **Current state and next steps: [`docs/HANDOFF.md`](docs/HANDOFF.md)** (kept up to
 > date after every phase). Since 2026-10-28 Dikdik is local-first like Claude Code:
-> projects, Ask/Auto/Plan modes, direct edits with Undo.
+> projects, Ask/Auto/Plan modes, direct edits with Undo, code colouring, VS Code-style
+> files, Git push/pull/PRs, a real-browser panel, and a server mode (docs/CLOUD.md).
 
 Updated: 2026-10-27. **Original DIKDIK core; OpenHands is a separate research reference.**
 This supersedes the intermediate fork plan. No upstream source is imported into
@@ -32,8 +33,8 @@ The parity audit (docs/PARITY.md) moved from 89 to 425 fully matched OpenHands s
 of 1,749. One live model run is recorded (OpenRouter, GLM 5.2: the example bug fixed
 for $0.0028); live-Docker runs are still not recorded.
 
-Test status (2026-10-28): Python **535 passed, 3 skipped** (538 run); Bun
-**107 passed / 500 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-28): Python **554 passed, 4 skipped** (558 run); Bun
+**112 passed / 538 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 

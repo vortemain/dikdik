@@ -33,6 +33,7 @@ from .server_state import ServerState
 from .api_keys import ApiKeyStore
 from .config import check_config_or_exit
 from .projects import Projects, check_location, pick_folder
+from . import remote as remote_mode
 
 
 WEB = Path(__file__).parent / "web"
@@ -146,9 +147,9 @@ def open_in_editor(root: Path, rel: str, line=None) -> dict:
     return {"opened": rel or ".", "editor": "VS Code"}
 
 
-def make_server(engine: Engine, port: int, token: str):
+def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.RemoteConfig | None" = None):
     wiring = _Wiring(engine)
-    projects = Projects(engine, on_switch=wiring.wire)
+    projects = Projects(engine, on_switch=wiring.wire, limit=remote.projects_root if remote else None)
     engine, routes, gateway = _Live(wiring, "engine"), _Live(wiring, "routes"), _Live(wiring, "gateway")
     expected = ("Bearer " + token).encode("utf-8")
     started_at = time.monotonic()
@@ -204,11 +205,16 @@ def make_server(engine: Engine, port: int, token: str):
 
         def same_origin(self):
             host = f"127.0.0.1:{self.server.server_port}"
-            origin = self.headers.get("Origin", "http://" + host)
-            if self.headers.get("Host") != host:
+            hosts, origins = {host}, {"http://" + host}
+            if remote:  # on a server: also exactly the public address it was started with
+                hosts.add(remote.public_host)
+                origins.add(remote.public_origin)
+            requested = (self.headers.get("Host") or "").lower()
+            origin = (self.headers.get("Origin") or ("https://" if remote and requested == remote.public_host and remote.secure else "http://") + requested).lower()
+            if requested not in hosts:
                 self.refuse(403, {"error": "Invalid host or origin"})
                 return False
-            if origin == "http://" + host:
+            if origin in origins:
                 return True
             if CORS_ORIGINS and origin in CORS_ORIGINS:
                 return True
@@ -260,10 +266,16 @@ def make_server(engine: Engine, port: int, token: str):
 
         def start_session(self, body):
             supplied = body.get("token") if isinstance(body, dict) else None
+            client = self.client_address[0] if self.client_address else "?"
+            if remote and not remote.allow_sign_in_attempt(client):
+                self.reply(429, {"error": "Too many failed sign-ins; wait ten minutes"})
+                return
             if not isinstance(supplied, str) or not hmac.compare_digest(("Bearer " + supplied).encode("utf-8"), expected):
+                if remote:
+                    remote.record_failure(client)
                 self.reply(401, {"error": "That sign-in link is not valid for this server. Use the one printed in the Dikdik terminal."})
                 return
-            cookie = f"{self.cookie_name}={token}; Path=/; Max-Age={SESSION_AGE}; HttpOnly; SameSite=Strict"
+            cookie = f"{self.cookie_name}={token}; Path=/; Max-Age={SESSION_AGE}; HttpOnly; SameSite=Strict" + ("; Secure" if remote and remote.secure else "")
             self.reply(200, {"signed_in": True}, cookie=cookie)
 
         def stream(self, task, after):
@@ -716,6 +728,8 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(201, projects.create(body))
                 elif path == "/api/projects/clone":
                     self.reply(201, projects.clone(body))
+                elif path in {"/api/projects/pick", "/api/files/open-in-editor"} and remote:
+                    raise ValueError("Not available when Dikdik runs on a server; type the folder path instead")
                 elif path == "/api/projects/pick":
                     self.reply(200, {"path": pick_folder(str(body.get("title") or "Choose a project folder")[:80]
                                                          if isinstance(body, dict) else "Choose a project folder")})
@@ -979,8 +993,11 @@ def make_server(engine: Engine, port: int, token: str):
             except (ValueError, TypeError, TimeoutError) as exc:
                 self.reply(400, {"error": str(exc)})
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = ThreadingHTTPServer((remote.listen if remote else "127.0.0.1", port), Handler)
     server.daemon_threads = True
+    context = remote.tls_context() if remote else None
+    if context is not None:
+        server.socket = context.wrap_socket(server.socket, server_side=True)
     wiring.port = server.server_port
     routes.oauth.port = server.server_port
     server.projects = projects  # the engine open right now: projects.engine
@@ -1019,9 +1036,20 @@ def main():
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--no-browser", action="store_true", help="Do not open the browser automatically")
     parser.add_argument("--rotate-token", action="store_true", help="Issue a new session secret, signing out every browser")
+    server_flags = parser.add_argument_group("running on a server (see docs/CLOUD.md)")
+    server_flags.add_argument("--listen", default="127.0.0.1", help="Address to listen on; anything but loopback needs the flags below")
+    server_flags.add_argument("--public-url", help="The https:// address people open, e.g. https://dikdik.example.com")
+    server_flags.add_argument("--tls-cert", help="Certificate file for built-in HTTPS")
+    server_flags.add_argument("--tls-key", help="Private key file for built-in HTTPS")
+    server_flags.add_argument("--behind-proxy", action="store_true", help="A reverse proxy terminates HTTPS in front of Dikdik")
+    server_flags.add_argument("--projects-root", help="On a server, every project must live inside this folder")
     args = parser.parse_args()
     early_exits(parser)
     check_config_or_exit()
+    try:
+        remote = remote_mode.check(args.listen, args.public_url, args.tls_cert, args.tls_key, args.behind_proxy, args.projects_root)
+    except ValueError as exc:
+        parser.error(str(exc))
     probe = socket.socket()
     probe.settimeout(0.5)
     if probe.connect_ex(("127.0.0.1", args.port)) == 0:
@@ -1031,7 +1059,7 @@ def main():
     data = Path(args.data).resolve()
     chosen = args.workspace or args.workspace_arg
     try:
-        root = check_location(Path(chosen or os.getcwd()), data)
+        root = check_location(Path(chosen or os.getcwd()), data, remote.projects_root if remote else None)
     except (OSError, ValueError) as exc:
         if chosen:
             parser.error(f"Workspace {str(exc)}")
@@ -1044,17 +1072,17 @@ def main():
         parser.error(str(exc))
     token = session_token(data / "web.token", args.rotate_token)
     try:
-        server = make_server(engine, args.port, token)
+        server = make_server(engine, args.port, token, remote)
     except OSError as exc:
         engine.close()
         if getattr(exc, "errno", None) in (errno_module.EADDRINUSE, errno_module.EACCES):
             parser.error(f"Port {args.port} is not available. Stop whatever is using it or pick another port.")
         raise
-    url = f"http://127.0.0.1:{server.server_port}"
+    url = remote.public_url if remote else f"http://127.0.0.1:{server.server_port}"
     # The token rides in the URL fragment, which browsers never send to a server.
     link = f"{url}/#token={token}"
     print(f"Dikdik is running at {url}\nProject: {root}\nSign-in link (needed once per browser): {link}", flush=True)
-    if not args.no_browser:
+    if not args.no_browser and not remote:
         webbrowser.open(link)
     try:
         server.serve_forever()

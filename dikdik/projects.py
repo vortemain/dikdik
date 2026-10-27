@@ -31,11 +31,13 @@ SAFE_GIT = ["-c", "core.hooksPath=" + os.devnull, "-c", "core.fsmonitor=false", 
             "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "protocol.file.allow=always"]
 
 
-def check_location(root: Path, data: Path) -> Path:
+def check_location(root: Path, data: Path, limit: Path | None = None) -> Path:
     try:
         root = approved_root(str(root))
     except OSError:
         raise ValueError(f"{root} is not a folder this computer can open") from None
+    if limit is not None and root != limit and limit not in root.parents:
+        raise ValueError(f"On this server, projects live inside {limit}")
     if data == root or root in data.parents or data in root.parents:
         raise ValueError("Dikdik keeps its own data in this folder; choose a project folder that does not contain it")
     return root
@@ -89,10 +91,11 @@ def pick_folder(title: str = "Choose a project folder") -> str | None:
 class Projects:
     """Owns the live engine and swaps it when the user changes project."""
 
-    def __init__(self, engine, on_switch=None):
+    def __init__(self, engine, on_switch=None, limit: Path | None = None):
         self.engine = engine
         self.data = engine.data
         self.on_switch = on_switch
+        self.limit = limit  # on a server: the folder every project must live in
         self.lock = threading.Lock()
 
     def describe(self) -> dict:
@@ -106,7 +109,7 @@ class Projects:
         from .engine import Engine  # imported here: engine imports nothing from this module
         if not isinstance(path, str) or not path.strip() or len(path) > 1000:
             raise ValueError("Choose a folder")
-        root = check_location(Path(path.strip()).expanduser(), self.data)
+        root = check_location(Path(path.strip()).expanduser(), self.data, self.limit)
         with self.lock:
             old = self.engine
             if root == old.root:
@@ -163,7 +166,7 @@ class Projects:
 
     def _parent(self, parent) -> Path:
         if parent in (None, ""):
-            base = Path.home() / "Projects" if (Path.home() / "Projects").is_dir() else Path.home()
+            base = self.limit or (Path.home() / "Projects" if (Path.home() / "Projects").is_dir() else Path.home())
         elif isinstance(parent, str) and len(parent) <= 1000:
             base = Path(parent.strip()).expanduser()
         else:
@@ -173,6 +176,8 @@ class Projects:
             raise ValueError(f"{base} is not a folder")
         if base == self.data or self.data in base.parents:
             raise ValueError("Choose a location outside Dikdik's data folder")
+        if self.limit is not None and base != self.limit and self.limit not in base.parents:
+            raise ValueError(f"On this server, projects live inside {self.limit}")
         return base
 
     @staticmethod

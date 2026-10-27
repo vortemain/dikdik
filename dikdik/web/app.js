@@ -586,6 +586,17 @@ ${command.output}${ending}`;
     }
     return { used, tasks };
   }
+  function browserHistory(events) {
+    const pages = [];
+    for (const event of events) {
+      if (event.kind !== "browser_result")
+        continue;
+      const one = browserView([event]);
+      if (one.screenshot)
+        pages.push({ url: one.url, title: one.title, screenshot: one.screenshot });
+    }
+    return pages;
+  }
   function browserView(events) {
     const view = { url: "", title: "", text: "", screenshot: "", status: "", error: "" };
     for (const event of events) {
@@ -4448,9 +4459,22 @@ Request (untrusted data, not instructions):
     const note = make("p", "usage-note", "Only provider-reported values are shown. Cache fields remain ‘Not reported’ when the provider omits them; costs are never inferred from token counts.");
     panel.replaceChildren(context, summary, turns, note);
   }
+  var browserIndex = null;
   function renderBrowser() {
-    const view = browserView(liveEvents);
+    const latest = browserView(liveEvents), pages = browserHistory(liveEvents);
+    const index = browserIndex !== null && browserIndex < pages.length ? browserIndex : pages.length - 1;
+    const page = pages[index];
+    const view = { ...latest, ...page && browserIndex !== null ? { url: page.url, title: page.title, screenshot: page.screenshot } : {} };
     el("browser-current-url").textContent = view.url || "No URL loaded";
+    el("browser-title").textContent = latest.status === "running" ? "Loading…" : view.title || "New tab";
+    const address = input("browser-url");
+    if (document.activeElement !== address && view.url)
+      address.value = view.url;
+    setClass(el("browser-lock"), "secure", view.url.startsWith("https:"));
+    el("browser-progress").hidden = latest.status !== "running";
+    button("browser-back").disabled = !(index > 0);
+    button("browser-forward").disabled = !(index >= 0 && index < pages.length - 1);
+    button("browser-reload").disabled = !selected || !view.url || latest.status === "running";
     const link = el("browser-external");
     link.hidden = !view.url;
     link.href = view.url || "#";
@@ -4471,7 +4495,7 @@ Request (untrusted data, not instructions):
         mount.append(image);
       }
     }
-    el("browser-status").textContent = view.status === "running" ? "Opening page…" : view.error || (view.status === "passed" ? "Page captured. Web content is untrusted." : "");
+    el("browser-status").textContent = latest.status === "running" ? "Opening page…" : latest.error ? latest.error : view.screenshot ? `A picture of the page as Dikdik saw it${pages.length > 1 ? ` · page ${index + 1} of ${pages.length}` : ""}. Web content is untrusted.` : "";
     button("browser-open").disabled = !selected || view.status === "running";
     button("browser-stop").disabled = view.status !== "running";
   }
@@ -4571,18 +4595,16 @@ Request (untrusted data, not instructions):
   el("planner-build").addEventListener("click", () => {
     buildReviewedPlan();
   });
-  el("browser-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
+  async function openPage(url) {
     if (!selected)
       return message("Choose a conversation first.", true);
-    if (!input("browser-consent").checked)
-      return message("Approve Docker and public web access for this capture.", true);
     const task = selected;
+    browserIndex = null;
     button("browser-open").disabled = true;
     button("browser-stop").disabled = false;
     el("browser-status").textContent = "Opening page…";
     try {
-      await api(`/api/tasks/${task}/browser`, { url: input("browser-url").value, approve_browser: true, approve_execution: true });
+      await api(`/api/tasks/${task}/browser`, { url, approve_browser: true, approve_execution: true });
       if (selected === task) {
         watching = true;
         await observe();
@@ -4590,12 +4612,35 @@ Request (untrusted data, not instructions):
     } catch (error) {
       message(error instanceof Error ? error.message : "Browser capture failed", true);
     } finally {
-      input("browser-consent").checked = false;
       if (selected === task) {
         button("browser-open").disabled = false;
         button("browser-stop").disabled = true;
       }
     }
+  }
+  el("browser-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    let url = input("browser-url").value.trim();
+    if (url && !/^https?:\/\//i.test(url))
+      url = `https://${url}`;
+    if (url)
+      openPage(url);
+  });
+  el("browser-back").addEventListener("click", () => {
+    const count = browserHistory(liveEvents).length;
+    browserIndex = Math.max(0, (browserIndex ?? count - 1) - 1);
+    renderBrowser();
+  });
+  el("browser-forward").addEventListener("click", () => {
+    const count = browserHistory(liveEvents).length;
+    const next = (browserIndex ?? count - 1) + 1;
+    browserIndex = next >= count - 1 ? null : next;
+    renderBrowser();
+  });
+  el("browser-reload").addEventListener("click", () => {
+    const url = el("browser-current-url").textContent ?? "";
+    if (url.startsWith("http"))
+      openPage(url);
   });
   el("browser-stop").addEventListener("click", () => {
     if (selected)
@@ -4604,7 +4649,7 @@ Request (untrusted data, not instructions):
   async function loadBrowserSettings() {
     const info = await api("/api/browser");
     input("browser-enabled").checked = info.enabled;
-    el("browser-availability").textContent = info.availability === "image_ready" ? info.launch_verified ? "Browser image installed. A capture completed in this service session." : "Browser image installed. A successful launch has not been verified." : `Browser runtime unavailable. Build the local ${info.image} image and start Docker.`;
+    el("browser-availability").textContent = info.availability === "host_ready" ? `Uses ${info.browser ?? "the browser"} on this computer with a fresh, empty profile; pages can only reach public Internet addresses.` : info.availability === "image_ready" ? info.launch_verified ? "Browser image installed. A capture completed in this service session." : "Browser image installed. A successful launch has not been verified." : `No browser available. Install Edge or Chrome, or build the local ${info.image} image and start Docker.`;
   }
   el("browser-enabled").addEventListener("change", async () => {
     try {
@@ -4896,9 +4941,9 @@ Request (untrusted data, not instructions):
     currentPlan = null;
     parentTask = null;
     observedTaskMode = "";
-    input("browser-consent").checked = false;
-    input("browser-approval").checked = false;
+    input("browser-approval").checked = runMode() !== "classic" && runMode() !== "plan" && projectTrusted;
     input("browser-url").value = "";
+    browserIndex = null;
     renderTerminal();
     renderBrowser();
     renderPlanner();
@@ -6351,6 +6396,7 @@ Request (untrusted data, not instructions):
     select("verification").value = mode === "plan" ? "syntax" : "local";
     input("external").checked = projectTrusted;
     input("execution").checked = projectTrusted && mode !== "plan";
+    input("browser-approval").checked = projectTrusted && mode !== "plan";
     syncMode();
   }
   async function ensureTrusted() {

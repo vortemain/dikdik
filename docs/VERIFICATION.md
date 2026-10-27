@@ -1,6 +1,42 @@
 # Verification record — updated 2026-10-28
 
-## Projects and local mode (latest)
+## Code, files, Git, browser and server mode (latest)
+
+- Full checks: Python **554 passed, 4 skipped** (558 run; the new skip is the live
+  host-browser test, run separately with `DIKDIK_RUN_HOST_BROWSER=1`); Bun **112 /
+  538**; Rust **15**; strict TypeScript check and build passed.
+
+- Highlighter: `tests/web/highlight.test.ts` (tokens rebuild the exact source for 12
+  languages, multi-line comments and strings, JSON keys, size limit). In the browser,
+  a Python file showed 25 coloured tokens with distinct dark-theme colours, line
+  numbers, type badges and a breadcrumb.
+- Open in VS Code: `tests/test_editor.py` with the launch mocked; not pressed in the
+  browser (it would open VS Code on the owner's desktop).
+- Git: `tests/test_git_remote.py` against real repositories and a bare remote (push
+  needs approval, fetch/pull fast-forward, diverged pull refused, new branch gets an
+  upstream, credentials stripped from URLs, PR through a mocked `gh`). In the browser:
+  `origin/main · ↑1 ↓0`, Push with confirmation reached the bare remote, New branch
+  then Publish branch created `origin/feature/demo`. Create PR was not pressed
+  (it would reach github.com).
+- Browser on this computer: `tests/test_host_browser.py` (proxy refuses loopback,
+  private, link-local, metadata, odd ports and POST; DNS answers that are private are
+  refused; page text; runtime choice); the live test loaded https://example.com
+  through Edge and the proxy (`DIKDIK_RUN_HOST_BROWSER=1`). In the app: example.com
+  then example.org, padlock shown, page 2 of 2, Back and Forward.
+- Server mode: `tests/test_remote.py` (flags, only the public host/origin and
+  loopback, Secure cookie, 10 failed sign-ins then 429, folder picker and VS Code
+  off, projects root enforced, built-in HTTPS with a generated certificate, plain
+  HTTP refused). Dockerfile not built: no Docker engine here.
+- A race found by the full suite under load: a task's "completed" state is stored a
+  moment before the engine releases it, so a new task or message sent in that instant
+  was refused with "One task at a time". Submit and send now wait up to two seconds
+  for an already-finished task to be released (a genuinely running task still refuses
+  at once).
+- A regression found while checking: a leftover reference to the removed browser
+  consent box made `?task=` conversation links fall back to the sign-in screen;
+  fixed before commit.
+
+## Projects and local mode
 
 - Full checks: Python **535 passed, 3 skipped** (538 run); Bun **107 / 500**; strict
   TypeScript check and build passed. New: `tests/test_projects.py` (switching keeps

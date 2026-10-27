@@ -163,6 +163,10 @@ class BrowserRunnerTests(unittest.TestCase):
 
 class BrowserServiceTests(unittest.TestCase):
     def setUp(self):
+        # These cases cover the Docker runtime; hide any Edge or Chrome on this machine.
+        no_host = patch("dikdik.host_browser.find_browser", return_value=None)
+        no_host.start()
+        self.addCleanup(no_host.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         base = Path(self.temp.name)

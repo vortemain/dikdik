@@ -10,7 +10,7 @@ over mid-way. Newer than `docs/CODEX_HANDOFF.md` and `docs/NEXT_PHASES_PROMPT.md
   `C:\Projects\Dikdik\.claude\worktrees\verify-requirements-testing-588525`.
   `main` was last fast-forwarded to `e9d5fcb`. Never push or open PRs unless the
   owner asks; merging into `main` locally only when the owner asks.
-- **Last updated:** 2026-10-28, after phase 6 (Git without tokens).
+- **Last updated:** 2026-10-28, after phase 8. All eight planned phases are built.
 
 ## 1. What Dikdik is now (owner decisions, 2026-10-28)
 
@@ -57,14 +57,19 @@ health checks, first live model run (OpenRouter `z-ai/glm-5.2`, $0.0028).
 | 2 | Run on this computer, permission modes, Always allow | Done, browser-checked with stand-in model | `4d1add4` |
 | 3 | One-time trust, simpler composer | Done, browser-checked | `4d1add4` |
 | 4 | Direct edits, checkpoints, Undo | Done, browser-checked | `4d1add4` |
-| 5 | Code colouring (`web/highlight.ts`) + files view (type badges, indent guides, breadcrumb) + Open in VS Code (`/api/files/open-in-editor`) | Done, browser-checked (Open in VS Code tested with a mocked launch only) | next commit |
-| 6 | Git: remote status, fetch, pull (ff-only), push (approval per push), branch create/switch, Create PR via `gh` (`gitops.remote_info/fetch/pull/push/switch_branch/create_pr`, `/api/git/*`) | Done, browser-checked against a local bare remote; Create PR tested with `gh` mocked | next commit |
-| 7 | Browser panel that looks like a real browser | **Next** | |
-| 8 | Cloud: run Dikdik on a remote machine | To do | |
+| 5 | Code colouring (`web/highlight.ts`) + files view (type badges, indent guides, breadcrumb) + Open in VS Code (`/api/files/open-in-editor`) | Done, browser-checked (Open in VS Code tested with a mocked launch only) | `f39da64` |
+| 6 | Git: remote status, fetch, pull (ff-only), push (approval per push), branch create/switch, Create PR via `gh` (`gitops.remote_info/fetch/pull/push/switch_branch/create_pr`, `/api/git/*`) | Done, browser-checked against a local bare remote; Create PR tested with `gh` mocked | `f39da64` |
+| 7 | Browser: computer's Edge/Chrome when Docker is not ready (`host_browser.py`: fresh profile, public-only proxy), panel redesigned like a browser (tab, Back/Forward/Reload, address bar, padlock, history) | Done; live capture of example.com/.org through the proxy; browser-checked | see `git log` |
+| 8 | On a server: `--listen/--public-url/--tls-cert/--tls-key/--behind-proxy/--projects-root` (`remote.py`), `Dockerfile`, `docs/CLOUD.md` | Done; HTTPS, host/origin, Secure cookie, sign-in limit tested on loopback; Dockerfile not built (no Docker engine) | see `git log` |
 
 Update this table (and section 1 if behaviour changed) at the end of every phase.
 
-## 3. Design notes for the remaining phases
+## 3. Design notes (all built; kept for reference and follow-ups)
+
+Possible next steps, none started: a sidebar entry for extension apps; switching
+backends inside one tab; MCP sign-in callbacks on a remote server; a hosted
+multi-user Dikdik Cloud (accounts, per-user data) once the owner decides hosting;
+the remaining OpenHands parity rows in `docs/parity-audit.csv`.
 
 **5. Code and files.** No syntax colouring exists anywhere (code is plain
 `textContent`; `codeBlock()` in `app.ts` ~line 134 builds every code block). The web
@@ -100,8 +105,8 @@ per-user data. Ask the owner how "Dikdik Cloud" should be hosted before building
 
 - **Run:** `pip install -e .` then `dikdik` inside a project, or
   `python -m dikdik.server --workspace examples/repair --data "$HOME/.dikdik-demo"`.
-- **Tests:** `python -m unittest discover -s tests` (~6 min, 540+ tests, 3 skipped
-  live gates); `bun run typecheck:web`, `bun run test:web`, `bun run build:web`
+- **Tests:** `python -m unittest discover -s tests` (~6–10 min, 558 tests, 4 skipped
+  live gates; `DIKDIK_RUN_HOST_BROWSER=1` adds a real page load); `bun run typecheck:web`, `bun run test:web`, `bun run build:web`
   (commit the rebuilt `dikdik/web/app.js`); `cargo test --workspace`.
 - **Model for browser checks:** `python scripts/stub_model.py --port 8899 --key sk-local-test`,
   then save a secret `stub-key` = `sk-local-test` and a profile

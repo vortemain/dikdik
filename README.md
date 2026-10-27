@@ -144,6 +144,21 @@ changed your files has **Undo changes**, which puts them back unless you edited 
 since. Commands run with your own tools (Git Bash on Windows when installed,
 otherwise PowerShell).
 
+**Code, files and Git.** Code is coloured everywhere (chat, files, diffs) for 15
+languages. Files shows type badges, indent guides and a breadcrumb, and **Open in
+VS Code** opens a file at the line you are reading (or the whole project from
+Projects). The Git tab switches and creates branches, shows ahead/behind, and
+fetches, pulls (fast-forward only), pushes (you confirm each push) and opens pull
+requests with the GitHub CLI, all with your computer's own sign-in.
+
+**Browser.** The Browser tab looks and works like a browser (address bar, Back,
+Forward, Reload). Without Docker it uses the Edge or Chrome on your computer,
+headless, with a fresh empty profile, and every request goes through a proxy in
+Dikdik that only reaches public Internet addresses.
+
+**On a server.** `dikdik --listen 0.0.0.0 --public-url https://… --tls-cert … --tls-key …`
+runs it on a cloud VM for yourself; see [docs/CLOUD.md](docs/CLOUD.md).
+
 **Projects.** Click the project name at the bottom of the sidebar to switch to a
 recent project, **Open folder** (type a path or press Browse… for this computer's own
 folder picker), start a **New project** (optionally with Git), or **Clone repository**

@@ -495,7 +495,24 @@ pre.numbered .ln::before { content: attr(data-n); position: absolute; left: 0; w
 .terminal-panel { background: var(--code-bg); }
 .terminal-panel .canvas-empty { background: var(--surface); }
 #terminal-view { flex: 1; min-height: 0; margin: 0; padding: 16px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font-size: 13px; line-height: 1.55; }
-.browser-panel { overflow: auto; }
+.browser-panel { overflow: auto; padding: 10px; }
+.browser-window { display: flex; flex-direction: column; min-height: 100%; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow-sm); }
+.browser-tabbar { display: flex; align-items: flex-end; gap: 6px; padding: 8px 10px 0; background: var(--surface-2, var(--code-head)); }
+.browser-tab { display: inline-flex; align-items: center; gap: 6px; max-width: 280px; padding: 7px 12px; border-radius: 9px 9px 0 0; background: var(--surface); font-size: 12.5px; color: var(--ink); }
+.browser-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.browser-toolbar .flip { transform: rotate(180deg); }
+.browser-address { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 32px; border-radius: 999px; background: var(--surface-2, var(--code-bg)); border: 1px solid transparent; }
+.browser-address:focus-within { border-color: var(--accent); background: var(--surface); }
+.browser-address input { flex: 1 1 auto; min-width: 0; border: 0; background: transparent; padding: 0; height: 30px; font-size: 13px; color: var(--ink); outline: none; }
+#browser-lock { color: var(--faint); flex: 0 0 auto; }
+#browser-lock.secure { color: var(--ok); }
+.browser-progress { height: 2px; background: var(--line); overflow: hidden; }
+.browser-progress span { display: block; height: 100%; width: 40%; background: var(--accent); animation: browser-loading 1.1s ease-in-out infinite; }
+@keyframes browser-loading { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+.browser-viewport { flex: 1 1 auto; min-height: 240px; display: flex; align-items: flex-start; justify-content: center; background: var(--bg); overflow: auto; }
+.browser-viewport .browser-image { display: block; width: 100%; height: auto; }
+.browser-external { display: inline-grid; place-items: center; }
 .browser-chrome { display: flex; align-items: center; gap: 10px; padding: 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .browser-chrome > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .browser-chrome > a, .browser-chrome > button { flex-shrink: 0; }

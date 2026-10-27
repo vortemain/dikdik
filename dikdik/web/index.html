@@ -285,15 +285,25 @@
         <pre id="terminal-view" tabindex="0" aria-label="Sandbox command output" hidden></pre>
       </div>
       <div class="canvas-body browser-panel" data-pane="browser" hidden>
-        <div class="browser-chrome"><span id="browser-current-url">No URL loaded</span><a id="browser-external" target="_blank" rel="noopener noreferrer" hidden>Open in New Tab</a><button id="browser-external-empty" type="button" disabled>Open in New Tab</button></div>
-        <form id="browser-form" class="browser-form">
-          <label for="browser-url" class="sr-only">Public URL</label><input id="browser-url" type="url" placeholder="https://example.com" maxlength="4096" required>
-          <label class="check"><input id="browser-consent" type="checkbox" required>Allow Docker and public web access for this capture</label>
-          <div class="row"><button id="browser-open" type="submit" class="small">Open URL</button><button id="browser-stop" type="button" class="small" disabled>Stop capture</button></div>
-        </form>
-        <p id="browser-status" class="browser-status" role="status"></p>
-        <p id="browser-empty" class="canvas-empty">No page loaded yet. Ask Dikdik to open a URL. Example: “Open https://example.com”.</p>
-        <div id="browser-snapshot" class="browser-snapshot" hidden></div>
+        <div class="browser-window">
+          <div class="browser-tabbar"><span class="browser-tab"><svg class="i"><use href="#i-globe"/></svg><span id="browser-title">New tab</span></span><span id="browser-current-url" class="sr-only">No URL loaded</span></div>
+          <form id="browser-form" class="browser-toolbar">
+            <button id="browser-back" class="ghost icon" type="button" aria-label="Back" title="Back" disabled><svg class="i flip"><use href="#i-chevron"/></svg></button>
+            <button id="browser-forward" class="ghost icon" type="button" aria-label="Forward" title="Forward" disabled><svg class="i"><use href="#i-chevron"/></svg></button>
+            <button id="browser-reload" class="ghost icon" type="button" aria-label="Reload" title="Load this page again" disabled><svg class="i"><use href="#i-refresh"/></svg></button>
+            <label class="browser-address" for="browser-url"><span id="browser-lock" aria-hidden="true"><svg class="i"><use href="#i-shield"/></svg></span><span class="sr-only">Address</span><input id="browser-url" type="text" inputmode="url" placeholder="Enter a public web address" maxlength="4096" required autocomplete="off" spellcheck="false"></label>
+            <button id="browser-open" type="submit" class="primary small">Go</button>
+            <button id="browser-stop" type="button" class="ghost small" disabled>Stop</button>
+            <a id="browser-external" class="ghost icon browser-external" target="_blank" rel="noopener noreferrer" title="Open in your browser" aria-label="Open in your browser" hidden><svg class="i"><use href="#i-globe"/></svg></a>
+            <button id="browser-external-empty" type="button" hidden disabled></button>
+          </form>
+          <div id="browser-progress" class="browser-progress" hidden><span></span></div>
+          <div class="browser-viewport">
+            <p id="browser-empty" class="canvas-empty">No page yet. Type an address above, or ask Dikdik to look something up on the web.</p>
+            <div id="browser-snapshot" class="browser-snapshot" hidden></div>
+          </div>
+          <p id="browser-status" class="browser-status" role="status"></p>
+        </div>
       </div>
       <div class="canvas-body planner-panel" data-pane="planner" hidden>
         <div class="planner-actions"><button id="planner-create" type="button" class="small">Create a plan</button><button id="planner-build" type="button" class="small primary" disabled>Build plan · Ctrl/⌘↩</button></div>

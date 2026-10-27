@@ -1,4 +1,4 @@
-import { browserView, buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
+import { browserHistory, browserView, buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
 import { attachmentList, contextUsage, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, SlashCommand, TaskRequest, DiffReview, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
@@ -929,9 +929,21 @@ function renderUsage(): void {
   panel.replaceChildren(context, summary, turns, note);
 }
 
+let browserIndex: number | null = null;  // a page from this conversation's history; null follows the latest
 function renderBrowser(): void {
-  const view = browserView(liveEvents);
+  const latest = browserView(liveEvents), pages = browserHistory(liveEvents);
+  const index = browserIndex !== null && browserIndex < pages.length ? browserIndex : pages.length - 1;
+  const page = pages[index];
+  const view = { ...latest, ...(page && browserIndex !== null ? { url: page.url, title: page.title, screenshot: page.screenshot } : {}) };
   el("browser-current-url").textContent = view.url || "No URL loaded";
+  el("browser-title").textContent = latest.status === "running" ? "Loading…" : view.title || "New tab";
+  const address = input("browser-url");
+  if (document.activeElement !== address && view.url) address.value = view.url;
+  setClass(el("browser-lock"), "secure", view.url.startsWith("https:"));
+  el("browser-progress").hidden = latest.status !== "running";
+  button("browser-back").disabled = !(index > 0);
+  button("browser-forward").disabled = !(index >= 0 && index < pages.length - 1);
+  button("browser-reload").disabled = !selected || !view.url || latest.status === "running";
   const link = el("browser-external") as HTMLAnchorElement;
   link.hidden = !view.url; link.href = view.url || "#";
   button("browser-external-empty").hidden = !!view.url;
@@ -946,7 +958,8 @@ function renderBrowser(): void {
       mount.append(image);
     }
   }
-  el("browser-status").textContent = view.status === "running" ? "Opening page…" : view.error || (view.status === "passed" ? "Page captured. Web content is untrusted." : "");
+  el("browser-status").textContent = latest.status === "running" ? "Opening page…" : latest.error ? latest.error
+    : view.screenshot ? `A picture of the page as Dikdik saw it${pages.length > 1 ? ` · page ${index + 1} of ${pages.length}` : ""}. Web content is untrusted.` : "";
   button("browser-open").disabled = !selected || view.status === "running";
   button("browser-stop").disabled = view.status !== "running";
 }
@@ -1010,22 +1023,37 @@ async function buildReviewedPlan(expectedRevision?: number, expectedPlanner?: st
 el('planner-create').addEventListener('click', () => { void enterPlanning().catch(error => message(String(error), true)); });
 el('planner-build').addEventListener('click', () => { void buildReviewedPlan(); });
 
-el("browser-form").addEventListener("submit", async event => {
-  event.preventDefault();
+async function openPage(url: string): Promise<void> {
   if (!selected) return message("Choose a conversation first.", true);
-  if (!input("browser-consent").checked) return message("Approve Docker and public web access for this capture.", true);
   const task = selected;
+  browserIndex = null;
   button("browser-open").disabled = true; button("browser-stop").disabled = false;
   el("browser-status").textContent = "Opening page…";
   try {
-    await api(`/api/tasks/${task}/browser`, { url: input("browser-url").value, approve_browser: true, approve_execution: true });
+    // Typing an address and pressing Go is the user's own explicit request for this one page.
+    await api(`/api/tasks/${task}/browser`, { url, approve_browser: true, approve_execution: true });
     if (selected === task) { watching = true; await observe(); }
   } catch (error) { message(error instanceof Error ? error.message : "Browser capture failed", true); }
   finally {
-    input("browser-consent").checked = false;
     if (selected === task) { button("browser-open").disabled = false; button("browser-stop").disabled = true; }
   }
+}
+el("browser-form").addEventListener("submit", event => {
+  event.preventDefault();
+  let url = input("browser-url").value.trim();
+  if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+  if (url) void openPage(url);
 });
+el("browser-back").addEventListener("click", () => {
+  const count = browserHistory(liveEvents).length;
+  browserIndex = Math.max(0, (browserIndex ?? count - 1) - 1); renderBrowser();
+});
+el("browser-forward").addEventListener("click", () => {
+  const count = browserHistory(liveEvents).length;
+  const next = (browserIndex ?? count - 1) + 1;
+  browserIndex = next >= count - 1 ? null : next; renderBrowser();
+});
+el("browser-reload").addEventListener("click", () => { const url = el("browser-current-url").textContent ?? ""; if (url.startsWith("http")) void openPage(url); });
 el("browser-stop").addEventListener("click", () => {
   if (selected) void api(`/api/tasks/${selected}/browser/stop`, {}).catch(error => message(String(error), true));
 });
@@ -1033,7 +1061,10 @@ el("browser-stop").addEventListener("click", () => {
 async function loadBrowserSettings(): Promise<void> {
   const info = await api<{ enabled: boolean; image: string; availability: string; launch_verified: boolean }>("/api/browser");
   input("browser-enabled").checked = info.enabled;
-  el("browser-availability").textContent = info.availability === "image_ready" ? info.launch_verified ? "Browser image installed. A capture completed in this service session." : "Browser image installed. A successful launch has not been verified." : `Browser runtime unavailable. Build the local ${info.image} image and start Docker.`;
+  el("browser-availability").textContent = info.availability === "host_ready"
+    ? `Uses ${(info as { browser?: string }).browser ?? "the browser"} on this computer with a fresh, empty profile; pages can only reach public Internet addresses.`
+    : info.availability === "image_ready" ? info.launch_verified ? "Browser image installed. A capture completed in this service session." : "Browser image installed. A successful launch has not been verified."
+    : `No browser available. Install Edge or Chrome, or build the local ${info.image} image and start Docker.`;
 }
 el("browser-enabled").addEventListener("change", async () => {
   try { await request("/api/browser", "PATCH", { enabled: input("browser-enabled").checked }); message("Browser setting saved."); }
@@ -1258,9 +1289,10 @@ function resetConversation(): void {
   el("review-note").textContent = "";
   liveEvents = [];
   currentPlan = null; parentTask = null; observedTaskMode = '';
-  input("browser-consent").checked = false;
-  input("browser-approval").checked = false;
+  // Classic asks per task; Ask and Auto take it from the project's trust (Ask still asks per page).
+  input("browser-approval").checked = runMode() !== "classic" && runMode() !== "plan" && projectTrusted;
   input("browser-url").value = "";
+  browserIndex = null;
   renderTerminal();
   renderBrowser();
   renderPlanner(); renderChecklist();
@@ -2296,6 +2328,7 @@ function applyRunMode(): void {
   select("verification").value = mode === "plan" ? "syntax" : "local";
   input("external").checked = projectTrusted;
   input("execution").checked = projectTrusted && mode !== "plan";
+  input("browser-approval").checked = projectTrusted && mode !== "plan";  // Ask mode still asks before each page
   syncMode();
 }
 /** The first message in a project asks once whether Dikdik may work in this folder. */
