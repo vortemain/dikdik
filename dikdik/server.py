@@ -29,6 +29,7 @@ from .repository import INDEXER, approved_root, inventory, metadata
 from .server_routes import ROUTE_PREFIXES, build_routes
 from .gateway import Gateway
 from .openapi import document as openapi_document
+from .server_state import ServerState
 
 
 WEB = Path(__file__).parent / "web"
@@ -74,6 +75,7 @@ def make_server(engine: Engine, port: int, token: str):
     expected = ("Bearer " + token).encode("utf-8")
     started_at = time.monotonic()
     activity = {"last": time.monotonic()}
+    state = ServerState(ready=not os.environ.get("DIKDIK_DORMANT", ""))
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -264,7 +266,10 @@ def make_server(engine: Engine, port: int, token: str):
                 self.reply(200, {"status": "ok"})
                 return
             if path == "/ready":
-                self.reply(200, {"status": "ready"})
+                if state.dormant:
+                    self.reply(503, {"status": "dormant", "error": "Server is not initialized; POST /api/init first"})
+                else:
+                    self.reply(200, {"status": "ready"})
                 return
             if path == "/server_info" or path == "/api/server-info":
                 now = time.monotonic()
@@ -272,12 +277,16 @@ def make_server(engine: Engine, port: int, token: str):
                                  "platform": platform.platform(), "workspace": engine.root.name,
                                  "rust_indexer": INDEXER, "port": self.server.server_port,
                                  "uptime": round(now - started_at, 3),
-                                 "idle_time": round(now - activity["last"], 3)})
+                                 "idle_time": round(now - activity["last"], 3),
+                                 **state.info()})
                 return
             if path == "/openapi.json" or path == "/api/openapi":
                 self.reply(200, openapi_document())
                 return
             if not self.authorized():
+                return
+            if state.dormant:
+                self.reply(503, {"error": "Server is dormant; POST /api/init to initialize"})
                 return
             answer = gateway.route("GET", path, {})
             if answer is not None:
@@ -448,6 +457,8 @@ def make_server(engine: Engine, port: int, token: str):
                 bash = engine.bash.route("POST", self.path, body)
                 if bash is not None:
                     self.reply(*bash)
+                elif path == "/api/init":
+                    self.reply(200, state.initialize(body, engine))
                 elif path == "/api/tasks":
                     self.reply(202, {"id": engine.submit(body)})
                 elif path == "/api/tasks/batch" and isinstance(body, dict):
