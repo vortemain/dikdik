@@ -204,6 +204,17 @@ def make_server(engine: Engine, port: int, token: str):
                 if self.same_origin():
                     self.oauth_callback()
                 return
+            if path == "/alive" or path == "/health":
+                self.reply(200, {"status": "ok"})
+                return
+            if path == "/ready":
+                self.reply(200, {"status": "ready"})
+                return
+            if path == "/server_info" or path == "/api/server-info":
+                self.reply(200, {"version": DIKDIK_VERSION, "python": platform.python_version(),
+                                 "platform": platform.platform(), "workspace": engine.root.name,
+                                 "rust_indexer": INDEXER, "port": self.server.server_port})
+                return
             if not self.authorized():
                 return
             answer = gateway.route("GET", path, {})

@@ -290,6 +290,15 @@ fair autonomous-capability comparison or proof of superiority.
 
 ## OpenAI-compatible gateway verification
 
+## Health, readiness and server-info verification
+
+- `tests/test_health.py` passes 5 tests: `/alive` and `/health` return
+  `{"status": "ok"}` without a key; `/ready` returns `{"status": "ready"}`;
+  a protected route still refuses a keyless request with 401; `/server_info`
+  and `/api/server-info` report version, Python, platform, workspace and port.
+
+## OpenAI-compatible gateway verification (details)
+
 - `tests/test_gateway.py` passes 7 tests against a real loopback server with a
   stubbed model transport: `/v1/models` lists saved profiles (empty with none)
   and stays keyed (401 without the session bearer); `/v1/chat/completions`
