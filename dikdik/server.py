@@ -31,6 +31,7 @@ from .gateway import Gateway
 from .openapi import document as openapi_document
 from .server_state import ServerState
 from .api_keys import ApiKeyStore
+from .config import check_config_or_exit
 
 
 WEB = Path(__file__).parent / "web"
@@ -697,6 +698,7 @@ def main():
     parser.add_argument("--rotate-token", action="store_true", help="Issue a new session secret, signing out every browser")
     args = parser.parse_args()
     early_exits(parser)
+    check_config_or_exit()
     if not args.workspace:
         parser.error("--workspace is required: pass an explicitly approved repository directory")
     probe = socket.socket()
