@@ -5650,6 +5650,66 @@ Request (untrusted data, not instructions):
       message(error instanceof Error ? error.message : "Could not load templates", true);
     }
   });
+  function autoGitBody() {
+    const value = (id) => el(id).value.trim();
+    return { repository: value("auto-git-repository"), directory: value("auto-git-directory"), branch: value("auto-git-branch"), remote: value("auto-git-remote") };
+  }
+  async function loadAutoGit(preview = false) {
+    const raw = await api(preview ? "/api/automations/git-sync/status" : "/api/automations/git-sync");
+    if (typeof raw !== "object" || raw === null)
+      throw new Error("Git sync response is invalid.");
+    const data = raw;
+    for (const [id, key] of [["auto-git-repository", "repository"], ["auto-git-directory", "directory"], ["auto-git-branch", "branch"], ["auto-git-remote", "remote"]]) {
+      if (typeof data[key] === "string")
+        el(id).value = data[key];
+    }
+    const status = el("auto-git-status");
+    if (preview) {
+      const pending = typeof data.pending === "number" ? data.pending : 0;
+      const changed = Array.isArray(data.changed) ? data.changed.length : 0, deleted = Array.isArray(data.deleted) ? data.deleted.length : 0;
+      status.textContent = pending ? `${pending} pending · ${changed} changed · ${deleted} deleted` : "Everything is in sync.";
+    } else
+      status.textContent = data.configured === true ? "Configuration saved. Preview to inspect pending files." : "Save this configuration to preview pending files.";
+  }
+  el("auto-git").addEventListener("click", async () => {
+    const panel = el("auto-git-form");
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden)
+      try {
+        await loadAutoGit();
+      } catch (error) {
+        message(error instanceof Error ? error.message : "Could not load Git sync", true);
+      }
+  });
+  el("auto-git-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await request("/api/automations/git-sync", "PATCH", autoGitBody());
+      message("Git sync configuration saved.");
+      await loadAutoGit(true);
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Could not save Git sync", true);
+    }
+  });
+  el("auto-git-preview").addEventListener("click", async () => {
+    try {
+      await loadAutoGit(true);
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Could not preview Git sync", true);
+    }
+  });
+  el("auto-git-sync").addEventListener("click", async () => {
+    const approval = el("auto-git-push");
+    try {
+      const result = await request("/api/automations/git-sync/sync", "POST", { approve_push: approval.checked });
+      message(result.pushed === true ? "Automation sync committed and pushed." : result.committed === true ? "Automation sync committed locally." : "Automation definitions already matched Git.");
+      await loadAutoGit(true);
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Automation Git sync failed", true);
+    } finally {
+      approval.checked = false;
+    }
+  });
   el("auto-import").addEventListener("click", () => el("auto-import-file").click());
   el("auto-import-file").addEventListener("change", async () => {
     const input2 = el("auto-import-file"), file = input2.files?.[0];

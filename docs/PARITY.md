@@ -30,11 +30,11 @@ OpenHands app map (799 sub-features) and the agent-server/SDK map
 
 | Status | First audit | After the first build phases | After the parity fix | Run control | Interface | Models | Current |
 |---|---|---|---|---|---|---|---|
-| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 397 |
-| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 224 |
-| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 1,047 |
+| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 417 |
+| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 249 |
+| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 1,000 |
 | Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 | 61 | 61 |
-| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 | 20 |
+| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 | 22 |
 | **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
 
 Correction (2026-10-27): earlier versions of this table counted 1,801 rows. 51 of
@@ -102,15 +102,26 @@ output, plus per-agent-profile critic review, project memory and secret scoping.
 Secret counters now never repeat across deletes or undone rotations. Checked in
 real Chrome against a local OpenAI-compatible stand-in; no live provider or
 Docker run was made.
+The automations phase adds stdlib cron schedules with IANA time zones, local
+Git-commit polling, persisted drafts with validation and test dispatch, and
+versioned import/export that imports disabled. Git sync extends it: Dikdik
+manages a dedicated directory inside a Git repository the user selects from the
+workspace, exports every automation deterministically (sorted keys, slug
+folders, a manifest) with secrets never present by construction, previews the
+pending changed/deleted files before writing, commits with Git hooks disabled,
+and pushes only after a separate per-sync approval tick that is never stored.
+Sync failure never leaves a half-managed directory: saving refuses directories
+that exist with foreign files. Contract-tested; not yet screenshot-checked in a
+real browser.
 
 Gaps the first audit found in features that looked present, all fixed: unused
 model profiles and keys, unused skills, the unloaded Rust indexer, automations
 granting consent on their own, real agent tool events missing from the chat,
 and automation runs never listing (`task_id`/`id` mismatch).
 
-Largest remaining gaps: live browser execution, extension apps, MCP OAuth and catalog, automation Git sync and templates,
-WebSocket and TypeScript clients, VS Code serving, onboarding, and any recorded run
-against a live model provider or Docker engine.
+Largest remaining gaps: live browser execution, extension apps, automation
+templates, WebSocket and TypeScript clients, VS Code serving, onboarding, and any
+recorded run against a live model provider or Docker engine.
 
 ## Capability groups and acceptance gates
 

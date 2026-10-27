@@ -83,7 +83,10 @@ autonomous engineering platform.
   what a plugin adds and trust it, and its MCP servers arrive switched off.
 - **Automations** on daily, interval, cron or local Git-commit triggers. Search,
   filter and sort the dashboard; start from built-in templates; save/test drafts;
-  import/export portable JSON; inspect every run. Runs use the approvals you set.
+  import/export portable JSON; inspect every run. Sync definitions to a Git
+  repository you pick inside the workspace: secret-free deterministic exports,
+  a preview of what will change, hook-free commits and an explicit approval for
+  every push. Runs use the approvals you set.
 - **Python client and CLI** (`python -m dikdik.client`) and a native Rust
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
@@ -236,6 +239,15 @@ composer in Agent mode. Automations run daily, every N minutes, on a five-field 
 schedule in an IANA time zone, or after a local Git revision changes. Their templates,
 drafts, import/export and bounded run logs are under Automations; imported definitions
 start disabled. Older automations made without approvals wait for an edit.
+
+**Automation Git sync** writes every automation to one managed directory of a Git
+repository in this workspace (default `.dikdik/automations`). Exports are
+deterministic and can never contain secrets. **Preview** lists the pending
+changed and deleted files; **Sync now** writes them, stages only that directory
+and commits without running any Git hook. Pushing to the remote happens only
+when you separately tick the push approval for that one sync, and the tick is
+never remembered. If the directory holds files Dikdik did not export, sync
+refuses instead of overwriting them.
 
 ### Python client and command line
 

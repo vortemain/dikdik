@@ -383,9 +383,22 @@
           <select id="auto-filter" aria-label="Filter automations"><option value="all">All</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="failed">Needs attention</option></select>
           <select id="auto-sort" aria-label="Sort automations"><option value="updated">Recently updated</option><option value="name">Name</option><option value="next">Next run</option></select>
           <button id="auto-templates" type="button" class="secondary">Templates</button>
+          <button id="auto-git" type="button" class="secondary">Git sync</button>
           <button id="auto-import" type="button" class="secondary">Import</button><input id="auto-import-file" type="file" accept="application/json,.json" hidden>
         </div>
         <div id="auto-template-list" class="auto-template-list" hidden></div>
+        <form id="auto-git-form" class="auto-git-panel" hidden>
+          <div class="skill-fields">
+            <label for="auto-git-repository">Git repository</label><input id="auto-git-repository" value="." placeholder="Workspace-relative repository root">
+            <label for="auto-git-directory">Managed directory</label><input id="auto-git-directory" value=".dikdik/automations">
+            <label for="auto-git-branch">Branch</label><input id="auto-git-branch" value="main">
+            <label for="auto-git-remote">Remote</label><input id="auto-git-remote" value="origin">
+          </div>
+          <p class="hint">Sync writes only versioned automation definitions. Secrets are never exported. Commits disable Git hooks.</p>
+          <p id="auto-git-status" class="hint">Save this configuration to preview pending files.</p>
+          <label class="check"><input id="auto-git-push" type="checkbox">Approve one push to the selected remote after this sync</label>
+          <div class="row"><button type="submit" class="secondary small">Save configuration</button><button id="auto-git-preview" type="button" class="secondary small">Preview</button><button id="auto-git-sync" type="button" class="primary small">Sync now</button></div>
+        </form>
         <form id="auto-form" class="skill-form">
           <input id="auto-id" type="hidden">
           <div class="skill-fields">

@@ -577,6 +577,8 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
 .auto-template-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; margin: 12px 0; }
 .auto-template { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--surface-2); }
 .auto-template h4, .auto-template p { margin: 0 0 8px; }
+.auto-git-panel { margin: 12px 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.auto-git-panel > .hint { margin: 8px 0; }
 .auto-log { overflow: auto; max-height: 260px; margin: 6px; padding: 10px; border-radius: 8px; background: var(--surface-3); font-size: 11px; white-space: pre-wrap; }
 .auto-state { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--surface-3); color: var(--muted); }
 .auto-state.state-completed { background: var(--ok-soft); color: var(--ok); }

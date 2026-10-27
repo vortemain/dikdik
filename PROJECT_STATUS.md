@@ -13,16 +13,19 @@ Docker browser tool with screenshots in chat and a Browser tab; safe apply
 with conflict detection; Files and Git; model profiles and
 encrypted keys driving every call; skills, MCP servers (HTTP and stdio) and agent
 profiles; streamed replies over server-sent events; automations with stored
-approvals; a Python client/CLI; the Rust indexer loaded by default; and run
+approvals, cron and Git-commit triggers, drafts and templates, and a
+deterministic, secret-free Git sync of definitions into a user-selected
+workspace repository (previewed pending files, hook-free commits and a separate
+per-sync push approval); a Python client/CLI; the Rust indexer loaded by default; and run
 control (interrupt/exact resume, pause-at-boundary, per-action confirmation, hooks, subagents,
 attachments, slash commands, side questions, condensing, judged goals, forks);
 an organised interface (command menu, folders and tags, file tree, onboarding);
 and model management (connections, routing, a model picker, sandbox secrets).
-The parity audit (docs/PARITY.md) moved from 89 to 397 fully matched OpenHands sub-features
+The parity audit (docs/PARITY.md) moved from 89 to 417 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **330 passed, 2 live-runtime tests skipped**; Bun
-**98 passed / 464 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-27): Python **359 passed, 2 live-runtime tests skipped** (361 run); Bun
+**100 passed / 474 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -100,6 +103,14 @@ Test status (2026-10-27): Python **330 passed, 2 live-runtime tests skipped**; B
   an undone rotation.
 - Independent review findings fixed: early-exit verification bypass, finalization
   cancellation race, component-token undercount; reviewer reran regressions.
+- Added automations cron/Git-commit events, drafts with validation and test
+  dispatch, templates and import/export; then Automation Git sync: one managed
+  directory in a chosen workspace Git repository, deterministic sorted exports
+  that cannot contain secrets by construction, a preview of pending
+  changed/deleted files, hook-free commits with a fixed identity, distinct
+  branch checkout and safe-path validation, and a push that happens only with a
+  separate never-remembered approval tick. Contract-tested with real Git repos,
+  including a bare remote that stays empty until an approved push.
 - Built wheel offline, inspected its 22 entries (no upstream/Python runtime deps),
   installed in a fresh venv and started the app from the installed package.
 - Established the verified baseline and per-feature local commits on `main`.
@@ -108,8 +119,8 @@ Test status (2026-10-27): Python **330 passed, 2 live-runtime tests skipped**; B
 
 ## Test status
 
-- Python: **330 passed, 2 live-runtime tests skipped** (332 total).
-- Bun: **98 passed / 464 assertions**; strict TypeScript check and browser build passed.
+- Python: **359 passed, 2 live-runtime tests skipped** (361 run).
+- Bun: **100 passed / 474 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit

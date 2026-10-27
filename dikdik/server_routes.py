@@ -14,6 +14,7 @@ import urllib.parse
 
 from .agent_profiles import AgentProfiles
 from .automation import validate_schedule
+from .automation_git import AutomationGitSync
 from .automation_templates import templates as automation_templates
 from .drafts import DraftConflict, Drafts
 from .mcp import OAUTH_PREFIX, McpError, McpStore, oauth_ref, test_server
@@ -43,6 +44,7 @@ def build_routes(engine_or_stores):
                         (lambda: plugins.skill_dirs()) if plugins else None)
     market = SkillStore(stores.data, stores.store)
     automations = stores.automation
+    automation_git = AutomationGitSync(stores, automations)
     drafts = Drafts(stores.store)
     connections = ConnectionStore(stores.store, secrets)
     routers = getattr(stores, "routers", None) or RouterStore(stores.store)
@@ -251,6 +253,16 @@ def build_routes(engine_or_stores):
             return 200, automation_templates()
         if method == "POST" and len(parts) == 3 and parts[2] == "import":
             return automations.import_spec(body)
+        if len(parts) >= 3 and parts[2] == "git-sync":
+            if method == "GET" and len(parts) == 3:
+                return automation_git.get()
+            if method == "PATCH" and len(parts) == 3:
+                return automation_git.save(body, time.time())
+            if method == "GET" and len(parts) == 4 and parts[3] == "status":
+                return automation_git.status()
+            if method == "POST" and len(parts) == 4 and parts[3] == "sync":
+                return automation_git.sync(body, time.time())
+            return None
         if len(parts) >= 3 and parts[2] == "drafts":
             if method == "GET" and len(parts) == 3:
                 return automations.list_drafts()

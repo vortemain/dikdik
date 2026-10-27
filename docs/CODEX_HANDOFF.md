@@ -328,9 +328,13 @@ Build in this order; one commit per numbered item (or per sub-feature if large).
    commit polling, persisted drafts + test dispatch, repositories and time limits.
    Stored approvals remain exact. Open reference deltas: grid/list persistence,
    cancellation, draft browser/resume, larger catalog and agent-assisted setup.
-6. **Automation Git sync** (app F24): sync automation definitions to a Git repository
-   the user picks; secrets are never written (or are sealed with a user-held key);
-   every push needs explicit approval; hooks disabled.
+6. **Automation Git sync** (app F24) — done (`dikdik/automation_git.py`,
+   `dikdik/web/app.ts` Git sync panel): a dedicated managed directory inside a
+   user-selected workspace Git repository, deterministic secret-free exports,
+   a preview of pending changed/deleted files, hook-free commits and a separate
+   per-request push approval. Open: a dedicated page, a re-configuration
+   without overwriting (clear), reachability checks for hosted remotes,
+   automatic intervals and a browser screenshot pass.
 
 ## 8. Phase E — Platform and APIs
 

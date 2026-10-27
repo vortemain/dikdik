@@ -255,6 +255,34 @@ fair autonomous-capability comparison or proof of superiority.
   approval, updated the overview to `1 total · 1 enabled`, and verified the client-side
   no-match search state. No model request or scheduled run was made.
 
+## Automation Git sync verification
+
+- `tests/test_automation_git.py` passes 4 tests: preview counts exactly the
+  deterministic export (one `automation.json` per automation plus
+  `manifest.json`), the committed files contain no secret text, deleting an
+  automation previews and commits the removal of its slug folder, sync refuses a
+  repository outside the workspace or a sync directory holding foreign files,
+  and a numeric `approve_push` (`{"approve_push": 1}`) is refused while the
+  first unapproved sync leaves the bare remote untouched and a later explicit
+  `approve_push: true` pushes once.
+- Routes were exercised through `build_routes`: unconfigured status, save,
+  pending preview and a hook-free commit all answer 200 with the documented
+  shapes; commit author is a fixed `Dikdik Automations` identity and hooks are
+  disabled by `core.hooksPath` plus `--no-verify`.
+- Strict TypeScript check, the production browser bundle (`bun run build:web`)
+  and the web suite (100 tests, 474 assertions) pass.
+- A real Chrome check against disposable local data: the panel opened in
+  Settings → Automations, refused a save whose branch is not checked out with
+  the server's plain message, saved, previewed `2 pending · 2 changed ·
+  0 deleted`, synced and then read `Everything is in sync.` with the push tick
+  left unticked (and it stayed unticked afterwards); the scratch workspace then
+  contained one `Sync Dikdik automations` commit authored by
+  `Dikdik Automations <dikdik@local.invalid>`, and a reset working tree resynced
+  to identical content without a second commit ("already matched Git"). The
+  390 px dark layout shows no horizontal overflow and no page or console errors.
+- Not checked against a hosted remote with stored credentials; pushes to a bare
+  local remote were verified by the test suite only.
+
 ## Packaging evidence
 
 Built with local setuptools/wheel in the reference tooling venv, **without network
