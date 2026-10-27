@@ -30,6 +30,7 @@ from .server_routes import ROUTE_PREFIXES, build_routes
 from .gateway import Gateway
 from .openapi import document as openapi_document
 from .server_state import ServerState
+from .api_keys import ApiKeyStore
 
 
 WEB = Path(__file__).parent / "web"
@@ -76,6 +77,7 @@ def make_server(engine: Engine, port: int, token: str):
     started_at = time.monotonic()
     activity = {"last": time.monotonic()}
     server_state = ServerState(ready=not os.environ.get("DIKDIK_DORMANT", ""))
+    api_keys = ApiKeyStore(Path(engine.data) if hasattr(engine, "data") else Path("."))
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -149,10 +151,17 @@ def make_server(engine: Engine, port: int, token: str):
             # Scripts and tests send the bearer header; the browser holds an HttpOnly,
             # SameSite=Strict session cookie, so nobody has to paste a token.
             supplied = self.headers.get("Authorization", "") or ("Bearer " + self.session_cookie())
-            if not hmac.compare_digest(supplied.encode("utf-8"), expected):
-                self.refuse(401, {"error": "Not signed in. Open the link printed in the Dikdik terminal."})
-                return False
-            return True
+            if hmac.compare_digest(supplied.encode("utf-8"), expected):
+                return True
+            # Check API keys for programmatic access
+            if supplied.startswith("Bearer dikdik-"):
+                key = api_keys.verify(supplied.removeprefix("Bearer "))
+                if key is not None:
+                    self.api_key = key  # available for scope checks
+                    return True
+            self.api_key = None
+            self.refuse(401, {"error": "Not signed in. Open the link printed in the Dikdik terminal."})
+            return False
 
         def start_session(self, body):
             supplied = body.get("token") if isinstance(body, dict) else None
@@ -326,6 +335,9 @@ def make_server(engine: Engine, port: int, token: str):
                 if path == "/api/workspaces":
                     self.reply(200, {"workspaces": engine.workspaces.list()})
                     return
+                if path == "/api/keys":
+                    self.reply(200, {"keys": api_keys.list()})
+                    return
                 if path == "/api/tasks/count":
                     with engine.store.connect() as db:
                         total = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
@@ -496,6 +508,14 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(200, {"action": action, "updated": count})
                 elif path == "/api/workspaces" and isinstance(body, dict):
                     self.reply(201, engine.workspaces.add(body.get("path", ""), body.get("name")))
+                elif path == "/api/keys" and isinstance(body, dict):
+                    name = body.get("name", "")
+                    scopes = body.get("scopes", ["read"])
+                    try:
+                        token = api_keys.create(name, scopes)
+                        self.reply(201, {"token": token, "scopes": scopes})
+                    except ValueError as exc:
+                        self.reply(400, {"error": str(exc)})
                 elif path.startswith("/api/tasks/") and path.endswith("/cancel"):
                     self.reply(200, {"requested": engine.cancel(path.split("/")[3])})
                 elif path.startswith("/api/tasks/") and path.endswith("/interrupt"):
@@ -616,6 +636,13 @@ def make_server(engine: Engine, port: int, token: str):
                 if path.startswith("/api/workspaces/") and method == "DELETE":
                     engine.workspaces.remove(path.split("/")[3])
                     self.reply(200, {"removed": path.split("/")[3]})
+                    return
+                if path.startswith("/api/keys/") and method == "DELETE":
+                    try:
+                        api_keys.delete(path.split("/")[3])
+                        self.reply(200, {"deleted": path.split("/")[3]})
+                    except KeyError:
+                        self.reply(404, {"error": "Key not found"})
                     return
                 if path.startswith("/api/tasks/") and path.count("/") == 3:
                     task = path.split("/")[3]

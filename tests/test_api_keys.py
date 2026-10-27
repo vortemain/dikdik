@@ -1,0 +1,87 @@
+"""Multiple API keys with scopes for programmatic access."""
+
+import http.client
+import json
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+
+from dikdik.engine import Engine
+from dikdik.server import make_server
+
+
+class ApiKeyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        base = Path(self.temp.name)
+        self.root = base / "repo"
+        self.root.mkdir()
+        (self.root / "app.py").write_text("value = 1\n", encoding="utf-8")
+        self.engine = Engine(self.root, base / "data")
+        self.addCleanup(self.engine.close)
+        self.server = make_server(self.engine, 0, "test-token")
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.shutdown)
+        self.addCleanup(self.server.server_close)
+
+    def call(self, method, path, body=None, token="test-token"):
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        conn.request(method, path, body=json.dumps(body) if body is not None else None, headers=headers)
+        r = conn.getresponse()
+        body = r.read()
+        conn.close()
+        return r.status, body
+
+    def test_create_list_delete_key(self):
+        status, body = self.call("POST", "/api/keys", {"name": "CI", "scopes": ["read"]})
+        data = json.loads(body)
+        self.assertEqual(status, 201)
+        self.assertTrue(data["token"].startswith("dikdik-"))
+        self.assertEqual(data["scopes"], ["read"])
+
+        # List
+        status, body = self.call("GET", "/api/keys")
+        keys = json.loads(body)["keys"]
+        self.assertEqual(status, 200)
+        self.assertEqual(len(keys), 1)
+        self.assertEqual(keys[0]["name"], "CI")
+        self.assertNotIn("token", keys[0])  # never return the token
+        self.assertNotIn("hash", keys[0])
+
+        # Delete
+        key_id = keys[0]["id"]
+        status, body = self.call("DELETE", f"/api/keys/{key_id}")
+        self.assertEqual(status, 200)
+        status, body = self.call("GET", "/api/keys")
+        self.assertEqual(len(json.loads(body)["keys"]), 0)
+
+    def test_api_key_authenticates(self):
+        status, body = self.call("POST", "/api/keys", {"name": "CI", "scopes": ["read"]})
+        token = json.loads(body)["token"]
+
+        # Use the API key to access a protected route
+        status, body = self.call("GET", "/api/tasks", token=token)
+        self.assertEqual(status, 200)
+
+    def test_wrong_api_key_refused(self):
+        status, body = self.call("GET", "/api/tasks", token="dikdik-wrong")
+        self.assertEqual(status, 401)
+
+    def test_invalid_scope_refused(self):
+        status, body = self.call("POST", "/api/keys", {"name": "bad", "scopes": ["superadmin"]})
+        self.assertEqual(status, 400)
+
+    def test_key_name_required(self):
+        status, body = self.call("POST", "/api/keys", {"scopes": ["read"]})
+        self.assertEqual(status, 400)
+
+    def test_delete_unknown_key_404(self):
+        status, body = self.call("DELETE", "/api/keys/nonexistent")
+        self.assertEqual(status, 404)
+
+
+if __name__ == "__main__":
+    unittest.main()
