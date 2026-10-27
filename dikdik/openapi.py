@@ -1,0 +1,116 @@
+"""A minimal OpenAPI 3.1 document for Dikdik's public HTTP API.
+
+Covers the conversation routes (tasks, messages, stream, apply, cancel,
+pause, resume, fork, ask, condense), the gateway (/v1/*), health/ready and
+server-info. Deliberately small: no WebSocket, no MCP OAuth callback, no
+internal-only routes. The document is generated from the route table so it
+stays in sync with the server.
+"""
+
+import json
+
+OPENAPI = {
+    "openapi": "3.1.0",
+    "info": {"title": "Dikdik", "version": "0.1.0",
+             "description": "Loopback-only conversational coding agent. All routes require a session bearer token except /alive, /health, /ready and /server_info."},
+    "servers": [{"url": "http://127.0.0.1:8787", "description": "Loopback only"}],
+    "components": {
+        "securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}},
+        "schemas": {
+            "Task": {"type": "object", "properties": {
+                "id": {"type": "string"}, "state": {"type": "string"},
+                "objective": {"type": "string"}, "created": {"type": "number"},
+                "result": {"type": "object"}, "events": {"type": "array", "items": {"type": "object"}},
+            }, "required": ["id", "state", "created"]},
+            "Error": {"type": "object", "properties": {"error": {"type": "string"}}, "required": ["error"]},
+            "SubmitRequest": {"type": "object", "properties": {
+                "objective": {"type": "string", "minLength": 1, "maxLength": 4000},
+                "mode": {"type": "string", "enum": ["offline", "model", "agent", "plan"]},
+                "verification": {"type": "string", "enum": ["syntax", "docker"]},
+                "approve_external": {"type": "boolean"}, "approve_execution": {"type": "boolean"},
+                "approve_browser": {"type": "boolean"}, "approve_secrets": {"type": "boolean"},
+                "edits": {"type": "array", "items": {"type": "object"}},
+                "model_profile": {"type": "string"}, "agent_profile": {"type": "string"},
+            }, "required": ["objective", "mode", "verification", "approve_external"]},
+            "ChatCompletion": {"type": "object", "properties": {
+                "model": {"type": "string"}, "messages": {"type": "array", "items": {"type": "object"}},
+                "dikdik": {"type": "object"},
+            }, "required": ["model", "messages"]},
+        },
+    },
+    "security": [{"bearer": []}],
+    "paths": {
+        "/alive": {"get": {"summary": "Liveness probe", "security": [], "responses": {"200": {"description": "OK"}}}},
+        "/health": {"get": {"summary": "Health check", "security": [], "responses": {"200": {"description": "OK"}}}},
+        "/ready": {"get": {"summary": "Readiness check", "security": [], "responses": {"200": {"description": "Ready"}}}},
+        "/server_info": {"get": {"summary": "Server information", "security": [],
+                                  "responses": {"200": {"description": "Server info as JSON"}}}},
+        "/api/tasks": {
+            "get": {"summary": "List tasks", "responses": {"200": {"description": "List of tasks", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Task"}}}}}}},
+            "post": {"summary": "Submit a new task", "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmitRequest"}}}},
+                     "responses": {"202": {"description": "Task created", "content": {"application/json": {"schema": {"type": "object", "properties": {"id": {"type": "string"}}}}}},
+                                    "400": {"description": "Validation error", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}}},
+        },
+        "/api/tasks/{id}": {
+            "get": {"summary": "Get a task", "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "Task detail", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Task"}}}},
+                                   "404": {"description": "Not found", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}}},
+            "delete": {"summary": "Delete a task", "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                      "responses": {"200": {"description": "Deleted"}, "404": {"description": "Not found"}}},
+        },
+        "/api/tasks/{id}/stream": {"get": {"summary": "Server-sent events for a task",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}},
+                           {"name": "after", "in": "query", "schema": {"type": "integer", "default": 0}}],
+            "responses": {"200": {"description": "text/event-stream"}, "404": {"description": "Not found"}}}},
+        "/api/tasks/{id}/apply": {"post": {"summary": "Apply a task's candidate files",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"confirm": {"type": "boolean", "const": True}, "files": {"type": "array", "items": {"type": "string"}}}}}}},
+            "responses": {"200": {"description": "Applied"}, "400": {"description": "Confirmation required"}}}},
+        "/api/tasks/{id}/cancel": {"post": {"summary": "Cancel a running task",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "Cancel requested"}}}},
+        "/api/tasks/{id}/pause": {"post": {"summary": "Pause a running task",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "Pause requested"}}}},
+        "/api/tasks/{id}/resume": {"post": {"summary": "Resume a paused task",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}},
+            "responses": {"202": {"description": "Resumed"}}}},
+        "/api/tasks/{id}/fork": {"post": {"summary": "Fork a conversation",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"title": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}}}}}},
+            "responses": {"201": {"description": "Forked"}}}},
+        "/api/tasks/{id}/ask": {"post": {"summary": "Ask a side question",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"question": {"type": "string"}}}}}},
+            "responses": {"200": {"description": "Answer"}}}},
+        "/api/tasks/{id}/condense": {"post": {"summary": "Condense the conversation history",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "Condensed"}}}},
+        "/api/tasks/{id}/messages": {"post": {"summary": "Send a follow-up message",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmitRequest"}}}},
+            "responses": {"202": {"description": "Queued or started"}}}},
+        "/api/tasks/{id}/download": {"get": {"summary": "Download a conversation archive",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "application/zip"}, "404": {"description": "Not found"}}}},
+        "/api/project": {"get": {"summary": "Workspace metadata", "responses": {"200": {"description": "Project info"}}}},
+        "/api/model": {"get": {"summary": "Active model profile", "responses": {"200": {"description": "Model info"}}}},
+        "/api/git": {"get": {"summary": "Git status", "responses": {"200": {"description": "Git info"}}}},
+        "/api/agent-info": {"get": {"summary": "Agent tools, skills and hooks", "responses": {"200": {"description": "Agent info"}}}},
+        "/api/settings/app": {"get": {"summary": "App settings", "responses": {"200": {"description": "Settings"}}},
+                              "patch": {"summary": "Update app settings", "requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}},
+                                        "responses": {"200": {"description": "Updated"}}}},
+        "/v1/models": {"get": {"summary": "List model profiles (OpenAI-compatible)", "responses": {"200": {"description": "Model list"}}}},
+        "/v1/chat/completions": {"post": {"summary": "Chat completion (OpenAI-compatible)",
+            "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ChatCompletion"}}}},
+            "responses": {"200": {"description": "Chat completion"}, "400": {"description": "Validation error"}}}},
+        "/v1/responses": {"post": {"summary": "Responses (OpenAI-compatible)",
+            "requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}},
+            "responses": {"200": {"description": "Response"}, "400": {"description": "Validation error"}}}},
+    },
+}
+
+
+def document() -> dict:
+    return OPENAPI

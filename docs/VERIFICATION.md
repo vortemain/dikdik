@@ -292,10 +292,12 @@ fair autonomous-capability comparison or proof of superiority.
 
 ## Health, readiness and server-info verification
 
-- `tests/test_health.py` passes 5 tests: `/alive` and `/health` return
+- `tests/test_health.py` passes 6 tests: `/alive` and `/health` return
   `{"status": "ok"}` without a key; `/ready` returns `{"status": "ready"}`;
   a protected route still refuses a keyless request with 401; `/server_info`
-  and `/api/server-info` report version, Python, platform, workspace and port.
+  and `/api/server-info` report version, Python, platform, workspace and port;
+  `/openapi.json` and `/api/openapi` serve a 3.1 OpenAPI document with the
+  conversation, gateway, health and settings routes.
 
 ## OpenAI-compatible gateway verification (details)
 

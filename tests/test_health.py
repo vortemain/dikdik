@@ -71,6 +71,17 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["version"], __version__)
 
+    def test_openapi_document(self):
+        for path in ("/openapi.json", "/api/openapi"):
+            with self.subTest(path=path):
+                status, body = self.call(path, auth=False)
+                self.assertEqual(status, 200)
+                doc = json.loads(body)
+                self.assertEqual(doc["openapi"], "3.1.0")
+                self.assertIn("/api/tasks", doc["paths"])
+                self.assertIn("/v1/chat/completions", doc["paths"])
+                self.assertIn("/alive", doc["paths"])
+
 
 if __name__ == "__main__":
     unittest.main()

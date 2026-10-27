@@ -28,6 +28,7 @@ from . import gitops
 from .repository import INDEXER, approved_root, inventory, metadata
 from .server_routes import ROUTE_PREFIXES, build_routes
 from .gateway import Gateway
+from .openapi import document as openapi_document
 
 
 WEB = Path(__file__).parent / "web"
@@ -214,6 +215,9 @@ def make_server(engine: Engine, port: int, token: str):
                 self.reply(200, {"version": DIKDIK_VERSION, "python": platform.python_version(),
                                  "platform": platform.platform(), "workspace": engine.root.name,
                                  "rust_indexer": INDEXER, "port": self.server.server_port})
+                return
+            if path == "/openapi.json" or path == "/api/openapi":
+                self.reply(200, openapi_document())
                 return
             if not self.authorized():
                 return
