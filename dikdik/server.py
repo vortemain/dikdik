@@ -419,7 +419,7 @@ def make_server(engine: Engine, port: int, token: str):
             if server_state.dormant:
                 self.reply(503, {"error": "Server is dormant; POST /api/init to initialize"})
                 return
-            answer = gateway.route("GET", path, {})
+            answer = gateway.route("GET", path, {}, dict(self.headers))
             if answer is not None:
                 self.reply(*answer)
                 return
@@ -656,7 +656,7 @@ def make_server(engine: Engine, port: int, token: str):
                 if length > limit:
                     raise ValueError(f"Request must contain at most {limit} bytes")
                 body = json.loads(self.rfile.read(length)) if length else {}
-                answer = gateway.route(self.command, path, body)
+                answer = gateway.route(self.command, path, body, dict(self.headers))
                 if answer is not None:
                     self.reply(*answer)
                     return

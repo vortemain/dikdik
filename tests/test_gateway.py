@@ -100,6 +100,26 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("Streaming", json.loads(body)["error"])
 
+    def test_missing_messages_refused(self):
+        status, body = self.call("POST", "/v1/chat/completions", {"model": "dikdik-default", "dikdik": {"approve_external": True}})
+        self.assertEqual(status, 400)
+
+    def test_empty_messages_refused(self):
+        status, body = self.call("POST", "/v1/chat/completions", {"model": "dikdik-default", "messages": [], "dikdik": {"approve_external": True}})
+        self.assertEqual(status, 400)
+
+    def test_bad_role_refused(self):
+        status, body = self.call("POST", "/v1/chat/completions", {"model": "dikdik-default", "messages": [{"role": "tool", "content": "x"}], "dikdik": {"approve_external": True}})
+        self.assertEqual(status, 400)
+
+    def test_responses_store_refused(self):
+        status, body = self.call("POST", "/v1/responses", {"model": "dikdik-default", "input": "hi", "store": True, "dikdik": {"approve_external": True}})
+        self.assertEqual(status, 400)
+
+    def test_responses_previous_id_refused(self):
+        status, body = self.call("POST", "/v1/responses", {"model": "dikdik-default", "input": "hi", "previous_response_id": "r1", "dikdik": {"approve_external": True}})
+        self.assertEqual(status, 400)
+
     def test_responses_basic(self):
         with patch("dikdik.agent_provider.chat_completion", return_value=reply()):
             status, body = self.call("POST", "/v1/responses", {

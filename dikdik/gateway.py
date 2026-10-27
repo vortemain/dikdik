@@ -120,18 +120,42 @@ class Gateway:
                 "output_text": content, "dikdik": {"task": state["id"], "state": state["state"]}, "usage": usage}
 
     # --- routes ---------------------------------------------------------
-    def route(self, method: str, path: str, body):
+    def route(self, method: str, path: str, body, headers=None):
         if path == "/v1/models" and method == "GET":
             return 200, {"object": "list", "data": [{"id": profile["id"], "object": "model", "created": 0,
                                                      "owned_by": "dikdik"} for profile in self._profiles()]}
         if path == "/v1/chat/completions" and method == "POST":
             if not isinstance(body, dict):
                 raise ValueError("Body must be a JSON object")
-            task, timeout = self._submit(body, body.get("messages"))
+            messages = body.get("messages")
+            if not isinstance(messages, list) or not messages:
+                raise ValueError("messages must be a non-empty list")
+            # Validate each message has a role and content
+            for msg in messages:
+                if not isinstance(msg, dict) or msg.get("role") not in ("system", "user", "assistant"):
+                    raise ValueError("Each message needs a role of system, user or assistant")
+            # Check for conversation reuse header
+            reuse = headers.get("X-Dikdik-Task-ID") if headers else None
+            if reuse and isinstance(reuse, str):
+                try:
+                    existing = self.engine.store.get(reuse)
+                    # Send a follow-up to the existing task
+                    self.engine.send(reuse, {"objective": self._transcript(messages),
+                                             **self._settings(body)[0]})
+                    return self._answer(reuse, self._settings(body)[1], "chat")
+                except KeyError:
+                    pass  # Unknown id — create a new task
+            task, timeout = self._submit(body, messages)
             return self._answer(task, timeout, "chat")
         if path == "/v1/responses" and method == "POST":
             if not isinstance(body, dict):
                 raise ValueError("Body must be a JSON object")
+            if body.get("stream") is True:
+                raise ValueError("Streaming is not offered yet; set stream false or omit")
+            if body.get("store") is True:
+                raise ValueError("store is not supported; use the Dikdik task API")
+            if body.get("previous_response_id"):
+                raise ValueError("previous_response_id is not supported; use X-Dikdik-Task-ID for continuation")
             input_value = body.get("input")
             if isinstance(input_value, str):
                 input_value = [{"role": "user", "content": input_value}]
