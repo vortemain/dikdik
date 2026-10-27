@@ -30,11 +30,11 @@ OpenHands app map (799 sub-features) and the agent-server/SDK map
 
 | Status | First audit | After the first build phases | After the parity fix | Run control | Interface | Models | Current |
 |---|---|---|---|---|---|---|---|
-| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 417 |
-| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 249 |
-| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 1,000 |
+| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 419 |
+| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 254 |
+| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 992 |
 | Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 | 61 | 61 |
-| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 | 22 |
+| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 | 23 |
 | **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
 
 Correction (2026-10-27): earlier versions of this table counted 1,801 rows. 51 of

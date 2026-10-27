@@ -288,6 +288,22 @@ fair autonomous-capability comparison or proof of superiority.
 
 ## Runtime variants verification
 
+## OpenAI-compatible gateway verification
+
+- `tests/test_gateway.py` passes 7 tests against a real loopback server with a
+  stubbed model transport: `/v1/models` lists saved profiles (empty with none)
+  and stays keyed (401 without the session bearer); `/v1/chat/completions`
+  creates one ordinary agent task and returns a `chat.completion` whose single
+  choice carries the agent's final message; `/v1/responses` does the same with
+  string or list `input` and returns a `response` with one `output_text`;
+  missing `dikdik.approve_external` answers 400 with the engine's plain consent
+  error; an unknown model name answers 400 pointing at `GET /v1/models`;
+  `stream: true` is refused with a plain message (no streaming yet).
+- The gateway is loopback-only and always keyed with the server session bearer.
+  No live provider was called.
+
+## Runtime variants verification (details)
+
 - `tests/test_runtime_variants.py` passes 7 tests against real subprocesses:
   `--version`/`-v` print `Dikdik <version>` and exit 0; `--info` prints runtime
   JSON (version, Python, platform, Docker presence, Rust-indexer presence);

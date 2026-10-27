@@ -27,6 +27,7 @@ from .control import IMAGE_TYPES, workspace_image, workspace_images
 from . import gitops
 from .repository import INDEXER, approved_root, inventory, metadata
 from .server_routes import ROUTE_PREFIXES, build_routes
+from .gateway import Gateway
 
 
 WEB = Path(__file__).parent / "web"
@@ -65,7 +66,9 @@ def session_token(path: Path, rotate: bool = False) -> str:
 
 
 def make_server(engine: Engine, port: int, token: str):
-    routes = build_routes(engine)  # M4: shared (method, path) routing table
+    routes = build_routes(engine)
+    gateway = Gateway(engine)
+    engine.gateway = gateway  # the gateway routes after authentication in this handler  # M4: shared (method, path) routing table
     expected = ("Bearer " + token).encode("utf-8")
 
     class Handler(BaseHTTPRequestHandler):
@@ -203,6 +206,10 @@ def make_server(engine: Engine, port: int, token: str):
                 return
             if not self.authorized():
                 return
+            answer = gateway.route("GET", path, {})
+            if answer is not None:
+                self.reply(*answer)
+                return
             if path.startswith(M4_PREFIXES):
                 self.reply(*routes("GET", self.path, {}))
                 return
@@ -278,6 +285,10 @@ def make_server(engine: Engine, port: int, token: str):
                 if not 0 < length <= limit:
                     raise ValueError(f"Request must contain 1â€“{limit} bytes")
                 body = json.loads(self.rfile.read(length))
+                answer = gateway.route(self.command, path, body)
+                if answer is not None:
+                    self.reply(*answer)
+                    return
                 if path.startswith(M4_PREFIXES):
                     if length > 65536:
                         self.reply(400, {"error": "Endpoint body limit is 64KB"})

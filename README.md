@@ -90,6 +90,9 @@ autonomous engineering platform.
 - **Python client and CLI** (`python -m dikdik.client`) and a native Rust
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
+- **OpenAI-compatible gateway** (`/v1/models`, `/v1/chat/completions`,
+  `/v1/responses`): one ordinary Dikdik agent task per request, always keyed
+  with the session bearer, consent explicit per request, no streaming yet.
 
 **Not yet:** extension apps,
 WebSocket and TypeScript clients, a desktop app, and any recorded run against a

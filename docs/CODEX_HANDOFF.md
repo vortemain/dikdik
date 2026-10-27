@@ -351,8 +351,11 @@ Build in this order; one commit per numbered item (or per sub-feature if large).
    search; workspace file serving with range requests; VS Code (code-server) in Docker;
    runtime info; persistence retention and config precedence; outgoing webhooks
    (opt-in, never telemetry).
-4. **OpenAI-compatible gateway** (srv F30): `/v1/chat/completions` and `/v1/responses`
-   backed by the agent; loopback only; keyed.
+5. **OpenAI-compatible gateway** (srv F30): `/v1/chat/completions` and
+   `/v1/responses` backed by the agent; loopback only; keyed. — done
+   (`dikdik/gateway.py`): one ordinary Dikdik agent task per request, always
+   keyed with the session bearer, consent explicit per request, no streaming
+   yet. Open: streaming, tool-call passthrough, usage from the provider.
 5. **Clients** (srv F33, F34): finish the Python SDK (`dikdik/client.py`: workspace
    exec, settings, pause/resume, fork, ask, secrets, reconnect, custom tools) and a
    TypeScript client package built with Bun, typed, tested against a real server.

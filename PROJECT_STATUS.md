@@ -20,8 +20,11 @@ per-sync push approval); a Python client/CLI; the Rust indexer loaded by default
 control (interrupt/exact resume, pause-at-boundary, per-action confirmation, hooks, subagents,
 attachments, slash commands, side questions, condensing, judged goals, forks);
 an organised interface (command menu, folders and tags, file tree, onboarding);
-and model management (connections, routing, a model picker, sandbox secrets).
-The parity audit (docs/PARITY.md) moved from 89 to 417 fully matched OpenHands sub-features
+and model management (connections, routing, a model picker, sandbox secrets);
+an OpenAI-compatible gateway (/v1/models, /v1/chat/completions,
+/v1/responses) that runs one ordinary Dikdik agent task per request, always
+keyed and with consent explicit per request.
+The parity audit (docs/PARITY.md) moved from 89 to 419 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
 Test status (2026-10-27): Python **359 passed, 2 live-runtime tests skipped** (361 run); Bun
