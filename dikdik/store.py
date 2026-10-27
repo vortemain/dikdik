@@ -152,6 +152,18 @@ class Store:
             return [{"task": r["task_id"], "seq": r["seq"], "time": r["time"],
                      "kind": r["kind"], "data": json.loads(r["data"])} for r in rows]
 
+    def purge_old_events(self, max_age_seconds: float) -> int:
+        """Delete events older than max_age_seconds from terminal tasks. Returns the count deleted."""
+        if not isinstance(max_age_seconds, (int, float)) or max_age_seconds <= 0:
+            return 0
+        cutoff = time.time() - max_age_seconds
+        with self.connect() as db:
+            cursor = db.execute(
+                "DELETE FROM events WHERE time < ? AND task_id IN "
+                "(SELECT id FROM tasks WHERE state IN ('completed','failed','blocked','cancelled','interrupted','archived'))",
+                (cutoff,))
+            return cursor.rowcount
+
     def update_meta(self, task, changes: dict):
         """Rename, pin, archive, file or tag a conversation. Unknown keys and bad types are rejected."""
         if not isinstance(changes, dict) or not changes or set(changes) - {"title", "pinned", "archived", "folder", "tags"}:
