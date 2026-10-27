@@ -189,6 +189,10 @@ const TOOL_LABELS: Record<string, [string, string, string]> = {
   run_tests: ["terminal", "Ran checks", ""],
   run_command: ["terminal", "Ran", "command"],
   finish: ["flag", "Finished", ""],
+  task_tracker: ["list", "Updated the task list", ""],
+  write_plan: ["pencil", "Wrote the plan", ""],
+  read_plan: ["book", "Read the plan", ""],
+  browse_url: ["globe", "Opened", "url"],
 };
 function detailField(details: unknown, key: string): string {
   if (typeof details !== "object" || details === null || !(key in details)) return "";

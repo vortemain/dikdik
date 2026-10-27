@@ -49,11 +49,6 @@ OpenHands app (Canvas 1.33),F02-app-shell,F02.update-tile,N,,"when npm `latest` 
 OpenHands app (Canvas 1.33),F02-app-shell,F02.alert-banner,N,,"when the server config reports maintenance, faulty models or an error message, a dismissible banner (`alert-banner`) appears at the"
 OpenHands app (Canvas 1.33),F02-app-shell,F02.settings-404-modal,N,,"if the backend's settings return 404, the LLM settings modal opens by itself. Other settings fetch errors show a toast."
 OpenHands app (Canvas 1.33),F02-app-shell,F02.error-toasts,Y,,failed requests show a top-right error toast with the product or server message and a circled-X icon in the theme's status error co
-OpenHands app (Canvas 1.33),F02-app-shell,- `F02.checklist-progress` (LLM and chat items) needs `control-openhands llm preset deepseek` and one conversation (`control-openhands conversation st,N,,
-OpenHands app (Canvas 1.33),F02-app-shell,- `F02.update-tile` (the sidebar tile) is blocked unless the installed version is older than npm `latest` and the browser can reach `registry.npmjs.or,N,,
-OpenHands app (Canvas 1.33),F02-app-shell,"- `F02.alert-banner` is blocked on the local backend, whose config always reports no alerts; it needs a Cloud backend that publishes them.",E,Cloud,
-OpenHands app (Canvas 1.33),F02-app-shell,- `F02.settings-404-modal` is blocked: it needs a backend whose settings endpoint returns 404.,N,,
-OpenHands app (Canvas 1.33),F02-app-shell,- `F02.checklist-all-complete` needs an automation and an MCP server on top of the four items above. Both are added through the UI from two fixtures (,N,,
 OpenHands app (Canvas 1.33),F03-home,F03.home-entry-points,P,Welcome screen + 4 suggestion prompts,"`/`, `/conversations`, the sidebar **New Chat** and the command-menu item **New chat** show the launcher (`home-chat-launcher`"
 OpenHands app (Canvas 1.33),F03-home,F03.llm-not-configured-banner,N,,"with no usable LLM, a `role=alert` banner reads `Your LLM isn't set up yet, so conversations won't run. Finish setup t"
 OpenHands app (Canvas 1.33),F03-home,F03.composer-blocked-without-llm,N,,"with no LLM, Send is disabled and Enter creates nothing (the text stays editable)."
@@ -99,8 +94,6 @@ OpenHands app (Canvas 1.33),F03-home,F03.pinned-reorder-drag,N,,dragging a pinne
 OpenHands app (Canvas 1.33),F03-home,F03.home-automations-view-more,N,,"more than 10 enabled Home rows offers **View more**, expanding the list up to 20; an expanded list at the 20-row cap"
 OpenHands app (Canvas 1.33),F03-home,F03.automations-backend-down,N,,"with the automation service down, the installed list and pinned grid are hidden and the composer still works. The recom"
 OpenHands app (Canvas 1.33),F03-home,F03.phone,Y,,"at 390 px the banner, launcher, rail, pinned grid, list and the workspace dialogs fit without horizontal overflow, and folder names stay r"
-OpenHands app (Canvas 1.33),F03-home,- `F03.llm-not-configured-banner` and `F03.composer-blocked-without-llm` need a fresh `control-openhands launch --new` with only `control-openhands on,N,,
-OpenHands app (Canvas 1.33),F03-home,- `F03.open-repository-dialog` on a Cloud backend lists Azure DevOps repositories the way it lists GitHub ones: it asks for the user's organizations o,E,Cloud,
 OpenHands app (Canvas 1.33),F04-conversation-list,F04.empty-state,Y,,with no conversations (By date) the list shows `No conversations found`.
 OpenHands app (Canvas 1.33),F04-conversation-list,F04.view-menu,N,,"the View menu lists the presets By workspace, Recent, Active and Compact (a fresh profile has Recent checked), Filter by tags (`No tag"
 OpenHands app (Canvas 1.33),F04-conversation-list,F04.new-thread-picker,N,,"the folder-plus button lists No workspace, every known workspace, + Add Workspace and Manage Workspaces; picking a row starts"
@@ -142,12 +135,9 @@ OpenHands app (Canvas 1.33),F04-conversation-list,F04.collapsed-rail,N,,the coll
 OpenHands app (Canvas 1.33),F04-conversation-list,F04.phone,Y,,"at 390 px the list lives in the sidebar drawer, fits the viewport, and picking a row closes the drawer."
 OpenHands app (Canvas 1.33),F04-conversation-list,F04.cloud-picker,E,Cloud,on a Cloud backend the folder-plus picker shows provider tabs and a repository search; a picked repository starts a conversation.
 OpenHands app (Canvas 1.33),F04-conversation-list,F04.start-task-cards,N,,on a Cloud backend in-progress start tasks show as cards linking to `/conversations/task-<id>`.
-OpenHands app (Canvas 1.33),F04-conversation-list,"- `F04.empty-state` and the disabled Delete all are first checked on a run with no conversations (a fresh `launch --new`), and again after `F04.delete",N,,
-OpenHands app (Canvas 1.33),F04-conversation-list,"- `F04.load-more` and `F04.folder-preview-more` need more than 20 conversations, at least 6 in one folder. Empty conversations from the folder `+` cos",N,,
-OpenHands app (Canvas 1.33),F04-conversation-list,- `F04.cloud-picker` and `F04.start-task-cards` are blocked: they need an OpenHands Cloud backend with a connected git provider. The kept rows of `F04,E,Cloud,
-OpenHands app (Canvas 1.33),F05-composer,F05.send-message,Y,"Empty/whitespace disables Send; Shift+Enter newline; Enter submits and clears after acknowledgment; real offline HTTP/SQLite/Chrome reload verified","Send is disabled while the field is empty; Shift+Enter inserts a newline; Enter sends, clears the field and the message persists af"
-OpenHands app (Canvas 1.33),F05-composer,F05.draft-persistence,Y,"Separate Home/task drafts restore after navigation/reload; revision conflicts require explicit resolution; failed sends retain text; real Chrome verified",unsent text is restored per conversation (after navigation and reload) and on the home composer.
-OpenHands app (Canvas 1.33),F05-composer,F05.composer-resize,Y,"Automatic grow/clear reset; invisible pointer grip plus keyboard resizing; viewport bounds; real Chrome desktop/phone light/dark verified","the field grows with its content and shrinks when cleared; an invisible top-edge grip (resize cursor, no line drawn) lets the us"
+OpenHands app (Canvas 1.33),F05-composer,F05.send-message,Y,Empty/whitespace disables Send; Shift+Enter newline; Enter submits and clears after acknowledgment; real offline HTTP/SQLite/Chrome reload verified,"Send is disabled while the field is empty; Shift+Enter inserts a newline; Enter sends, clears the field and the message persists af"
+OpenHands app (Canvas 1.33),F05-composer,F05.draft-persistence,Y,Separate Home/task drafts restore after navigation/reload; revision conflicts require explicit resolution; failed sends retain text; real Chrome verified,unsent text is restored per conversation (after navigation and reload) and on the home composer.
+OpenHands app (Canvas 1.33),F05-composer,F05.composer-resize,Y,Automatic grow/clear reset; invisible pointer grip plus keyboard resizing; viewport bounds; real Chrome desktop/phone light/dark verified,"the field grows with its content and shrinks when cleared; an invisible top-edge grip (resize cursor, no line drawn) lets the us"
 OpenHands app (Canvas 1.33),F05-composer,F05.plus-menu,N,,"`+` opens a tools menu (Macros, Show skills/hooks/agent tools, Add Files and Images; Git tools in a repository); a macro fills the com"
 OpenHands app (Canvas 1.33),F05-composer,F05.agent-profile-switch,P,Agent profile picker in the composer (Agent mode),"before a conversation starts, `+` > Switch agent profile lists agent profiles and links to Manage agent profiles; it is abs"
 OpenHands app (Canvas 1.33),F05-composer,F05.agent-profile-pill,P,Agent profile picker in the composer (Agent mode),"before a conversation starts, the composer shows an agent-profile pill (robot icon, `Switch agent profile: <name>`) next to t"
@@ -171,7 +161,6 @@ OpenHands app (Canvas 1.33),F05-composer,F05.slash-plan-code-task,Y,Payload comm
 OpenHands app (Canvas 1.33),F05-composer,F05.plan-preview,Y,Durable plan card offers Read more View and revision-checked Build; real Chrome checked with a local model stand-in,"the planner's Plan.md card shows the plan with Read more, View (Planner tab) and Build."
 OpenHands app (Canvas 1.33),F05-composer,F05.build-plan-shortcut,Y,Ctrl/Cmd+Enter builds a reviewed plan from the empty composer; real focused-composer check created a syntax-only candidate,Ctrl/Cmd+Enter in plan mode builds the plan with the code agent.
 OpenHands app (Canvas 1.33),F05-composer,F05.phone,Y,,the composer fits a 390 px viewport with every control inline.
-OpenHands app (Canvas 1.33),F05-composer,- `F05.profile-identity` needs two profiles on one model: its bullet creates `qa-alpha` and `qa-zeta` with `llm set --no-validate` right before it and,N,,
 OpenHands app (Canvas 1.33),F06-agent-activity,F06.empty-state-suggestions,Y,,"an empty conversation shows ""Let's start building!"" with four suggestion chips; a chip fills the composer with its promp"
 OpenHands app (Canvas 1.33),F06-agent-activity,F06.user-and-agent-messages,Y,,"user and agent bubbles; a long user message is clipped with a gradient and expands on click (""View More""). Drag-selectin"
 OpenHands app (Canvas 1.33),F06-agent-activity,F06.message-copy,N,,hovering a bubble shows Copy to clipboard; it copies the message's markdown source and the label flips to Copied to clipboard for 2
@@ -209,9 +198,6 @@ OpenHands app (Canvas 1.33),F06-agent-activity,F06.critic-result,N,,"with the cr
 OpenHands app (Canvas 1.33),F06-agent-activity,F06.hook-events,N,,"hook executions render as their own rows in the stream, each with an `ok`, `failed` or `blocked` badge; expanding a row shows its co"
 OpenHands app (Canvas 1.33),F06-agent-activity,F06.corrective-nudge,N,,"when the model answers with neither a message nor a tool call, the SDK's nudge (`Your last response did not include a function"
 OpenHands app (Canvas 1.33),F06-agent-activity,F06.phone,Y,,at 390 px the transcript fits the viewport; wide tables scroll inside their own container.
-OpenHands app (Canvas 1.33),F06-agent-activity,"- `F06.llm-not-configured-banner` needs a second, fresh `control-openhands launch --new --build never` with no `llm preset` (export its run dir as `OH",N,,
-OpenHands app (Canvas 1.33),F06-agent-activity,F06.critic-result,N,,"if an authorized OpenHands (`openhands/…`) or compatible OpenHands LLM-proxy profile is available, use it for the critic check,"
-OpenHands app (Canvas 1.33),F06-agent-activity,- `F06.clock-skew-send` and `F06.failed-send-persists` need no model reply: a conversation that exists is enough (without a key the agent errors at on,N,,
 OpenHands app (Canvas 1.33),F07-conversation-page,F07.open-by-url,Y,?task= links; Markdown export; two-click delete; task menu,"`/conversations/<id>` shows header, history and composer, and remembers the id as the backend's last conversation."
 OpenHands app (Canvas 1.33),F07-conversation-page,F07.missing-redirect,N,,"an unknown id toasts ""This conversation does not exist…"" and redirects to `/conversations`."
 OpenHands app (Canvas 1.33),F07-conversation-page,F07.history-skeleton,N,,opening a conversation shows a message skeleton until its history has loaded.
@@ -297,7 +283,6 @@ OpenHands app (Canvas 1.33),F09-settings-shell,F09.update-available,N,,"when npm
 OpenHands app (Canvas 1.33),F09-settings-shell,F09.update-modal-phone,N,,"the update dialog fits a 390 px (and a 320 px) viewport with its title and Close button on screen, and Close dismisses it."
 OpenHands app (Canvas 1.33),F09-settings-shell,F09.sidebar-version-tile,N,,"the main sidebar shows an ""Agent Canvas"" version tile only when an update is available."
 OpenHands app (Canvas 1.33),F09-settings-shell,F09.unknown-subpath,N,,"an unknown `/settings/<x>` URL shows the app's ""Page not found"" page inside the app shell (sidebar and a Home link), without the"
-OpenHands app (Canvas 1.33),F09-settings-shell,- `F09.cloud-links` positive case and `F09.locked-cloud-landing` need a Cloud backend/account (blocked in a local run). `F09.hidden-llm-redirect` is b,E,Cloud,
 OpenHands app (Canvas 1.33),F10-llm-profiles,F10.list,Y,,"the ""Available Profiles"" list shows each row's name, model, a `Default` badge on the active profile and a `...` menu, sorted by name; reach"
 OpenHands app (Canvas 1.33),F10-llm-profiles,F10.list-empty,Y,,with no profiles the list reads `No profiles saved yet. Add a profile to save your LLM configurations.` and both Add buttons stay ava
 OpenHands app (Canvas 1.33),F10-llm-profiles,F10.list-states,N,,a spinner shows while profiles load; a load failure shows `Failed to load profiles` in the theme's error colour.
@@ -353,9 +338,6 @@ OpenHands app (Canvas 1.33),F11-provider-connections,F11.load-error,N,,"if listi
 OpenHands app (Canvas 1.33),F11-provider-connections,F11.long-name,N,,"a name at the 128-character limit is accepted; the row truncates the name and provider with an ellipsis, shows the full name as a hove"
 OpenHands app (Canvas 1.33),F11-provider-connections,F11.edit-unlisted-provider,N,,a connection whose provider is not in the provider catalog (created through the API) opens in Edit with that provider pre
 OpenHands app (Canvas 1.33),F11-provider-connections,F11.cloud,E,Cloud,on Cloud the section appears only with an organization bound and for members allowed to manage profiles; local users always see it.
-OpenHands app (Canvas 1.33),F11-provider-connections,- `F11.agent-uses-connection` and `F11.rotate` start three tiny conversations on `deepseek/deepseek-flash`.,N,,
-OpenHands app (Canvas 1.33),F11-provider-connections,- `F11.load-error` is arranged by making the run's own connections store unreadable (a shell arrange step that writes only `$OH_VERIFY_RUN/private/pro,N,,
-OpenHands app (Canvas 1.33),F11-provider-connections,- `F11.load-error` needs a real server failure: the recipe corrupts this run's own `provider_connections.json` and restores it. Always restore it (kee,N,,
 OpenHands app (Canvas 1.33),F12-model-router,F12.page,N,,Settings → **Model Router** opens `/settings/meta-llm` with the subtitle `Meta-profiles that route each task to the right LLM profile.`;
 OpenHands app (Canvas 1.33),F12-model-router,F12.empty-states,N,,with no LLM profiles the page says `Create LLM profiles first — meta-profiles route between your saved LLM profiles.`; with no ro
 OpenHands app (Canvas 1.33),F12-model-router,F12.load-error,N,,"when only the meta-profile request fails, a red generic error shows under the header."
@@ -381,8 +363,6 @@ OpenHands app (Canvas 1.33),F12-model-router,F12.run-first-message-toggle,N,,"th
 OpenHands app (Canvas 1.33),F12-model-router,F12.route-first-message,N,,"with the launched agent profile's router set and the switch on, a new conversation routes its first message (`route_task_to_"
 OpenHands app (Canvas 1.33),F12-model-router,F12.light-theme,N,,in a light colour theme the list heading and router names are readable.
 OpenHands app (Canvas 1.33),F12-model-router,F12.phone,N,,"the list, template modal, editor and row menu fit a 390 px viewport without horizontal overflow."
-OpenHands app (Canvas 1.33),F12-model-router,"- `F12.empty-states` needs a fresh `launch --new` with `onboard --skip` done and **before** `llm preset deepseek` (no LLM profiles, no routers).",N,,
-OpenHands app (Canvas 1.33),F12-model-router,- `F12.add-connection` and `F12.route-first-message` use the DeepSeek key file; never print it.,N,,
 OpenHands app (Canvas 1.33),F13-agent-profiles,F13.list,Y,"Agent profiles: instructions, model, limits, tool switches","under **Available Profiles**, rows (sorted by name) show the profile name, then its LLM profile (OpenHands) or `ACP (external subprocess)`,"
 OpenHands app (Canvas 1.33),F13-agent-profiles,F13.create,Y,"Agent profiles: instructions, model, limits, tool switches","**Add agent profile** opens the editor; Save toasts `Profile ""<name>"" created` and the row is listed after a reload. A new OpenHands prof"
 OpenHands app (Canvas 1.33),F13-agent-profiles,F13.name-validation,Y,"Agent profiles: instructions, model, limits, tool switches","a fresh Add editor's empty name is not flagged (Save disabled); once typed, an empty or malformed name marks the field invalid ("
@@ -408,9 +388,6 @@ OpenHands app (Canvas 1.33),F13-agent-profiles,F13.delete,Y,"Agent profiles: ins
 OpenHands app (Canvas 1.33),F13-agent-profiles,F13.phone,P,,"the list, row menu and editor fit a 390 px viewport without horizontal overflow."
 OpenHands app (Canvas 1.33),F13-agent-profiles,F13.acp-conversation,E,Third-party agent CLIs / Cloud,a conversation launched from an active ACP profile runs the external agent. Blocked without an approved provider account.
 OpenHands app (Canvas 1.33),F13-agent-profiles,F13.cloud-read-only,E,Third-party agent CLIs / Cloud,"on a Cloud backend, organization members see rows without the `...` menu or **Add agent profile**. Blocked without a Cloud accou"
-OpenHands app (Canvas 1.33),F13-agent-profiles,"- `F13.profile-router` needs two routers: create `QA_router` (classifier `deepseek-flash`, the `F12.create-first` prompt and a two-line table naming `",N,,
-OpenHands app (Canvas 1.33),F13-agent-profiles,"- `F13.mcp-scope` needs two configured MCP servers. Arrange them with `control-openhands api POST /api/settings/mcp/qa_mcp_a --data '{""transport"":""std",N,,
-OpenHands app (Canvas 1.33),F13-agent-profiles,- `F13.acp-conversation` needs the provider's agent CLI and an approved account; `F13.cloud-read-only` needs a Cloud organization member login. Both a,E,Cloud,
 OpenHands app (Canvas 1.33),F14-secrets,F14.list,Y,,the Secrets page lists each secret's name and description with Edit and Delete actions; the launcher-seeded `OPENHANDS_AUTOMATION_API_KEY`
 OpenHands app (Canvas 1.33),F14-secrets,F14.create,Y,,adding a secret persists it; it is listed after a reload.
 OpenHands app (Canvas 1.33),F14-secrets,F14.create-validation,Y,,"duplicate names, names that break `^[a-zA-Z][a-zA-Z0-9_]{0,63}$` and empty values are refused with a message."
@@ -424,7 +401,6 @@ OpenHands app (Canvas 1.33),F14-secrets,F14.edit-value,P,Overwrite by setting th
 OpenHands app (Canvas 1.33),F14-secrets,F14.delete-escape,N,,Escape closes the delete confirmation without deleting.
 OpenHands app (Canvas 1.33),F14-secrets,F14.value-reveal,X,Deliberately never returned to the browser,"the value field in the Add and Edit forms and in the request card is a masked password input. Its eye button (**Show secret**, then"
 OpenHands app (Canvas 1.33),F14-secrets,F14.agent-request,N,,"in a local conversation the agent's `request_secret` tool adds a **The agent needs a secret** card in the chat, right after the to"
-OpenHands app (Canvas 1.33),F14-secrets,"- `F14.agent-access`, `F14.rename`, `F14.edit-value` and `F14.agent-request` need an active LLM profile (`control-openhands llm preset deepseek`).",N,,
 OpenHands app (Canvas 1.33),F15-agent-behavior-settings,F15.condenser-page,N,,on a local backend `/settings/condenser` replaces itself with `/settings/agents` and no nav item or command leads to it; on a Clo
 OpenHands app (Canvas 1.33),F15-agent-behavior-settings,F15.condenser-all-view,N,,"(Cloud backend) the All tab lists the eight condenser fields with Title Case labels, plain descriptions and their stored valu"
 OpenHands app (Canvas 1.33),F15-agent-behavior-settings,F15.condenser-save,N,,"(Cloud backend) changing Max Size and saving shows **Saving...**, then the saved toast; after a reload the page opens on All with"
@@ -449,9 +425,6 @@ OpenHands app (Canvas 1.33),F15-agent-behavior-settings,F15.command-menu,N,,"the
 OpenHands app (Canvas 1.33),F15-agent-behavior-settings,F15.direct-url,N,,each page renders when opened by URL; locally `/settings/condenser` opens `/settings/agents` instead.
 OpenHands app (Canvas 1.33),F15-agent-behavior-settings,F15.phone,N,,at 390 px the fields stack in one column without horizontal overflow.
 OpenHands app (Canvas 1.33),F15-agent-behavior-settings,F15.schema-unavailable,N,,a backend without the settings-schema endpoints shows `SDK settings schema unavailable.` with an upgrade hint instead of the
-OpenHands app (Canvas 1.33),F15-agent-behavior-settings,- `F15.confirmation-mode-effect` and `F15.agent-context-effect` need an active LLM profile (`control-openhands llm preset deepseek`).,N,,
-OpenHands app (Canvas 1.33),F15-agent-behavior-settings,- `F15.profile-behavior` needs an LLM profile (the agent profile editor refuses to save without one): `control-openhands llm preset deepseek` (no mode,N,,
-OpenHands app (Canvas 1.33),F15-agent-behavior-settings,- `F15.schema-unavailable` needs an agent server that serves `/api/settings` but answers 404 for `/api/settings/agent-schema` (an older release via `l,N,,
 OpenHands app (Canvas 1.33),F16-application-settings,F16.open,Y,,"the page opens from the settings navigation, the command menu and the direct URL; every section renders and **Save Changes** is disabled wh"
 OpenHands app (Canvas 1.33),F16-application-settings,F16.language,N,,choosing a language and saving switches the whole UI at once and persists after a reload; `<html lang>` and `<html dir>` follow the cho
 OpenHands app (Canvas 1.33),F16-application-settings,F16.color-theme,Y,,"choosing a colour theme applies it immediately without Save, persists after a reload and on other pages, and is never sent to the ba"
@@ -473,8 +446,6 @@ OpenHands app (Canvas 1.33),F16-application-settings,F16.title-model-clear,N,,"t
 OpenHands app (Canvas 1.33),F16-application-settings,F16.dropdown-filter,N,,typing into the Language (or any) combobox filters its options; Escape restores the stored value and leaves Save disabled.
 OpenHands app (Canvas 1.33),F16-application-settings,F16.backend-switch,N,,switching the active backend in the backend selector while this page is open shows the new backend's stored preferences (the foot
 OpenHands app (Canvas 1.33),F16-application-settings,F16.browser-scope,N,,"backend-saved preferences (language and the rest of the Save group) follow the user to a fresh browser profile, while theme, check"
-OpenHands app (Canvas 1.33),F16-application-settings,"- `F16.title-model`, `F16.title-model-fallback` and the agent half of `F16.git-identity` need LLM profiles: `control-openhands llm preset deepseek --a",N,,
-OpenHands app (Canvas 1.33),F16-application-settings,- `F16.analytics-cloud` is **blocked** without an OpenHands Cloud backend and account. The locked-to-Cloud half of `F16.checklist` is **blocked**: `co,E,Cloud,
 OpenHands app (Canvas 1.33),F17-mcp-servers,F17.customize-redirect,N,,"on desktop, the sidebar **Customize** link, the URL `/customize` and the command-menu items **Customize** and **MCP servers**"
 OpenHands app (Canvas 1.33),F17-mcp-servers,F17.desktop-subnav,N,,"from 1024 px up, Customize pages show a left aside headed **Customize** with MCP Servers, Skills, Plugins and Apps, the active ro"
 OpenHands app (Canvas 1.33),F17-mcp-servers,F17.mobile-hub,N,,"below 1024 px (phones and tablets), `/customize` is a hub with the same four rows and badge; at phone width detail pages show a Back"
@@ -508,10 +479,6 @@ OpenHands app (Canvas 1.33),F17-mcp-servers,F17.delete-server,Y,"Settings → MC
 OpenHands app (Canvas 1.33),F17-mcp-servers,F17.native-git-tabs,N,,"on a Cloud backend, GitHub/GitLab/Bitbucket offer a recommended native-integration tab next to the MCP tab (blocked here)."
 OpenHands app (Canvas 1.33),F17-mcp-servers,F17.agent-uses-server,Y,"Settings → MCP servers: HTTP and command servers, Test, enable, delete; tools reach the agent",a conversation started after the save can call the server's tools.
 OpenHands app (Canvas 1.33),F17-mcp-servers,F17.phone,P,Test button reports tools or the error,"the MCP page, the install modal and the custom editor fit a 390 px viewport."
-OpenHands app (Canvas 1.33),F17-mcp-servers,"- `F17.custom-add-remote` needs a local Streamable HTTP MCP server (arrange, not proof; no `fixture` verb exists for it yet): from a shell, `cd ""$OH_V",N,,
-OpenHands app (Canvas 1.33),F17-mcp-servers,- `F17.cloud-nav` and `F17.native-git-tabs` need an OpenHands Cloud backend (with git providers configured); not available here.,E,Cloud,
-OpenHands app (Canvas 1.33),F17-mcp-servers,- `F17.stored-secret-reuse` and `F17.single-request-mutations` use `control-openhands fixture mcp-server --name qa-vault`; it prints the `<node>` bina,N,,
-OpenHands app (Canvas 1.33),F17-mcp-servers,"- `F17.credential-probe` sends a dummy token to GitHub's hosted MCP endpoint and, through the catalog's npx stdio server, to Slack; both need the netw",N,,
 OpenHands app (Canvas 1.33),F18-skills,F18.page,Y,,"the page shows the title, description, a notice (locally ""These are the default agent profile's skills, and new agent profiles start from t"
 OpenHands app (Canvas 1.33),F18-skills,F18.search,N,,"typing filters cards by name, description, content or trigger; after 300 ms the query is mirrored to `?q=` without a new history entry; t"
 OpenHands app (Canvas 1.33),F18-skills,F18.search-history,N,,browser Back/Forward put the matching query back into the search box.
@@ -534,9 +501,6 @@ OpenHands app (Canvas 1.33),F18-skills,F18.add-skill-modal,Y,Enabled skills are 
 OpenHands app (Canvas 1.33),F18-skills,F18.install-banner,N,,"after the agent installs a skill with `/add-skill`, the conversation shows ""Installed to this workspace: …"" with **Start new co"
 OpenHands app (Canvas 1.33),F18-skills,F18.phone,N,,"at 390 px the page, cards and both modals fit without horizontal overflow; `/customize` shows a hub that links to Skills and the header ba"
 OpenHands app (Canvas 1.33),F18-skills,F18.cloud-link,E,Cloud,with a Cloud backend the Customize **Skills** item opens the Cloud skills page in a new tab instead of `/skills` (blocked here).
-OpenHands app (Canvas 1.33),F18-skills,"- `F18.skill-in-chat`, `F18.toggle-local`, `F18.copy-source` and `F18.install-banner` need an active LLM profile (`control-openhands llm preset deepse",N,,
-OpenHands app (Canvas 1.33),F18-skills,- `F18.skill-deleted` creates its own personal fixture right before its bullet (`control-openhands fixture skill --name qa-gone --trigger qa-farewell`,N,,
-OpenHands app (Canvas 1.33),F18-skills,- `F18.cloud-link` needs an OpenHands Cloud backend and account (blocked in a sandbox).,E,Cloud,
 OpenHands app (Canvas 1.33),F19-plugins,F19.page,N,,"`/plugins` shows the **Plugins** heading, the description ""Browse, install, enable, and uninstall plugins. Enabled plugins load automatical"
 OpenHands app (Canvas 1.33),F19-plugins,F19.search,N,,"the search box filters by name, description, source, path and ref; a query matching nothing shows `No plugins match your search.`; the X"
 OpenHands app (Canvas 1.33),F19-plugins,F19.status-filter,N,,"the All / Installed / Available / Local segments filter the grid; the active one has `aria-pressed=""true""`; the filter resets to A"
@@ -720,7 +684,6 @@ OpenHands app (Canvas 1.33),F24-git-sync,F24.unsupported,N,,an automation backen
 OpenHands app (Canvas 1.33),F24-git-sync,F24.no-access,N,,"a user without `manage_automations` (Cloud member) sees `Git Sync is managed by organization admins`, and the dashboard hides the **Gi"
 OpenHands app (Canvas 1.33),F24-git-sync,F24.conflict,N,,"saving a repository, branch and path that another organization already syncs is refused (409) with a toast naming the conflict."
 OpenHands app (Canvas 1.33),F24-git-sync,F24.error-state,N,,any other status failure shows the generic automation error panel with **Retry**.
-OpenHands app (Canvas 1.33),F24-git-sync,- `F24.unsupported` uses `--automation-ref` for the old Git tag; without access to that source it stays blocked. The current CLI also supports `--auto,N,,
 OpenHands app (Canvas 1.33),F25-backends-and-cloud,F25.selector-dropdown,N,,"clicking (or hovering) the selector opens a listbox of backends, each option named `<status> <name>` with a status dot, and a"
 OpenHands app (Canvas 1.33),F25-backends-and-cloud,F25.add-backend-modal,N,,"**Add Backend** opens ""Choose how you want to connect"" with a description, a **Learn more** link to the deployment docs and th"
 OpenHands app (Canvas 1.33),F25-backends-and-cloud,F25.cloud-advanced-host,E,Cloud / DigitalOcean,"on the Cloud tab, **Advanced** reveals a **Host** field (placeholder `https://app.all-hands.dev`) for a self-hosted Cloud."
@@ -754,7 +717,6 @@ OpenHands app (Canvas 1.33),F25-backends-and-cloud,F25.digitalocean-sign-in,E,Cl
 OpenHands app (Canvas 1.33),F25-backends-and-cloud,F25.digitalocean-agents,E,Cloud / DigitalOcean,"signed in, the panel lists the team's OpenHands agents and their sessions, **New Agent** (name and **Sandbox size**: the cat"
 OpenHands app (Canvas 1.33),F25-backends-and-cloud,F25.digitalocean-backend-removal,E,Cloud / DigitalOcean,removing a DigitalOcean backend in Manage Backends explains that it only disconnects and offers **Disconnect only**
 OpenHands app (Canvas 1.33),F25-backends-and-cloud,F25.locked-cloud,E,Cloud / DigitalOcean,"a Canvas served with `--lock-to-cloud <url>` shows only the Cloud login (no close) on first run, and its selector footer reads **Re"
-OpenHands app (Canvas 1.33),F25-backends-and-cloud,- `F25.locked-cloud` needs a locked page: `OH_VERIFY_RUN= control-openhands launch --new --lock-to-cloud https://app.all-hands.dev --print-run` serves,E,Cloud,
 OpenHands app (Canvas 1.33),F26-runtime-variants,F26.cli-version,N,,`--version` and `-v` print the package version and exit 0.
 OpenHands app (Canvas 1.33),F26-runtime-variants,F26.cli-info,N,,"`--info` prints the package version, the default agent-server and automation pins, the minimum agent-server version, the default ports"
 OpenHands app (Canvas 1.33),F26-runtime-variants,F26.cli-help,Y,,"`--help` prints usage, auth modes, options, env vars and examples."
@@ -790,8 +752,6 @@ OpenHands app (Canvas 1.33),F26-runtime-variants,F26.desktop-boot-splash,N,,"the
 OpenHands app (Canvas 1.33),F26-runtime-variants,F26.desktop-main-window,N,,"after boot a native window with a File/Edit/View/Window menu loads `http://localhost:8000` with the key injected (first run,"
 OpenHands app (Canvas 1.33),F26-runtime-variants,F26.desktop-macos-titlebar,N,,"on macOS the desktop window hides the native title bar and reserves a 28 px drag band (`titlebar-drag-region`, `aria-hidd"
 OpenHands app (Canvas 1.33),F26-runtime-variants,F26.desktop-external-links,N,,external links in the desktop window open in the system browser for allowed schemes only. Real Playwright CDP can click t
-OpenHands app (Canvas 1.33),F26-runtime-variants,- `F26.desktop-*` need the Electron binary (`node_modules/electron/dist/electron`; `npx --no-install electron --version` downloads it on first use) an,N,,
-OpenHands app (Canvas 1.33),F26-runtime-variants,- `F26.runtime-services` and `F26.runtime-services-agent-use` need an active LLM profile (`control-openhands llm preset deepseek`); the second also ne,N,,
 OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-empty,Y,Read-only Terminal tab has the exact durable empty state; browser checked, with the runtime active and no command run yet the Terminal tab shows its empty guidance
 OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-waiting,Y,Queued/running and failed conversations show the runtime waiting state; browser checked,while the runtime is starting or the conversation is in an error state the Terminal tab shows the waiting state
 OpenHands app (Canvas 1.33),F27-workspace-tools,F27.terminal-output,Y,Agent sandbox commands and output render read-only; contract-tested because Docker was unavailable,the agent's commands appear as `$ <command>` followed by their output; typing into the terminal does nothing
@@ -823,11 +783,6 @@ OpenHands app (Canvas 1.33),F27-workspace-tools,F27.launch-child,N,,"the agent's
 OpenHands app (Canvas 1.33),F27-workspace-tools,F27.info-modals-phone,N,,"the composer `+` menu's Skills, Hooks and Agent Tools & Metadata modals fit a 390 px viewport (issue #17562); content is cover"
 OpenHands app (Canvas 1.33),F27-workspace-tools,F27.plugins-modal,N,,a conversation started with plugins offers a plugins item that lists `active-plugin-<name>` rows.
 OpenHands app (Canvas 1.33),F27-workspace-tools,F27.phone,P,,"at 390 px the panel route shows the Usage, Task List and Planner tabs without overflow, and the tab row stays visible."
-OpenHands app (Canvas 1.33),F27-workspace-tools,- `F27.browser-screenshot` needs a real agent browser tool and working Chromium. Inspect Agent Tools & Metadata and attempt the actual operation befor,P,Actual Docker launch attempted and returned blocked; no successful container capture claimed,
-OpenHands app (Canvas 1.33),F27-workspace-tools,- `F27.plugins-modal` needs a conversation started with at least one plugin (the menu item is hidden otherwise).,N,,
-OpenHands app (Canvas 1.33),F27-workspace-tools,- `F27.terminal-waiting` needs a conversation in the error state: arrange one with a profile whose key is invalid (no model cost; see the bullet).,N,,
-OpenHands app (Canvas 1.33),F27-workspace-tools,- `F27.usage-provider-balance` (card shown) needs an OpenRouter key; with DeepSeek only the hidden case is checkable.,N,,
-OpenHands app (Canvas 1.33),F27-workspace-tools,"- `F27.overview-identity` needs a repo with a GitHub origin, its own so the shared `qa-repo` of F08 keeps none: `control-openhands fixture git-repo --",N,,
 OpenHands app (Canvas 1.33),F28-automation-setup-page,F28.open-blank,N,,"Create Automation opens `/automations/setup` with Name pre-filled **New Automation** (placeholder `Standup digest`), an empty Prompt,"
 OpenHands app (Canvas 1.33),F28-automation-setup-page,F28.kind-toggle,Y,Daily-at or every-N-minutes,the button beside the Prompt label switches between Prompt and **Custom** (Custom Python). Custom shows a generated Python script th
 OpenHands app (Canvas 1.33),F28-automation-setup-page,F28.schedule-presets,P,,"in create mode the Frequency control (the same control as on the edit page, whose presets and saving F23 owns as edit-schedule"
@@ -967,7 +922,6 @@ Agent server / SDK (1.58),F05-run-pause-interrupt,F05.restart-running-graceful,N
 Agent server / SDK (1.58),F05-run-pause-interrupt,F05.restart-keeps-status,Y,,"`finished`, `paused` and `error` statuses survive a restart unchanged."
 Agent server / SDK (1.58),F05-run-pause-interrupt,F05.restart-hard-running,Y,,"a conversation running when the server is SIGKILLed comes back `error` on the next start, and `/run` resumes it."
 Agent server / SDK (1.58),F05-run-pause-interrupt,F05.pause-running-crash,N,,"a pause accepted during a model call survives a SIGKILL: the conversation comes back `paused`, as its persisted `PauseEvent`"
-Agent server / SDK (1.58),F05-run-pause-interrupt,- `F05.run-error-responsive` only means something with the default console,N,,
 Agent server / SDK (1.58),F06-conversation-events,F06.send-no-run,N,,"`POST .../events` with `run: false` persists a user `MessageEvent` (preceded by the `SystemPromptEvent` on the first message), retur"
 Agent server / SDK (1.58),F06-conversation-events,F06.search-page,N,,"search returns `{items, next_page_id}` in log order; `limit` plus the inclusive `page_id` cursor pages through it, `TIMESTAMP_DESC`"
 Agent server / SDK (1.58),F06-conversation-events,F06.search-validation,N,,"search rejects `limit` 0 or 101, an unknown `sort_order` and an unparsable timestamp with 422."
@@ -1212,7 +1166,6 @@ Agent server / SDK (1.58),F14-files,F14.scoped-conversation-errors,N,,a scoped r
 Agent server / SDK (1.58),F14-files,F14.scoped-trajectory-archive,N,,"the scoped trajectory route serves only its own conversation (another or malformed id is 422), and the scoped archive"
 Agent server / SDK (1.58),F14-files,F14.sdk-workspace,N,,"the SDK's `RemoteWorkspace.file_upload`/`file_download` round-trip bytes through the global routes and, with `runtime_conversation"
 Agent server / SDK (1.58),F14-files,F14.restart,N,,"after a restart, uploaded files, the scoped download and the trajectory are still served."
-Agent server / SDK (1.58),F14-files,- `F14.home` counts favorites exactly: it relies on the launcher's private,N,,
 Agent server / SDK (1.58),F15-git,F15.auth,N,,every global and conversation-scoped git route answers 401 without a valid session key.
 Agent server / SDK (1.58),F15-git,F15.changes,Y,GET /api/git and POST /api/git/commit (hooks disabled),"`changes` on the fixture repository lists the modified tracked file as `UPDATED` and the untracked file as `ADDED`, sorted by path, as r"
 Agent server / SDK (1.58),F15-git,F15.changes-statuses,Y,GET /api/git and POST /api/git/commit (hooks disabled),"a staged deletion is `DELETED`, a staged new file `ADDED`, and a staged rename a `DELETED` old path plus an `ADDED` new path."
@@ -1386,7 +1339,6 @@ Agent server / SDK (1.58),F20-llm-profiles,F20.delete-guarded,Y,,"deleting a pro
 Agent server / SDK (1.58),F20-llm-profiles,F20.delete,Y,,"`DELETE /api/profiles/{name}` removes the file and the list entry and clears `active_profile` in both views, leaves the applied `agent_se"
 Agent server / SDK (1.58),F20-llm-profiles,F20.json-alias-guard,N,,"a name with a `.json` suffix addresses the same profile (`GET /api/profiles/<name>.json` reads `<name>`), and deleting through"
 Agent server / SDK (1.58),F20-llm-profiles,F20.secret-key-rotation,N,,"after the server's secret key changes, activating a profile whose stored key can no longer be decrypted is refused instead o"
-Agent server / SDK (1.58),F20-llm-profiles,- `F20.store-busy` and `F20.store-busy-responsive` hold the store lock for,N,,
 Agent server / SDK (1.58),F21-agent-profiles,F21.auth-required,Y,Agent profile CRUD; selected per task,"every agent-profile route answers 401 without a valid `X-Session-API-Key`, and nothing is written (not even the lazy seed)."
 Agent server / SDK (1.58),F21-agent-profiles,F21.lazy-seed,N,,"the first list on an empty store seeds one `default` OpenHands profile (revision 0, `llm_profile_ref` = the active LLM profile), point"
 Agent server / SDK (1.58),F21-agent-profiles,F21.seed-no-ghost-llm,N,,on a never-configured server the seeded `default` keeps a soft `llm_profile_ref` `default` without writing a keyless `default`
@@ -1419,7 +1371,6 @@ Agent server / SDK (1.58),F21-agent-profiles,F21.busy-blocks-server,N,,waiting f
 Agent server / SDK (1.58),F21-agent-profiles,F21.dangling-llm-report,N,,how materialize reports a dangling LLM reference must match what the server's seed code documents: the documented `dangling_
 Agent server / SDK (1.58),F21-agent-profiles,F21.ts-payload-types,N,,"the TypeScript client's exported `AgentProfileSummary`, `AgentProfileDiagnostics`, `OpenHandsAgentProfile` and `ACPAgentProfile"
 Agent server / SDK (1.58),F21-agent-profiles,F21.json-suffix-identity,N,,"saving a name that ends in `.json` twice must keep one `id` and bump `revision`, like any other name, and deleting it while"
-Agent server / SDK (1.58),F21-agent-profiles,- `F21.activate-corrupt-settings` overwrites the run's `settings.json` and,N,,
 Agent server / SDK (1.58),F22-meta-profiles,F22.auth-required,N,,"every meta-profile route answers 401 without a valid `X-Session-API-Key`, and nothing is stored."
 Agent server / SDK (1.58),F22-meta-profiles,F22.save-classes,N,,`POST /api/meta-profiles/{name}` with `classifier_model` and `classes` answers 201 `Meta-profile '<name>' saved`; the list shows `{
 Agent server / SDK (1.58),F22-meta-profiles,F22.save-direct,N,,"a direct-routing body (`prompt_template` with `{{ instance_text }}`, `model_table`, no `classes`) is saved; the list reports `num_cl"
@@ -1444,7 +1395,6 @@ Agent server / SDK (1.58),F22-meta-profiles,F22.store-busy-responsive,N,,"while 
 Agent server / SDK (1.58),F22-meta-profiles,F22.limit,N,,"with 50 meta-profiles stored, creating another is 409 `Meta-profile limit reached (50)` while overwriting an existing one still answers 20"
 Agent server / SDK (1.58),F22-meta-profiles,F22.ts-client,N,,"the TypeScript `MetaProfilesClient` saves, reads, lists, activates and deletes a meta-profile and surfaces 404 and 422 as `HttpError`s"
 Agent server / SDK (1.58),F22-meta-profiles,F22.persistence-dir,N,,"with `OH_PERSISTENCE_DIR=~/<dir>`, meta-profiles are stored under the expanded directory next to `settings.json`, like every oth"
-Agent server / SDK (1.58),F22-meta-profiles,- `F22.persist-restart` restarts the run; `F22.store-busy` holds the store,N,,
 Agent server / SDK (1.58),F23-llm-catalog-and-connections,F23.acp-discovery-errors,N,,"`POST /api/acp/models` requires a session key, validates `agent_settings`, and reports a missing local executable as HTTP 2"
 Agent server / SDK (1.58),F23-llm-catalog-and-connections,F23.acp-discovery-live,N,,the real Claude Code ACP adapter reports its default and offered models through REST and TypeScript `ACPClient.discoverModels
 Agent server / SDK (1.58),F23-llm-catalog-and-connections,F23.auth-required,N,,"all seven routes answer 401 `{""detail"": ""Unauthorized""}` without a valid `X-Session-API-Key`, and nothing is created."
@@ -1493,7 +1443,6 @@ Agent server / SDK (1.58),F24-openai-subscription,F24.device-poll-outage,E,ChatG
 Agent server / SDK (1.58),F24-openai-subscription,F24.status-offline,E,ChatGPT subscription login,"with an expired login and no route to `auth.openai.com`, status answers 200 `connected: false`, as it does for a rejected refresh"
 Agent server / SDK (1.58),F24-openai-subscription,F24.device-start-offline,E,ChatGPT subscription login,"with no route to `auth.openai.com`, `device/start` and a poll of a login started before the outage answer a gateway error ("
 Agent server / SDK (1.58),F24-openai-subscription,F24.login-complete,E,ChatGPT subscription login,"after a human approves the user code with a ChatGPT account, a poll answers `connected: true` with `expires_at`, writes `auth/ope"
-Agent server / SDK (1.58),F24-openai-subscription,- `F24.ts-client` imports the built `clients/typescript/dist` and builds it,N,,
 Agent server / SDK (1.58),F25-skills,F25.auth,N,,"every skills route answers 401 without a valid session key, and nothing is installed."
 Agent server / SDK (1.58),F25-skills,F25.public-repo,N,,"against the real public extensions repository (network), sync clones it into the public cache and `POST /api/skills` with `load_publ"
 Agent server / SDK (1.58),F25-skills,F25.marketplace-public,N,,"against the real public extensions repository, `GET /api/skills/marketplace` lists its installable entries; today it returns"
@@ -1799,4 +1748,3 @@ Agent server / SDK (1.58),F34-typescript-client,F34.event-stream-reconnect,N,,"a
 Agent server / SDK (1.58),F34-typescript-client,F34.event-stream-reconnect-native,N,,the same stream on Node's global `WebSocket` also reconnects after a server restart.
 Agent server / SDK (1.58),F34-typescript-client,F34.endpoint-audit,N,,"the client's endpoint audit against this checkout's public OpenAPI contract finds no client call the server lacks, and regenerati"
 Agent server / SDK (1.58),F34-typescript-client,F34.version-gate-old,N,,"against a real 1.22.0 agent-server release, the gated methods reject with `AgentServerVersionError` (required and actual versio"
-Agent server / SDK (1.58),F34-typescript-client,- `F34.version-gate-old` downloads the 1.22.0 agent-server release from PyPI,N,,

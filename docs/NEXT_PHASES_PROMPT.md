@@ -20,10 +20,11 @@ Read this whole brief before writing code. Work in the phases below, in order.
 - **Status docs:** `README.md`, `PROJECT_STATUS.md`, `SECURITY.md`, `docs/PARITY.md`,
   `docs/ARCHITECTURE.md`, `docs/BRAND.md`.
 - **Source of truth for remaining work:** `docs/parity-audit.csv` — one row per
-  OpenHands sub-feature (1,801 rows) with `map, family, id, status, note, desc`.
+  OpenHands sub-feature (1,749 rows) with `map, family, id, status, note, desc`.
   Status: `Y` has it, `P` partly (note says what is missing), `N` missing,
   `E` needs an outside service, `X` not applicable by design.
-  Current totals: Y 199, P 154, N 1,361, E 70, X 17.
+  Totals on 2026-10-27: Y 230, P 165, N 1,273, E 61, X 20 (see `docs/PARITY.md`
+  for the current table).
 - **The reference (read-only):** `upstream/OpenHands` (web app) and
   `upstream/software-agent-sdk` (agent server/SDK). Each sub-feature ID is described
   in `upstream/OpenHands/.agents/skills/verify-openhands/references/feature-map/F*.md`

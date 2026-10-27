@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { conversationLabel, eventsToChat, observationText, transcriptMarkdown } from "../../dikdik/web/contracts";
+import { conversationLabel, eventsToChat, observationText, shortLabel, transcriptMarkdown } from "../../dikdik/web/contracts";
 
 const event = (seq: number, kind: string, data: Record<string, unknown>) => ({ seq, task_id: "t", time: 1000 + seq, kind, data });
 
@@ -54,6 +54,12 @@ test("a renamed task shows its title; otherwise the objective", () => {
   expect(conversationLabel({ id: "abcdef123456", state: "completed", objective: "Fix addition", title: "Addition fix" })).toBe("Addition fix");
   expect(conversationLabel({ id: "abcdef123456", state: "completed", objective: "Fix addition", title: "" })).toBe("Fix addition");
   expect(conversationLabel({ id: "abcdef123456", state: "completed" })).toBe("abcdef12");
+  // Long titles end with one ellipsis at a word break: no "(truncated)" marker or line break.
+  const planner = conversationLabel({ id: "p", state: "completed", objective: "Plan: Fix addition in calculator.py without changing the tests" });
+  expect(planner).toBe("Plan: Fix addition in calculator.py without changing the…");
+  expect(planner).not.toContain("truncated");
+  expect(conversationLabel({ id: "p", state: "completed", objective: "Fix\n  the   add\tfunction" })).toBe("Fix the add function");
+  expect(shortLabel("x".repeat(80), 60)).toBe("x".repeat(60) + "…");
 });
 
 test("transcript export includes turns, tool output and the diff", () => {

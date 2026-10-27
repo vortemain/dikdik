@@ -15,7 +15,7 @@ encrypted keys driving every call; skills, MCP servers (HTTP and stdio) and agen
 profiles; streamed replies over server-sent events; automations with stored
 approvals; a Python client/CLI; and the Rust indexer loaded by default. The parity
 audit (docs/PARITY.md) moved from 89 to 230 fully matched OpenHands sub-features
-of 1,801. Live model-provider and live-Docker runs are still not recorded.
+of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
 Test status (2026-10-27): Python **269 passed, 2 live-runtime tests skipped**; Bun
 **62 passed**; Rust **15 passed**; strict TypeScript check and build passed.

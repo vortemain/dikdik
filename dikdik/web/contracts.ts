@@ -488,8 +488,18 @@ export function eventsToChat(events: TaskEvent[], objective: string): ChatMessag
 }
 
 /** A short label for the conversation list (sidebar). */
+/** One line, at most `max` characters, cut at a word where possible and ended with "…". */
+export function shortLabel(value: unknown, max: number): string {
+  if (typeof value !== "string" || CONTROL.test(value)) return "";
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return (space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd() + "…";
+}
+
 export function conversationLabel(task: { id: string; state: string; objective?: string; title?: string }): string {
-  return textOf(task.title, 200) || textOf(task.objective, 60) || task.id.slice(0, 8);
+  return shortLabel(task.title, 200) || shortLabel(task.objective, 60) || task.id.slice(0, 8);
 }
 
 /** A Markdown transcript of a conversation, built only from persisted events. */

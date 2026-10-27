@@ -24,18 +24,24 @@ as DIKDIK integration. **Contract-tested** is not live model/sandbox verificatio
 ## Sub-feature audit (2026-10-27)
 
 Every sub-feature in both reference maps was graded against the code: the
-OpenHands app map (844 entries) and the agent-server/SDK map
+OpenHands app map (799 sub-features) and the agent-server/SDK map
 (`upstream/software-agent-sdk/.agents/skills/verify-agent-server/references/feature-map`,
-957 entries). The full list is in [`parity-audit.csv`](parity-audit.csv).
+950 sub-features). The full list is in [`parity-audit.csv`](parity-audit.csv).
 
-| Status | First audit | After the build phases |
-|---|---|---|
-| Has (equivalent behaviour) | 89 | 230 |
-| Partly (note says what is missing) | 91 | 166 |
-| Missing | 1,534 | 1,315 |
-| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 70 | 70 |
-| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 20 |
-| **Total** | **1,801** | **1,801** |
+| Status | First audit | After the first build phases | Now |
+|---|---|---|---|
+| Has (equivalent behaviour) | 89 | 199 | 230 |
+| Partly (note says what is missing) | 91 | 154 | 165 |
+| Missing | 1,491 | 1,318 | 1,273 |
+| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 |
+| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 |
+| **Total** | **1,749** | **1,749** | **1,749** |
+
+Correction (2026-10-27): earlier versions of this table counted 1,801 rows. 51 of
+them were usage notes from the reference maps' "Gotchas" sections that the first
+extraction mistook for features, and `F06.critic-result` was listed twice because
+the reference names it twice. Those rows are removed and every column above is
+recounted from the same filter; no grade changed.
 
 Built since the first audit: conversations with follow-ups, queueing, rename/pin/
 archive/delete/export and task links; real agent events in the chat and plain-text

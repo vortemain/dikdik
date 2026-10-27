@@ -472,8 +472,18 @@ ${c.output}` : "";
       messages.push(...eventToMessages(event, objective));
     return messages;
   }
+  function shortLabel(value, max) {
+    if (typeof value !== "string" || CONTROL.test(value))
+      return "";
+    const text = value.replace(/\s+/g, " ").trim();
+    if (text.length <= max)
+      return text;
+    const cut = text.slice(0, max);
+    const space = cut.lastIndexOf(" ");
+    return (space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd() + "…";
+  }
   function conversationLabel(task) {
-    return textOf(task.title, 200) || textOf(task.objective, 60) || task.id.slice(0, 8);
+    return shortLabel(task.title, 200) || shortLabel(task.objective, 60) || task.id.slice(0, 8);
   }
   function transcriptMarkdown(title, messages, diff) {
     const out = [`# ${title}`, ""];
@@ -1756,7 +1766,11 @@ ${c.output}` : "";
     create_file: ["file-plus", "Created", "path"],
     run_tests: ["terminal", "Ran checks", ""],
     run_command: ["terminal", "Ran", "command"],
-    finish: ["flag", "Finished", ""]
+    finish: ["flag", "Finished", ""],
+    task_tracker: ["list", "Updated the task list", ""],
+    write_plan: ["pencil", "Wrote the plan", ""],
+    read_plan: ["book", "Read the plan", ""],
+    browse_url: ["globe", "Opened", "url"]
   };
   function detailField(details, key) {
     if (typeof details !== "object" || details === null || !(key in details))
