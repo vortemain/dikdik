@@ -430,6 +430,14 @@ def make_server(engine: Engine, port: int, token: str):
                 if path == "/api/chatgpt/status":
                     self.reply(200, engine.chatgpt.status())
                     return
+                if path == "/api/apps":
+                    self.reply(200, {"apps": engine.apps.list()})
+                    return
+                if path.startswith("/api/apps/") and path.endswith("/bundle") and path.count("/") == 4:
+                    app_name = path.split("/")[3]
+                    raw, mime = engine.apps.bundle(app_name, "index.html")
+                    self.reply(200, raw, mime)
+                    return
                 if path == "/api/keys":
                     self.reply(200, {"keys": api_keys.list()})
                     return
@@ -628,6 +636,23 @@ def make_server(engine: Engine, port: int, token: str):
                         self.reply(400, {"error": str(exc)})
                 elif path == "/api/chatgpt/logout":
                     self.reply(200, engine.chatgpt.logout())
+                elif path == "/api/apps" and isinstance(body, dict):
+                    try:
+                        self.reply(201, engine.apps.install(body))
+                    except ValueError as exc:
+                        self.reply(400, {"error": str(exc)})
+                elif path.startswith("/api/apps/") and path.endswith("/enable") and path.count("/") == 4:
+                    app_name = path.split("/")[3]
+                    try:
+                        self.reply(200, engine.apps.update(app_name, {"enabled": True}))
+                    except KeyError:
+                        self.reply(404, {"error": "App not found"})
+                elif path.startswith("/api/apps/") and path.endswith("/disable") and path.count("/") == 4:
+                    app_name = path.split("/")[3]
+                    try:
+                        self.reply(200, engine.apps.update(app_name, {"enabled": False}))
+                    except KeyError:
+                        self.reply(404, {"error": "App not found"})
                 elif path.startswith("/api/keys/") and path.endswith("/rotate"):
                     try:
                         token = api_keys.rotate(path.split("/")[3])
@@ -761,6 +786,13 @@ def make_server(engine: Engine, port: int, token: str):
                         self.reply(200, {"deleted": path.split("/")[3]})
                     except KeyError:
                         self.reply(404, {"error": "Key not found"})
+                    return
+                if path.startswith("/api/apps/") and method == "DELETE" and path.count("/") == 3:
+                    try:
+                        engine.apps.delete(path.split("/")[3])
+                        self.reply(200, {"deleted": path.split("/")[3]})
+                    except KeyError:
+                        self.reply(404, {"error": "App not found"})
                     return
                 if path.startswith("/api/tasks/") and path.count("/") == 3:
                     task = path.split("/")[3]

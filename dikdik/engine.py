@@ -43,6 +43,7 @@ from .workspace_registry import WorkspaceRegistry
 from .backends import BackendStore
 from .acp_agents import AcpAgentStore
 from .chatgpt_login import ChatGptLogin
+from .extension_apps import ExtensionAppStore
 
 
 TERMINAL = {"completed", "failed", "blocked", "cancelled", "interrupted", "draft", "paused"}
@@ -166,6 +167,7 @@ class Engine:
         self.backends = BackendStore(self.store)
         self.acp_agents = AcpAgentStore(self.store)
         self.chatgpt = ChatGptLogin(data)
+        self.apps = ExtensionAppStore(data)
         # Register the current workspace on startup.
         try:
             self.workspaces.add(str(root))
