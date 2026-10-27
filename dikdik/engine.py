@@ -992,7 +992,7 @@ class Engine:
         sandbox_env.update(self._sandbox_secrets(task, request, profile))
         history = notes + ([{"role": "user", "content": guidance}] if guidance else []) + list(history or [])
         servers = [server for server in self.mcp.list() if server["enabled"]] if profile is None or profile["use_mcp"] else []
-        session = McpSession(servers, self.models.secrets.reveal) if servers else None
+        session = McpSession(servers, self.models.secrets.reveal, self.models.secrets.set) if servers else None
         if session:
             self.store.event(task, "mcp", {"servers": [s["name"] for s in servers], "tools": len(session.tools), "errors": session.errors})
         browsing = request.get("approve_browser") is True and request.get("approve_execution") is True and self.browser.enabled() and (profile is None or profile["allow_browser"])

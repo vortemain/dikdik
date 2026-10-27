@@ -904,3 +904,17 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
 .plugin-files summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-top: 12px; }
 .plugin-file-list { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 2px; }
 .plugin-file-list button { font: 400 12.5px var(--mono); }
+
+/* MCP server library and editor. */
+.mcp-editor .skill-fields > label, #mcp-install-dialog .skill-fields > label,
+.mcp-install-fields > label { display: grid; grid-template-columns: minmax(110px, 160px) minmax(0, 1fr); gap: 10px 16px; align-items: center; grid-column: 1 / -1; }
+.mcp-install-fields { display: grid; gap: 10px; }
+.mcp-install-fields > .m4-meta { margin: 0 0 2px; overflow-wrap: anywhere; }
+.mcp-server-list .m4-actions { margin-top: 8px; }
+.mcp-server-list .switch { margin-right: 2px; }
+#mcp-library-dialog .info-body > input[type=search] { width: 100%; margin-top: 10px; }
+#mcp-test-dialog .m4-row > button { justify-self: start; }
+@media (max-width: 760px) {
+  .mcp-editor .skill-fields > label, #mcp-install-dialog .skill-fields > label,
+  .mcp-install-fields > label { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}

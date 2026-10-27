@@ -310,10 +310,13 @@ Build in this order; one commit per numbered item (or per sub-feature if large).
    everything the plugin adds before first enable, enable/disable, launch
    parameters. Plugins can never widen approvals or add host processes without the
    user approving each MCP stdio command.
-3. **MCP completeness** (app F17, srv F19): catalog/library, search, edit, install
-   options and arguments, OAuth for remote servers (authorization-code + PKCE with a
-   loopback redirect `http://127.0.0.1:<port>/api/mcp/oauth/callback`; tokens sealed in
-   `SecretsStore`; refresh handling), per-server secrets.
+3. **MCP completeness** (app F17, srv F19) — done: built-in library and search,
+   sparse edit, install options and arguments, extra sealed-key environment mappings,
+   connection/tool-call tests, and OAuth authorization-code + S256 PKCE with the
+   loopback redirect `http://127.0.0.1:<port>/api/mcp/oauth/callback`; tokens are
+   sealed in `SecretsStore` and refreshed before expiry. Focused Python and web tests
+   plus a real browser install/edit check cover it. Reference-only navigation/filter
+   differences remain recorded in the audit.
 4. **Extension apps** (app F20, srv F28/F29): installable app pages in a sandboxed
    iframe (`sandbox` attribute without `allow-same-origin`, served from a separate path,
    no access to the session cookie; CSP updated narrowly and documented), an optional

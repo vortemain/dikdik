@@ -74,8 +74,10 @@ autonomous engineering platform.
   server); environment variables remain a fallback. Replies stream as they arrive.
 - **Skills, MCP servers and agent profiles.** Skills (guidance files) reach the
   agent as marked, untrusted context; install them from a folder, a Git source
-  or a marketplace you add, and browse, filter and switch them on the Skills page. MCP servers (HTTP or local command) add
-  tools. Agent profiles bundle instructions, a model, limits and tool access.
+  or a marketplace you add, and browse, filter and switch them on the Skills page.
+  MCP servers (HTTP or local command) add tools; browse the built-in server library,
+  edit key mappings, test tools, and sign in to supported remote servers with OAuth.
+  Agent profiles bundle instructions, a model, limits and tool access.
 - **Plugins** bundle skills, block rules, subagents and MCP server definitions.
   Install from a folder, Git or a marketplace; nothing loads until you review
   what a plugin adds and trust it, and its MCP servers arrive switched off.
@@ -223,9 +225,12 @@ recent commits, and commits the files you tick (repository hooks are not run).
 
 All four live in **Settings**. Skills are Markdown files in `.dikdik/skills/` (this
 project) or the data folder (personal); `<name>/SKILL.md` folders with `name:` and
-`description:` front matter work too. MCP servers start disabled: test one, then
-enable it for agent tasks. A *local command* server runs on this machine with a
-minimal environment plus the one API key you assign. Agent profiles appear in the
+`description:` front matter work too. MCP servers start disabled: install one from
+the built-in library or add it manually, test it, then enable it for agent tasks.
+A *local command* server runs on this machine with a minimal environment plus only
+the encrypted API keys you map to it. Supported remote servers use authorization-code
+OAuth with S256 PKCE and a loopback callback; access and refresh tokens stay in the
+encrypted key store and are not listed under API keys. Agent profiles appear in the
 composer in Agent mode. Automations run daily or every N minutes with the mode and
 approvals you choose; older automations made without approvals wait for an edit.
 

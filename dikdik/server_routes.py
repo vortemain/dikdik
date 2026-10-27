@@ -15,7 +15,9 @@ import urllib.parse
 from .agent_profiles import AgentProfiles
 from .automation import validate_schedule
 from .drafts import DraftConflict, Drafts
-from .mcp import McpStore, test_server
+from .mcp import OAUTH_PREFIX, McpError, McpStore, oauth_ref, test_server
+from .mcp_catalog import catalog as mcp_library, install as mcp_install
+from .mcp_oauth import OAuthJobs
 from .connections import ConnectionStore
 from .model_catalog import catalog
 from .profiles import ApiError, ProfileStore
@@ -28,7 +30,7 @@ from .skills_market import InstallConflict, SkillStore
 
 ROUTE_PREFIXES = ("/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts",
                   "/api/connections", "/api/routers", "/api/model-catalog", "/api/plugins")
-MANAGED_PREFIX = "conn."  # keys owned by provider connections; managed there, hidden from API keys
+MANAGED_PREFIX = ("conn.", OAUTH_PREFIX)  # provider connection keys and MCP sign-ins; managed there, hidden from API keys
 
 
 def build_routes(engine_or_stores):
@@ -165,7 +167,7 @@ def build_routes(engine_or_stores):
         if method == "GET" and len(parts) == 2:
             return 200, [item for item in secrets.list() if not item["ref"].startswith(MANAGED_PREFIX)]
         if len(parts) >= 3 and parts[2].startswith(MANAGED_PREFIX):
-            raise ValueError("This key belongs to a provider connection; change it there")
+            raise ValueError("This key belongs to a provider connection or an MCP sign-in; change it there")
         if method == "POST" and len(parts) == 4 and parts[3] == "restore":
             secrets.restore_previous(parts[2])
             return 200, {"ref": parts[2], "restored": True}
@@ -257,18 +259,58 @@ def build_routes(engine_or_stores):
         return None
 
     mcp = getattr(stores, "mcp", None) or McpStore(stores.store)
+    oauth = OAuthJobs(secrets.set)
+
+    def mcp_listed() -> list[dict]:
+        signed = {item["ref"] for item in secrets.list()}
+        return [{**s, "signed_in": oauth_ref(s["id"]) in signed} for s in mcp.list()]
+
+    def forget_sign_in(server_id: str) -> None:
+        try:
+            secrets.delete(oauth_ref(server_id))
+        except KeyError:
+            pass
 
     def mcp_routes(method: str, parts: list[str], body: dict, query: dict):
         if method == "GET" and len(parts) == 2:
-            return 200, mcp.list()
+            return 200, mcp_listed()
         if method == "POST" and len(parts) == 2:
             return 201, mcp.create(body)
+        if len(parts) >= 3 and parts[2] == "catalog":
+            if method == "GET" and len(parts) == 3:
+                return 200, mcp_library(mcp.list())
+            if method == "POST" and len(parts) == 4 and parts[3] == "install":
+                return 201, mcp_install(mcp, secrets, body)
+            return None
+        if len(parts) >= 4 and parts[2] == "oauth":  # /api/mcp/oauth/<job>[/callback]
+            if method == "GET" and len(parts) == 4:
+                return 200, oauth.status(parts[3])
+            if method == "POST" and len(parts) == 5 and parts[4] == "callback":
+                if "callback_url" not in body:
+                    oauth.status(parts[3])  # 404 for an unknown job first
+                    return 422, {"error": "Send callback_url"}
+                return oauth.callback(parts[3], body["callback_url"])
+            return None
         if method == "PATCH" and len(parts) == 3:
-            return 200, mcp.set_enabled(parts[2], body.get("enabled"))
+            if set(body) == {"enabled"}:
+                return 200, mcp.set_enabled(parts[2], body.get("enabled"))
+            before = mcp.get(parts[2])
+            after = mcp.update(parts[2], body)
+            if before["auth"] == "oauth" and (after["auth"] != "oauth" or after["url"] != before["url"]):
+                forget_sign_in(parts[2])  # a token is only good for the server it was issued for
+            return 200, after
         if method == "DELETE" and len(parts) == 3:
-            return 200, mcp.delete(parts[2])
+            done = mcp.delete(parts[2])
+            forget_sign_in(parts[2])
+            return 200, done
         if method == "POST" and len(parts) == 4 and parts[3] == "test":
-            return 200, test_server(mcp.get(parts[2]), secrets.reveal)
+            return 200, test_server(mcp.get(parts[2]), secrets.reveal, secrets.set, body.get("tool_call"))
+        if len(parts) == 5 and parts[3:] == ["oauth", "start"] and method == "POST":
+            return 200, oauth.start(mcp.get(parts[2]), body.get("timeout", 300))
+        if len(parts) == 4 and parts[3] == "oauth" and method == "DELETE":
+            mcp.get(parts[2])
+            forget_sign_in(parts[2])
+            return 200, {"id": parts[2], "signed_in": False}
         return None
 
     agents = getattr(stores, "agents", None) or AgentProfiles(stores.store)
@@ -292,6 +334,8 @@ def build_routes(engine_or_stores):
                 db.execute("UPDATE profiles SET credential_secret_ref=? WHERE credential_secret_ref=?", (new, old))
             if "mcp_servers" in tables:
                 db.execute("UPDATE mcp_servers SET secret_ref=? WHERE secret_ref=?", (new, old))
+        mcp.rename_ref(old, new)
+        with stores.store.connect() as db:
             if "agent_profiles" in tables and "secret_refs" in {r["name"] for r in db.execute("PRAGMA table_info(agent_profiles)")}:
                 for row in db.execute("SELECT id, secret_refs FROM agent_profiles WHERE secret_refs IS NOT NULL").fetchall():
                     refs = json.loads(row["secret_refs"])
@@ -332,6 +376,8 @@ def build_routes(engine_or_stores):
             return exc.status, {"error": exc.error}
         except InstallConflict as exc:
             return 409, {"error": str(exc)}
+        except McpError as exc:
+            return 400, {"error": str(exc)}
         except SecretsError as exc:
             return 500, {"error": str(exc) or "Secret store unavailable; the change was not applied"}
         except sqlite3.OperationalError:
@@ -344,4 +390,5 @@ def build_routes(engine_or_stores):
             return 404, {"error": "Not found"}
         return result
 
+    call.oauth = oauth  # the server sets its port and serves the browser's callback
     return call

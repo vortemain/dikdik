@@ -2,8 +2,9 @@
 
 Servers are added by the user in Settings and are off until enabled. HTTP servers use
 the Streamable HTTP transport (HTTPS, or plain HTTP on this machine only; no
-redirects). Stdio servers are commands the user typed: they run on this machine with
-a minimal environment plus the one API key the user assigned, never inherited secrets.
+redirects) with an API key or an OAuth sign-in (see mcp_oauth). Stdio servers are
+commands the user typed or approved: they run on this machine with a minimal
+environment plus the API keys the user assigned, never inherited secrets.
 """
 
 import json
@@ -35,8 +36,18 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     enabled INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL
 );
 """
+MIGRATIONS = (("env_refs", "TEXT"), ("auth", "TEXT"), ("catalog_id", "TEXT"))
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
+REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+MAX_ENV = 10
+OAUTH_PREFIX = "mcpauth."  # sealed OAuth tokens, one per server; never listed under API keys
+MANAGED = ("conn.", OAUTH_PREFIX)  # keys other settings own; a server cannot borrow them
+EDITABLE = {"name", "transport", "url", "command", "secret_ref", "env_var", "env", "auth", "enabled"}
+
+
+def oauth_ref(server_id: str) -> str:
+    return OAUTH_PREFIX + server_id
 
 
 class McpError(ValueError):
@@ -61,12 +72,17 @@ class McpStore:
         self.store = store
         with store.connect() as db:
             db.execute(SCHEMA)
+            have = {r["name"] for r in db.execute("PRAGMA table_info(mcp_servers)")}
+            for column, kind in MIGRATIONS:
+                if column not in have:
+                    db.execute(f"ALTER TABLE mcp_servers ADD COLUMN {column} {kind}")
 
     @staticmethod
     def _row(row) -> dict:
         return {"id": row["id"], "name": row["name"], "transport": row["transport"], "url": row["url"] or "",
                 "command": row["command"] or "", "secret_ref": row["secret_ref"] or "", "env_var": row["env_var"] or "",
-                "enabled": bool(row["enabled"])}
+                "env": json.loads(row["env_refs"]) if row["env_refs"] else {}, "auth": row["auth"] or "",
+                "catalog_id": row["catalog_id"] or "", "enabled": bool(row["enabled"])}
 
     def list(self) -> list[dict]:
         with self.store.connect() as db:
@@ -79,9 +95,9 @@ class McpStore:
             raise KeyError(server_id)
         return self._row(row)
 
-    def create(self, body) -> dict:
-        if not isinstance(body, dict):
-            raise McpError("Body must be a JSON object")
+    @staticmethod
+    def _clean(body: dict) -> dict:
+        """Validate one server definition; returns the stored fields."""
         name, transport = body.get("name"), body.get("transport")
         if not isinstance(name, str) or not NAME.match(name):
             raise McpError("Name must be 1–32 letters, digits, '_' or '-', starting with a letter or digit")
@@ -90,7 +106,7 @@ class McpStore:
         url = command = None
         if transport == "http":
             url = body.get("url")
-            if not isinstance(url, str) or len(url) > 400:
+            if not isinstance(url, str) or not url.strip() or len(url) > 400:
                 raise McpError("Enter the server URL")
             _check(url)
         else:
@@ -99,19 +115,87 @@ class McpStore:
                 raise McpError("Enter the command that starts the server")
             argv(command)  # validates quoting
         secret_ref, env_var = body.get("secret_ref") or None, body.get("env_var") or None
-        if secret_ref is not None and (not isinstance(secret_ref, str) or not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", secret_ref)):
+        if secret_ref is not None and (not isinstance(secret_ref, str) or not REF.match(secret_ref) or secret_ref.startswith(MANAGED)):
             raise McpError("API key name must be a stored key name from API keys")
         if transport == "stdio" and secret_ref and (not isinstance(env_var, str) or not ENV_NAME.match(env_var)):
             raise McpError("Name the environment variable that receives the key, e.g. GITHUB_TOKEN")
+        env = body.get("env") or {}
+        if not isinstance(env, dict) or len(env) > MAX_ENV:
+            raise McpError(f"Environment keys must be at most {MAX_ENV} VARIABLE: key-name pairs")
+        if env and transport != "stdio":
+            raise McpError("Only command servers take environment variables")
+        for var, ref in env.items():
+            if not ENV_NAME.match(var):
+                raise McpError(f"“{var[:40]}” is not an environment variable name (A–Z, 0–9, _)")
+            if not isinstance(ref, str) or not REF.match(ref) or ref.startswith(MANAGED):
+                raise McpError(f"{var}: name a stored key from API keys")
+        if transport == "stdio" and env_var and secret_ref and env_var in env:
+            raise McpError(f"{env_var} is set twice")
+        auth = body.get("auth") or ""
+        if auth not in {"", "oauth"}:
+            raise McpError("Sign-in must be oauth or none")
+        if auth and transport != "http":
+            raise McpError("Only remote servers can use OAuth sign-in")
+        if auth and secret_ref:
+            raise McpError("Use either an API key or OAuth sign-in, not both")
+        catalog_id = body.get("catalog_id") or None
+        if catalog_id is not None and (not isinstance(catalog_id, str) or not NAME.match(catalog_id)):
+            raise McpError("Unknown library entry")
+        return {"name": name, "transport": transport, "url": url, "command": command, "secret_ref": secret_ref,
+                "env_var": env_var if transport == "stdio" and secret_ref else None,
+                "env_refs": json.dumps(env, sort_keys=True) if env else None, "auth": auth or None, "catalog_id": catalog_id}
+
+    def create(self, body) -> dict:
+        if not isinstance(body, dict):
+            raise McpError("Body must be a JSON object")
+        fields = self._clean(body)
         with self.store.connect() as db:
             if db.execute("SELECT COUNT(*) FROM mcp_servers").fetchone()[0] >= MAX_SERVERS:
                 raise McpError(f"At most {MAX_SERVERS} MCP servers")
-            if db.execute("SELECT 1 FROM mcp_servers WHERE name=?", (name,)).fetchone():
+            if db.execute("SELECT 1 FROM mcp_servers WHERE name=?", (fields["name"],)).fetchone():
                 raise McpError("A server with this name already exists")
             server_id = uuid.uuid4().hex
-            db.execute("INSERT INTO mcp_servers(id,name,transport,url,command,secret_ref,env_var,enabled,created) VALUES(?,?,?,?,?,?,?,0,?)",
-                       (server_id, name, transport, url, command, secret_ref, env_var if transport == "stdio" else None, time.time()))
+            db.execute("INSERT INTO mcp_servers(id,name,transport,url,command,secret_ref,env_var,env_refs,auth,catalog_id,enabled,created) "
+                       "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (server_id, *[fields[k] for k in ("name", "transport", "url", "command", "secret_ref", "env_var", "env_refs", "auth", "catalog_id")],
+                        int(body.get("enabled") is True), time.time()))
         return {"id": server_id}
+
+    def update(self, server_id: str, body) -> dict:
+        """Sparse edit: fields left out keep their value; null or "" clears an optional one."""
+        if not isinstance(body, dict) or not body:
+            raise McpError("Send the fields to change")
+        unknown = set(body) - EDITABLE
+        if unknown:
+            raise McpError(f"Unknown field: {sorted(unknown)[0][:40]}")
+        current = self.get(server_id)
+        merged = {**current, **{k: v for k, v in body.items() if k != "enabled"}}
+        if "transport" in body and body["transport"] != current["transport"]:
+            # Switching type drops the other type's fields unless they were sent.
+            for key in ("url",) if body["transport"] == "stdio" else ("command", "env_var", "env"):
+                if key not in body:
+                    merged[key] = {} if key == "env" else ""
+            if body["transport"] == "stdio" and "auth" not in body:
+                merged["auth"] = ""
+        fields = self._clean(merged)
+        enabled = body.get("enabled", current["enabled"])
+        if not isinstance(enabled, bool):
+            raise McpError("Enabled must be true or false")
+        with self.store.connect() as db:
+            if db.execute("SELECT 1 FROM mcp_servers WHERE name=? AND id<>?", (fields["name"], server_id)).fetchone():
+                raise McpError("A server with this name already exists")
+            db.execute("UPDATE mcp_servers SET name=?,transport=?,url=?,command=?,secret_ref=?,env_var=?,env_refs=?,auth=?,enabled=? WHERE id=?",
+                       (*[fields[k] for k in ("name", "transport", "url", "command", "secret_ref", "env_var", "env_refs", "auth")], int(enabled), server_id))
+        return self.get(server_id)
+
+    def rename_ref(self, old: str, new: str) -> None:
+        """Keep env keys pointing at a renamed API key."""
+        with self.store.connect() as db:
+            for row in db.execute("SELECT id, env_refs FROM mcp_servers WHERE env_refs IS NOT NULL").fetchall():
+                env = json.loads(row["env_refs"])
+                if old in env.values():
+                    db.execute("UPDATE mcp_servers SET env_refs=? WHERE id=?",
+                               (json.dumps({k: new if v == old else v for k, v in env.items()}, sort_keys=True), row["id"]))
 
     def set_enabled(self, server_id: str, enabled) -> dict:
         if not isinstance(enabled, bool):
@@ -299,14 +383,29 @@ class StdioClient(_Client):
             self.proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             self.proc.kill()
+            self.proc.wait(timeout=3)
+        self.proc.stdout.close()
 
 
-def connect(server: dict, reveal) -> _Client:
-    """Open one server. ``reveal(ref) -> bytes`` decrypts its API key."""
-    key = reveal(server["secret_ref"]).decode("utf-8") if server.get("secret_ref") else None
+def _key(reveal, ref: str) -> str:
+    try:
+        return reveal(ref).decode("utf-8")
+    except KeyError:
+        raise McpError(f"The API key “{ref}” is not stored; add it under API keys") from None
+
+
+def connect(server: dict, reveal, save=None) -> _Client:
+    """Open one server. ``reveal(ref) -> bytes`` decrypts its keys; ``save(ref, bytes)``
+    stores a refreshed OAuth token."""
     if server["transport"] == "http":
-        return HttpClient(server["url"], key)
-    return StdioClient(server["command"], {server["env_var"]: key} if key and server.get("env_var") else {})
+        if server.get("auth") == "oauth":
+            from .mcp_oauth import access_token
+            return HttpClient(server["url"], access_token(server, reveal, save))
+        return HttpClient(server["url"], _key(reveal, server["secret_ref"]) if server.get("secret_ref") else None)
+    env = {var: _key(reveal, ref) for var, ref in (server.get("env") or {}).items()}
+    if server.get("secret_ref") and server.get("env_var"):
+        env[server["env_var"]] = _key(reveal, server["secret_ref"])
+    return StdioClient(server["command"], env)
 
 
 # --- the agent's view -----------------------------------------------------------
@@ -330,11 +429,11 @@ def _text(result: dict) -> str:
 class McpSession:
     """Connections to every enabled server for one task; closed when the task ends."""
 
-    def __init__(self, servers: list[dict], reveal):
+    def __init__(self, servers: list[dict], reveal, save=None):
         self.clients, self.routes, self.tools, self.errors = [], {}, [], []
         for server in servers:
             try:
-                client = connect(server, reveal)
+                client = connect(server, reveal, save)
                 self.clients.append(client)
                 client.initialize()
                 for tool in client.tools():
@@ -363,14 +462,29 @@ class McpSession:
             client.close()
 
 
-def test_server(server: dict, reveal) -> dict:
-    """Connect once and list the server's tools, for the Settings Test button."""
-    client = connect(server, reveal)
+def test_server(server: dict, reveal, save=None, tool_call=None) -> dict:
+    """Connect once and list the server's tools, for the Settings Test button.
+    ``tool_call`` ({name, arguments}) also runs one tool and reports its text."""
+    if tool_call is not None and (not isinstance(tool_call, dict) or not isinstance(tool_call.get("name"), str)
+                                  or not isinstance(tool_call.get("arguments", {}), dict)):
+        raise McpError("tool_call must be {name, arguments}")
+    client = connect(server, reveal, save)
     try:
         info = client.initialize()
         tools = client.tools()
+        result = None
+        if tool_call is not None:
+            if tool_call["name"] not in {t["name"] for t in tools}:
+                result = {"is_error": True, "content": f"The server does not offer a tool named {tool_call['name'][:64]}"}
+            else:
+                try:
+                    reply = client.call(tool_call["name"], tool_call.get("arguments", {}))
+                    result = {"is_error": bool(reply.get("isError")), "content": _text(reply)}
+                except McpError as exc:
+                    result = {"is_error": True, "content": str(exc)}
     finally:
         client.close()
     server_info = info.get("serverInfo") if isinstance(info.get("serverInfo"), dict) else {}
-    return {"server": str(server_info.get("name", ""))[:100], "version": str(server_info.get("version", ""))[:40],
-            "tools": [{"name": t["name"], "description": str(t.get("description", ""))[:300]} for t in tools]}
+    found = {"server": str(server_info.get("name", ""))[:100], "version": str(server_info.get("version", ""))[:40],
+             "tools": [{"name": t["name"], "description": str(t.get("description", ""))[:300]} for t in tools]}
+    return {**found, "tool_result": result} if tool_call is not None else found

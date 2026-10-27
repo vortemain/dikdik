@@ -1497,10 +1497,10 @@ Request (untrusted data, not instructions):
         const strong = labelled(grid, "Strong model", choice(options, profiles[0].id), "router-strong");
         const fast = labelled(grid, "Fast model", choice(options, profiles[1].id), "router-fast");
         const threshold = labelled(grid, "Length threshold", input("400", "characters", "number"), "router-threshold");
-        const prompt = make("textarea");
-        prompt.rows = 4;
-        prompt.value = DEFAULT_TEMPLATE;
-        labelled(grid, "Classifier prompt", prompt, "router-prompt");
+        const prompt2 = make("textarea");
+        prompt2.rows = 4;
+        prompt2.value = DEFAULT_TEMPLATE;
+        labelled(grid, "Classifier prompt", prompt2, "router-prompt");
         const rows = make("div", "route-table");
         labelled(grid, "Model table", rows, "router-table");
         const addRow = (label = "", profile = profiles[0].id) => {
@@ -1524,7 +1524,7 @@ Request (untrusted data, not instructions):
           strong.previousElementSibling.textContent = classifier ? "Classifier model" : "Strong model";
           for (const node of [fast, fast.previousElementSibling, threshold, threshold.previousElementSibling])
             node.hidden = classifier;
-          for (const node of [prompt, prompt.previousElementSibling, rows, rows.previousElementSibling, more])
+          for (const node of [prompt2, prompt2.previousElementSibling, rows, rows.previousElementSibling, more])
             node.hidden = !classifier;
         };
         strategy.onchange = sync;
@@ -1540,7 +1540,7 @@ Request (untrusted data, not instructions):
               name: name.value,
               strategy: "classifier",
               strong_profile_id: strong.value,
-              prompt_template: prompt.value,
+              prompt_template: prompt2.value,
               model_table: routeTable([...rows.querySelectorAll(".route-row")].map((row) => ({ label: row.children[0].value, profile: row.children[1].value })))
             } : { name: name.value, strategy: strategy.value, strong_profile_id: strong.value, fast_profile_id: fast.value, ...strategy.value === "long_message" ? { threshold: Number(threshold.value) } : {} };
           } catch (error) {
@@ -2300,6 +2300,449 @@ Request (untrusted data, not instructions):
         }, "");
       };
       root.replaceChildren(top, grid, form);
+    }
+    return refresh;
+  }
+
+  // dikdik/web/mcp-pane.ts
+  function parseEnvKeys(text) {
+    const env = {};
+    for (const [index, raw] of text.split(/\r?\n/).entries()) {
+      const line = raw.trim();
+      if (!line)
+        continue;
+      const at = line.indexOf("=");
+      const name = at < 0 ? line : line.slice(0, at).trim();
+      const ref = at < 0 ? "" : line.slice(at + 1).trim();
+      if (!/^[A-Z_][A-Z0-9_]{0,63}$/.test(name) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(ref)) {
+        throw new Error(`Line ${index + 1} must be VARIABLE=api-key-name.`);
+      }
+      if (name in env)
+        throw new Error(`${name} is listed twice.`);
+      env[name] = ref;
+    }
+    if (Object.keys(env).length > 10)
+      throw new Error("Use at most 10 environment keys.");
+    return env;
+  }
+  function filterMcp(items, query) {
+    const q = query.trim().toLowerCase();
+    return q ? items.filter((item) => [item.name, item.description, item.url, item.command].join(" ").toLowerCase().includes(q)) : [...items];
+  }
+  function mcpPane(root, deps) {
+    const { request, make, message } = deps;
+    let servers = [], query = "";
+    const fail = (error, fallback = "Something went wrong") => message(error instanceof Error ? error.message : fallback, true);
+    const button = (label, className = "secondary small", onclick) => {
+      const node = make("button", className, label);
+      node.type = "button";
+      if (onclick)
+        node.onclick = onclick;
+      return node;
+    };
+    function dialog(id, wide = true) {
+      let node = document.getElementById(id);
+      if (!node) {
+        node = make("dialog", `small-dialog${wide ? " wide-dialog" : ""}`);
+        node.id = id;
+        node.addEventListener("click", (event) => {
+          if (event.target === node)
+            node.close();
+        });
+        document.body.append(node);
+      }
+      return node;
+    }
+    const head = (title, box) => {
+      const row = make("div", "settings-head");
+      row.append(make("h3", "", title), button("Close", "ghost small", () => box.close()));
+      return row;
+    };
+    async function act(work, done = "") {
+      try {
+        await work();
+        if (done)
+          message(done);
+        await refresh();
+        deps.changed?.();
+        return true;
+      } catch (error) {
+        fail(error);
+        return false;
+      }
+    }
+    function serverForm(server) {
+      const box = dialog("mcp-server-dialog");
+      const form = make("form", "skill-form mcp-editor");
+      const grid = make("div", "skill-fields");
+      const field = (labelText, value = "", type = "text") => {
+        const label = make("label", "", labelText), input = make("input");
+        input.type = type;
+        input.value = value;
+        input.autocomplete = "off";
+        label.append(input);
+        grid.append(label);
+        return input;
+      };
+      const name = field("Name", server?.name ?? "");
+      name.maxLength = 32;
+      name.required = true;
+      const transportLabel = make("label", "", "Type"), transport = make("select");
+      for (const [value, text] of [["http", "Remote (HTTP)"], ["stdio", "Local command"]]) {
+        const option = make("option", "", text);
+        option.value = value;
+        transport.append(option);
+      }
+      transport.value = server?.transport ?? "http";
+      transportLabel.append(transport);
+      grid.append(transportLabel);
+      const url = field("Server URL", server?.url ?? "", "url"), command = field("Command", server?.command ?? "");
+      url.placeholder = "https://mcp.example.com/mcp";
+      command.placeholder = "npx -y @modelcontextprotocol/server-name";
+      const authLabel = make("label", "", "Sign-in"), auth = make("select");
+      for (const [value, text] of [["", "API key or none"], ["oauth", "OAuth in browser"]]) {
+        const option = make("option", "", text);
+        option.value = value;
+        auth.append(option);
+      }
+      auth.value = server?.auth ?? "";
+      authLabel.append(auth);
+      grid.append(authLabel);
+      const key = field("API key name", server?.secret_ref ?? "");
+      key.placeholder = "Optional: a name from API keys";
+      const keyVar = field("Key variable", server?.env_var ?? "");
+      keyVar.placeholder = "Optional, e.g. GITHUB_TOKEN";
+      const envLabel = make("label", "", "Extra environment keys (one VARIABLE=key-name per line)"), env = make("textarea");
+      env.rows = 4;
+      env.value = Object.entries(server?.env ?? {}).map(([variable, ref]) => `${variable}=${ref}`).join(`
+`);
+      envLabel.append(env);
+      grid.append(envLabel);
+      const sync = () => {
+        const local = transport.value === "stdio", oauth = auth.value === "oauth";
+        url.parentElement.hidden = local;
+        command.parentElement.hidden = !local;
+        authLabel.hidden = local;
+        if (local)
+          auth.value = "";
+        keyVar.parentElement.hidden = !local;
+        envLabel.hidden = !local;
+        key.parentElement.hidden = !local && oauth;
+      };
+      transport.onchange = sync;
+      auth.onchange = sync;
+      sync();
+      const actions = make("div", "row"), save = button(server ? "Save changes" : "Add server", "primary small");
+      save.type = "submit";
+      actions.append(button("Cancel", "ghost small", () => box.close()), save);
+      form.append(grid, actions);
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        try {
+          const local = transport.value === "stdio";
+          const body = {
+            name: name.value.trim(),
+            transport: transport.value,
+            url: local ? "" : url.value.trim(),
+            command: local ? command.value.trim() : "",
+            auth: local ? "" : auth.value,
+            secret_ref: !local && auth.value === "oauth" ? "" : key.value.trim(),
+            env_var: local ? keyVar.value.trim() : "",
+            env: local ? parseEnvKeys(env.value) : {}
+          };
+          act(() => request(server ? `/api/mcp/${server.id}` : "/api/mcp", server ? "PATCH" : "POST", body), server ? "Server saved." : "Server added. Test it, then enable it for agent tasks.").then((ok) => {
+            if (ok)
+              box.close();
+          });
+        } catch (error) {
+          fail(error);
+        }
+      };
+      box.replaceChildren(head(server ? `Edit ${server.name}` : "Add MCP server", box), form);
+      if (!box.open)
+        box.showModal();
+    }
+    function testDialog(server) {
+      const box = dialog("mcp-test-dialog");
+      const body = make("div", "info-body"), status = make("p", "hint", "Connecting…");
+      body.append(status);
+      box.replaceChildren(head(`Test ${server.name}`, box), body);
+      if (!box.open)
+        box.showModal();
+      request(`/api/mcp/${server.id}/test`, "POST", {}).then((info) => {
+        status.textContent = `Connected${info.server ? ` to ${info.server}` : ""}${info.version ? ` ${info.version}` : ""}. ${info.tools.length} tool${info.tools.length === 1 ? "" : "s"}.`;
+        const list = make("ul", "m4-list");
+        for (const tool of info.tools) {
+          const item = make("li", "m4-row"), title = make("p", "m4-title");
+          title.append(make("span", "m4-strong m4-mono", tool.name));
+          const description = make("p", "hint", tool.description || "No description."), run = button("Call tool"), result = make("pre", "skill-content");
+          result.hidden = true;
+          run.onclick = () => {
+            const raw = prompt(`JSON arguments for ${tool.name}`, "{}");
+            if (raw === null)
+              return;
+            let args;
+            try {
+              args = JSON.parse(raw);
+            } catch {
+              message("Arguments must be valid JSON.", true);
+              return;
+            }
+            if (!args || Array.isArray(args) || typeof args !== "object") {
+              message("Arguments must be a JSON object.", true);
+              return;
+            }
+            run.disabled = true;
+            result.hidden = false;
+            result.textContent = "Calling…";
+            request(`/api/mcp/${server.id}/test`, "POST", { tool_call: { name: tool.name, arguments: args } }).then((reply) => {
+              result.textContent = reply.tool_result?.content ?? "No result";
+              result.classList.toggle("error-text", Boolean(reply.tool_result?.is_error));
+            }).catch((error) => {
+              result.textContent = error instanceof Error ? error.message : "Tool call failed";
+              result.className = "skill-content error-text";
+            }).finally(() => {
+              run.disabled = false;
+            });
+          };
+          item.append(title, description, run, result);
+          list.append(item);
+        }
+        body.append(list);
+      }).catch((error) => {
+        status.textContent = error instanceof Error ? error.message : "Connection failed";
+        status.className = "error-text";
+      });
+    }
+    async function signIn(server) {
+      const popup = globalThis.open?.("about:blank", "_blank");
+      if (popup)
+        popup.opener = null;
+      try {
+        const job = await request(`/api/mcp/${server.id}/oauth/start`, "POST", {});
+        if (job.status !== "authorizing" || !job.authorization_url)
+          throw new Error(job.error || "Could not start sign-in");
+        if (popup)
+          popup.location.href = job.authorization_url;
+        else {
+          const box = dialog("mcp-oauth-link", false), body = make("div", "info-body"), link = make("a", "secondary", "Open sign-in page");
+          link.href = job.authorization_url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          body.append(make("p", "hint", "Your browser blocked the sign-in window. Open it here, then return to Dikdik."), link);
+          box.replaceChildren(head(`Sign in to ${server.name}`, box), body);
+          box.showModal();
+        }
+        const deadline = Date.now() + 305000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          const current = await request(`/api/mcp/oauth/${job.id}`, "GET");
+          if (current.status === "authorizing" || current.status === "exchanging")
+            continue;
+          if (!current.ok)
+            throw new Error(current.error || "Sign-in was not completed");
+          message(`${server.name} is signed in.`);
+          await refresh();
+          return;
+        }
+        throw new Error("Sign-in was not completed in time");
+      } catch (error) {
+        popup?.close();
+        fail(error, "Sign-in failed");
+      }
+    }
+    function installDialog(entry) {
+      if (!entry.options.length) {
+        message("This library entry has no connection method.", true);
+        return;
+      }
+      const box = dialog("mcp-install-dialog");
+      const form = make("form", "skill-form"), intro = make("p", "hint", entry.description), grid = make("div", "skill-fields");
+      const nameLabel = make("label", "", "Name"), name = make("input");
+      name.value = entry.id;
+      nameLabel.append(name);
+      grid.append(nameLabel);
+      const optionLabel = make("label", "", "Connection"), option = make("select");
+      for (const item of entry.options) {
+        const node = make("option", "", item.label);
+        node.value = item.id;
+        option.append(node);
+      }
+      optionLabel.append(option);
+      grid.append(optionLabel);
+      const dynamic = make("div", "mcp-install-fields"), approval = make("label", "check approval-check"), approve = make("input");
+      approve.type = "checkbox";
+      approval.append(approve, document.createTextNode("I approve running this command on this machine"));
+      const enabledLabel = make("label", "check"), enabled = make("input");
+      enabled.type = "checkbox";
+      enabledLabel.append(enabled, document.createTextNode("Enable for agent tasks after installation"));
+      let argFields = new Map, credentialFields = new Map;
+      const renderOption = () => {
+        const selected = entry.options.find((item) => item.id === option.value) ?? entry.options[0];
+        argFields = new Map;
+        credentialFields = new Map;
+        dynamic.replaceChildren();
+        dynamic.append(make("p", "m4-meta m4-mono", selected.transport === "http" ? selected.url ?? "" : selected.command ?? ""));
+        for (const arg of selected.args ?? []) {
+          const label = make("label", "", arg.label), input = make("input");
+          input.required = Boolean(arg.required);
+          label.append(input);
+          dynamic.append(label);
+          argFields.set(arg.name, input);
+        }
+        for (const credential of selected.credentials ?? []) {
+          const refLabel = make("label", "", `${credential.label} · API key name`), ref = make("input");
+          ref.required = true;
+          ref.placeholder = "Existing name, or name for the new key";
+          refLabel.append(ref);
+          const valueLabel = make("label", "", `${credential.label} · new value (optional)`), value = make("input");
+          value.type = "password";
+          value.autocomplete = "new-password";
+          value.placeholder = "Leave blank to use the stored key";
+          valueLabel.append(value);
+          dynamic.append(refLabel, valueLabel);
+          credentialFields.set(credential.name, { ref, value });
+        }
+        approval.hidden = selected.transport !== "stdio";
+      };
+      option.onchange = renderOption;
+      renderOption();
+      const actions = make("div", "row"), install = button("Install", "primary small");
+      install.type = "submit";
+      actions.append(button("Cancel", "ghost small", () => box.close()), install);
+      form.append(intro, grid, dynamic, approval, enabledLabel, actions);
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        const selected = entry.options.find((item) => item.id === option.value) ?? entry.options[0];
+        if (selected.transport === "stdio" && !approve.checked) {
+          message("Approve running the command first.", true);
+          return;
+        }
+        const args = Object.fromEntries([...argFields].map(([key, input]) => [key, input.value]));
+        const credentials = Object.fromEntries([...credentialFields].map(([key, fields]) => [key, fields.value.value ? { save_as: fields.ref.value.trim(), value: fields.value.value } : { ref: fields.ref.value.trim() }]));
+        install.disabled = true;
+        request("/api/mcp/catalog/install", "POST", {
+          entry: entry.id,
+          option: selected.id,
+          name: name.value.trim(),
+          args,
+          credentials,
+          approve_command: selected.transport === "stdio" && approve.checked,
+          enable: enabled.checked
+        }).then((done) => {
+          box.close();
+          message(`Installed ${done.name}.${done.oauth ? " Sign in before enabling it." : ""}`);
+          return refresh();
+        }).catch((error) => fail(error, "Install failed")).finally(() => {
+          install.disabled = false;
+        });
+      };
+      box.replaceChildren(head(`Install ${entry.name}`, box), form);
+      if (!box.open)
+        box.showModal();
+    }
+    async function libraryDialog() {
+      const box = dialog("mcp-library-dialog"), body = make("div", "info-body"), loading = make("p", "hint", "Loading server library…");
+      box.replaceChildren(head("MCP server library", box), body);
+      body.append(loading);
+      if (!box.open)
+        box.showModal();
+      try {
+        const entries = await request("/api/mcp/catalog", "GET"), search = make("input");
+        search.type = "search";
+        search.placeholder = "Search servers";
+        search.setAttribute("aria-label", "Search MCP servers");
+        const grid = make("ul", "skill-cards");
+        const draw = () => {
+          const found = filterMcp(entries, search.value);
+          grid.replaceChildren(...found.map((entry) => {
+            const card = make("li", "skill-card"), top = make("div", "skill-card-top");
+            top.append(make("strong", "", entry.name));
+            const install = button(entry.installed ? "Installed" : "Install", "small", () => installDialog(entry));
+            install.disabled = entry.installed;
+            top.append(install);
+            const methods = make("p", "skill-pills");
+            for (const item of entry.options)
+              methods.append(make("span", "m4-badge muted-badge", item.transport === "http" ? "Remote" : "Command"));
+            card.append(top, make("p", "skill-desc", entry.description), methods);
+            return card;
+          }));
+          if (!found.length)
+            grid.replaceChildren(make("li", "hint", "No servers match your search."));
+        };
+        search.oninput = draw;
+        body.replaceChildren(search, grid);
+        draw();
+      } catch (error) {
+        body.replaceChildren(make("p", "error-text", error instanceof Error ? error.message : "Could not load the library"));
+      }
+    }
+    function render() {
+      const toolbar = make("div", "plugin-toolbar"), search = make("input");
+      search.type = "search";
+      search.value = query;
+      search.placeholder = "Search configured servers";
+      search.setAttribute("aria-label", "Search configured MCP servers");
+      toolbar.append(search, button("Browse library", "secondary small", () => {
+        libraryDialog();
+      }), button("Add server", "primary small", () => serverForm()));
+      const list = make("ol", "m4-list mcp-server-list");
+      const draw = () => {
+        const found = filterMcp(servers, query);
+        list.replaceChildren(...found.map((server) => {
+          const row = make("li", "m4-row"), title = make("p", "m4-title");
+          title.append(make("span", "m4-strong", server.name), make("span", "m4-badge", server.transport === "http" ? "remote" : "command"));
+          if (server.auth === "oauth")
+            title.append(make("span", server.signed_in ? "m4-badge" : "m4-badge warn-badge", server.signed_in ? "signed in" : "sign-in needed"));
+          const target = make("p", "m4-meta m4-mono", server.transport === "http" ? server.url : server.command), keys = make("p", "hint");
+          const refs = [server.secret_ref && `${server.env_var || "Authorization"} → ${server.secret_ref}`, ...Object.entries(server.env).map(([key, ref]) => `${key} → ${ref}`)].filter(Boolean);
+          keys.textContent = refs.length ? `Keys: ${refs.join(", ")}` : "No API keys assigned.";
+          const actions = make("div", "m4-actions"), toggle = make("input");
+          toggle.type = "checkbox";
+          toggle.checked = server.enabled;
+          toggle.setAttribute("aria-label", `Enable ${server.name}`);
+          toggle.onchange = () => {
+            const enabled = toggle.checked;
+            act(() => request(`/api/mcp/${server.id}`, "PATCH", { enabled }), enabled ? `${server.name} enabled for agent tasks.` : `${server.name} disabled.`).then((ok) => {
+              if (!ok)
+                toggle.checked = !enabled;
+            });
+          };
+          const switchLabel = make("label", "switch");
+          switchLabel.title = "Enable for agent tasks";
+          switchLabel.append(toggle);
+          actions.append(switchLabel);
+          if (server.auth === "oauth")
+            actions.append(server.signed_in ? button("Sign out", "secondary small", () => {
+              act(() => request(`/api/mcp/${server.id}/oauth`, "DELETE"), `${server.name} signed out.`);
+            }) : button("Sign in", "primary small", () => {
+              signIn(server);
+            }));
+          actions.append(button("Test", "secondary small", () => testDialog(server)), button("Edit", "secondary small", () => serverForm(server)), button("Delete", "secondary small", () => {
+            if (!confirm(`Delete ${server.name}?`))
+              return;
+            act(() => request(`/api/mcp/${server.id}`, "DELETE"), "Server deleted.");
+          }));
+          row.append(title, target, keys, actions);
+          return row;
+        }));
+        if (!found.length)
+          list.replaceChildren(make("li", "hint", query ? "No servers match your search." : "No MCP servers yet. Browse the library or add one manually."));
+      };
+      search.oninput = () => {
+        query = search.value;
+        draw();
+      };
+      draw();
+      root.replaceChildren(toolbar, list);
+    }
+    async function refresh() {
+      try {
+        servers = await request("/api/mcp", "GET");
+        render();
+      } catch (error) {
+        root.replaceChildren(make("p", "error-text", `Could not load MCP servers: ${error instanceof Error ? error.message : "unknown error"}`));
+      }
     }
     return refresh;
   }
@@ -4730,7 +5173,8 @@ Request (untrusted data, not instructions):
         models: modelsPane(el("panel-profiles"), paneDeps),
         secrets: keysPane(el("panel-secrets"), paneDeps),
         skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
-        plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt })
+        plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
+        mcp: mcpPane(el("panel-mcp"), paneDeps)
       };
     }
     textarea("objective").focus?.();
@@ -5052,93 +5496,6 @@ Request (untrusted data, not instructions):
       message(error instanceof Error ? error.message : "Could not save the automation", true);
     }
   });
-  async function loadMcp() {
-    try {
-      const servers = await api("/api/mcp");
-      el("mcp-list").replaceChildren(...servers.map((server) => {
-        const row = make("li", "m4-row");
-        const head = make("p", "m4-title");
-        head.append(make("span", "m4-strong", server.name), make("span", "m4-badge", server.transport === "http" ? "remote" : "command"));
-        const target = make("span", "m4-meta m4-mono", server.transport === "http" ? server.url : server.command);
-        const result = make("p", "hint");
-        const actions = make("span", "m4-actions");
-        const toggle = make("input");
-        toggle.type = "checkbox";
-        toggle.checked = server.enabled;
-        toggle.setAttribute("aria-label", `Enable ${server.name}`);
-        toggle.onchange = async () => {
-          try {
-            await request(`/api/mcp/${server.id}`, "PATCH", { enabled: toggle.checked });
-            message(toggle.checked ? `${server.name} enabled for agent tasks.` : `${server.name} disabled.`);
-          } catch (error) {
-            toggle.checked = !toggle.checked;
-            message(error instanceof Error ? error.message : "Could not update", true);
-          }
-        };
-        const enabled = make("label", "check");
-        enabled.append(toggle, make("span", "", "Enabled"));
-        const test = make("button", "secondary", "Test");
-        test.type = "button";
-        test.onclick = async () => {
-          result.textContent = "Connecting…";
-          result.className = "hint";
-          try {
-            const info = await request(`/api/mcp/${server.id}/test`, "POST", {});
-            result.textContent = `Connected${info.server ? ` to ${info.server}` : ""}: ${info.tools.length} tool${info.tools.length === 1 ? "" : "s"} (${info.tools.map((t) => t.name).join(", ") || "none"})`;
-          } catch (error) {
-            result.textContent = error instanceof Error ? error.message : "Connection failed";
-            result.className = "error";
-          }
-        };
-        const remove = make("button", "secondary", "Delete");
-        remove.type = "button";
-        remove.onclick = async () => {
-          try {
-            await request(`/api/mcp/${server.id}`, "DELETE");
-            await loadMcp();
-          } catch (error) {
-            message(error instanceof Error ? error.message : "Delete failed", true);
-          }
-        };
-        actions.append(enabled, test, remove);
-        row.append(head, target, actions, result);
-        return row;
-      }));
-      if (!servers.length)
-        el("mcp-list").replaceChildren(make("li", "hint", "No MCP servers yet."));
-    } catch (error) {
-      message(error instanceof Error ? error.message : "Could not load MCP servers", true);
-    }
-  }
-  function syncMcpForm() {
-    const stdio = el("mcp-transport").value === "stdio";
-    if (typeof el("mcp-form").querySelectorAll !== "function")
-      return;
-    for (const node of el("mcp-form").querySelectorAll(".mcp-http"))
-      node.hidden = stdio;
-    for (const node of el("mcp-form").querySelectorAll(".mcp-stdio"))
-      node.hidden = !stdio;
-  }
-  el("mcp-transport").addEventListener("change", syncMcpForm);
-  el("mcp-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const value = (id) => el(id).value.trim();
-    const transport = value("mcp-transport");
-    try {
-      await request("/api/mcp", "POST", {
-        name: value("mcp-name"),
-        transport,
-        ...transport === "http" ? { url: value("mcp-url") } : { command: value("mcp-command"), env_var: value("mcp-env") || undefined },
-        secret_ref: value("mcp-secret") || undefined
-      });
-      for (const id of ["mcp-name", "mcp-url", "mcp-command", "mcp-secret", "mcp-env"])
-        el(id).value = "";
-      message("Server added. Test it, then enable it for agent tasks.");
-      await loadMcp();
-    } catch (error) {
-      message(error instanceof Error ? error.message : "Could not add the server", true);
-    }
-  });
   function showPane(name) {
     if (name === "general")
       loadBrowserSettings().catch((error) => message(error instanceof Error ? error.message : "Could not load browser setting", true));
@@ -5149,8 +5506,6 @@ Request (untrusted data, not instructions):
       pane.hidden = pane.dataset.pane !== name;
     el("settings-pane-title").textContent = PANE_TITLES[name] ?? "Settings";
     settingsHash(name);
-    if (name === "mcp")
-      loadMcp();
     if (name === "automations") {
       loadAutomations();
       loadAgents().catch(() => {
@@ -6522,10 +6877,10 @@ Request (untrusted data, not instructions):
       ensureLists(true);
     }
   };
-  function startWithPrompt(prompt) {
+  function startWithPrompt(prompt2) {
     el("settings").close();
     newTask();
-    fillComposer(prompt);
+    fillComposer(prompt2);
   }
   function useSkill(name) {
     el("settings").close();

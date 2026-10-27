@@ -6,6 +6,7 @@ import { ComposerDrafts } from './drafts';
 import { keysPane, modelsPane } from "./models-pane";
 import { skillsPane } from "./skills-pane";
 import { pluginsPane } from "./plugins-pane";
+import { mcpPane } from "./mcp-pane";
 import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, workspacePath } from "./organise";
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
@@ -1650,6 +1651,7 @@ async function connect(): Promise<void> {
       secrets: keysPane(el("panel-secrets"), paneDeps),
       skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
       plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
+      mcp: mcpPane(el("panel-mcp"), paneDeps),
     };
   }
   textarea("objective").focus?.();
@@ -1885,69 +1887,6 @@ el("auto-form").addEventListener("submit", async event => {
   } catch (error) { message(error instanceof Error ? error.message : "Could not save the automation", true); }
 });
 
-// --- MCP servers ----------------------------------------------------------
-interface McpServer { id: string; name: string; transport: "http" | "stdio"; url: string; command: string; secret_ref: string; env_var: string; enabled: boolean }
-async function loadMcp(): Promise<void> {
-  try {
-    const servers = await api<McpServer[]>("/api/mcp");
-    el("mcp-list").replaceChildren(...servers.map(server => {
-      const row = make("li", "m4-row");
-      const head = make("p", "m4-title");
-      head.append(make("span", "m4-strong", server.name), make("span", "m4-badge", server.transport === "http" ? "remote" : "command"));
-      const target = make("span", "m4-meta m4-mono", server.transport === "http" ? server.url : server.command);
-      const result = make("p", "hint");
-      const actions = make("span", "m4-actions");
-      const toggle = make("input");
-      toggle.type = "checkbox"; toggle.checked = server.enabled;
-      toggle.setAttribute("aria-label", `Enable ${server.name}`);
-      toggle.onchange = async () => {
-        try { await request(`/api/mcp/${server.id}`, "PATCH", { enabled: toggle.checked }); message(toggle.checked ? `${server.name} enabled for agent tasks.` : `${server.name} disabled.`); }
-        catch (error) { toggle.checked = !toggle.checked; message(error instanceof Error ? error.message : "Could not update", true); }
-      };
-      const enabled = make("label", "check");
-      enabled.append(toggle, make("span", "", "Enabled"));
-      const test = make("button", "secondary", "Test");
-      test.type = "button";
-      test.onclick = async () => {
-        result.textContent = "Connecting…"; result.className = "hint";
-        try {
-          const info = await request<{ server: string; tools: { name: string }[] }>(`/api/mcp/${server.id}/test`, "POST", {});
-          result.textContent = `Connected${info.server ? ` to ${info.server}` : ""}: ${info.tools.length} tool${info.tools.length === 1 ? "" : "s"} (${info.tools.map(t => t.name).join(", ") || "none"})`;
-        } catch (error) { result.textContent = error instanceof Error ? error.message : "Connection failed"; result.className = "error"; }
-      };
-      const remove = make("button", "secondary", "Delete");
-      remove.type = "button";
-      remove.onclick = async () => {
-        try { await request(`/api/mcp/${server.id}`, "DELETE"); await loadMcp(); } catch (error) { message(error instanceof Error ? error.message : "Delete failed", true); }
-      };
-      actions.append(enabled, test, remove);
-      row.append(head, target, actions, result);
-      return row;
-    }));
-    if (!servers.length) el("mcp-list").replaceChildren(make("li", "hint", "No MCP servers yet."));
-  } catch (error) { message(error instanceof Error ? error.message : "Could not load MCP servers", true); }
-}
-function syncMcpForm(): void {
-  const stdio = (el("mcp-transport") as HTMLSelectElement).value === "stdio";
-  if (typeof el("mcp-form").querySelectorAll !== "function") return;
-  for (const node of el("mcp-form").querySelectorAll<HTMLElement>(".mcp-http")) node.hidden = stdio;
-  for (const node of el("mcp-form").querySelectorAll<HTMLElement>(".mcp-stdio")) node.hidden = !stdio;
-}
-el("mcp-transport").addEventListener("change", syncMcpForm);
-el("mcp-form").addEventListener("submit", async event => {
-  event.preventDefault();
-  const value = (id: string) => (el(id) as HTMLInputElement).value.trim();
-  const transport = value("mcp-transport");
-  try {
-    await request("/api/mcp", "POST", {
-      name: value("mcp-name"), transport, ...(transport === "http" ? { url: value("mcp-url") } : { command: value("mcp-command"), env_var: value("mcp-env") || undefined }),
-      secret_ref: value("mcp-secret") || undefined,
-    });
-    for (const id of ["mcp-name", "mcp-url", "mcp-command", "mcp-secret", "mcp-env"]) (el(id) as HTMLInputElement).value = "";
-    message("Server added. Test it, then enable it for agent tasks.");
-    await loadMcp();
-  } catch (error) { message(error instanceof Error ? error.message : "Could not add the server", true); }
-});
 function showPane(name: string): void {
   if (name === "general") void loadBrowserSettings().catch(error => message(error instanceof Error ? error.message : "Could not load browser setting", true));
   const dialog = el("settings");
@@ -1955,7 +1894,6 @@ function showPane(name: string): void {
   for (const pane of dialog.querySelectorAll<HTMLElement>(".settings-pane")) pane.hidden = pane.dataset.pane !== name;
   el("settings-pane-title").textContent = PANE_TITLES[name] ?? "Settings";
   settingsHash(name);
-  if (name === "mcp") void loadMcp();
   if (name === "automations") { void loadAutomations(); void loadAgents().catch(() => undefined); }
   if (name === "agents") { void loadAgents().catch(() => undefined); void loadAgentModels().catch(() => undefined); }
   void refreshPanels[name]?.();

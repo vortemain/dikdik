@@ -2,6 +2,7 @@
 
 import argparse
 import hmac
+import html
 import json
 import os
 import secrets
@@ -162,11 +163,34 @@ def make_server(engine: Engine, port: int, token: str):
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                 return
 
+        def oauth_callback(self):
+            """The sign-in provider redirects the browser here. The session cookie is
+            SameSite=Strict and not sent on that cross-site redirect, so the one-time
+            state in the URL is what ties the reply to a sign-in the user started."""
+            state = parse_qs(urlsplit(self.path).query).get("state", [""])[0]
+            job = routes.oauth.job_for_state(state) if state else None
+            if job is None:
+                status, text = 400, "This sign-in link is not valid or has already been used."
+            else:
+                try:
+                    status, result = routes.oauth.callback(job, f"http://127.0.0.1:{self.server.server_port}{self.path}")
+                    text = "Signed in. You can close this window and return to Dikdik." if result["ok"] else \
+                        f"Sign-in was not completed: {result['error'] or result['status']}. You can close this window."
+                except ValueError as exc:
+                    status, text = 400, str(exc)
+            page = ('<!doctype html><meta charset="utf-8"><title>Dikdik sign-in</title>'
+                    f'<p style="font:16px system-ui;margin:3em auto;max-width:32em">{html.escape(text)}</p>').encode()
+            self.reply(200 if status in (200, 409) else status, page, "text/html; charset=utf-8")
+
         def do_GET(self):
             path = urlsplit(self.path).path
             if path in STATIC:
                 filename, mime = STATIC[path]
                 self.reply(200, (WEB / filename).read_bytes(), mime)
+                return
+            if path == "/api/mcp/oauth/callback":
+                if self.same_origin():
+                    self.oauth_callback()
                 return
             if not self.authorized():
                 return
@@ -367,6 +391,7 @@ def make_server(engine: Engine, port: int, token: str):
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
+    routes.oauth.port = server.server_port
     return server
 
 

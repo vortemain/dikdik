@@ -373,18 +373,7 @@
       </section>
       <section class="settings-pane" data-pane="mcp" role="tabpanel" hidden>
         <p class="lead">Give the agent tools from Model Context Protocol servers: issue trackers, databases, docs search. Servers start disabled; agent tasks connect to the ones you enable. A command server runs on this machine with only the key you give it.</p>
-        <form id="mcp-form" class="skill-form">
-          <div class="skill-fields">
-            <label for="mcp-name">Name</label><input id="mcp-name" required maxlength="32" placeholder="github">
-            <label for="mcp-transport">Type</label><select id="mcp-transport"><option value="http">Remote (HTTP)</option><option value="stdio">Local command</option></select>
-            <label for="mcp-url" class="mcp-http">Server URL</label><input id="mcp-url" class="mcp-http" placeholder="https://mcp.example.com/mcp">
-            <label for="mcp-command" class="mcp-stdio" hidden>Command</label><input id="mcp-command" class="mcp-stdio" placeholder="npx -y @modelcontextprotocol/server-github" hidden>
-            <label for="mcp-secret">API key name</label><input id="mcp-secret" placeholder="Optional: a name from API keys">
-            <label for="mcp-env" class="mcp-stdio" hidden>Key variable</label><input id="mcp-env" class="mcp-stdio" placeholder="GITHUB_PERSONAL_ACCESS_TOKEN" hidden>
-          </div>
-          <button type="submit" class="primary small">Add server</button>
-        </form>
-        <ol id="mcp-list" class="m4-list"></ol>
+        <div id="panel-mcp" class="m4-panel-mount"></div>
       </section>
       <section class="settings-pane" data-pane="automations" role="tabpanel" hidden>
         <p class="lead">Run a task on a schedule, like a nightly dependency check or a weekly tidy-up. Each run is an ordinary task you can open, review and apply. Runs use exactly the mode and approvals you set here.</p>

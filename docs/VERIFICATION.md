@@ -217,6 +217,26 @@ fair autonomous-capability comparison or proof of superiority.
 9. Provider component-token usage was ignored without `total_tokens`. Now count
    the greater of total and prompt+completion, while explicitly disclosing that
    absent/dishonest usage prevents an exact token/cost guarantee.
+10. A completed MCP OAuth browser callback could be replayed and still render a
+    success page because state lookup included completed jobs. State lookup now
+    accepts only active authorization jobs; the replay is 400 and the job remains
+    completed.
+
+## MCP completeness verification
+
+- A local fake OAuth-protected MCP server covers protected-resource and authorization
+  metadata discovery, dynamic client registration, authorization-code exchange with
+  S256 PKCE, exact loopback callback validation, denial, timeout, replay, sealed token
+  storage, refresh writeback and an authenticated tool call. It uses no internet.
+- The focused MCP/plugin suite passes **29 tests**. The full Python suite passes
+  **346 tests** with 2 live Docker/browser tests skipped by their explicit gates.
+  The web typecheck passes and the web suite passes **100 tests**, including
+  environment-mapping and search contracts.
+- A real browser against the local server opened Settings → MCP servers, rendered the
+  searchable 12-entry library, installed Linear as a disabled OAuth server, showed
+  its sign-in-needed card, reopened a prefilled editor, switched it to local-command
+  fields, and showed the library entry as Installed after refresh. No provider sign-in
+  or credential was used.
 
 ## Packaging evidence
 
