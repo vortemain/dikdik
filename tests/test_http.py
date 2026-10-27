@@ -208,6 +208,9 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual((listing[0]["objective"], listing[0]["mode"]), ("Change x", "offline"))
         cancelled = json.loads(self.call("POST", f"/api/tasks/{task}/cancel", {})[2])
         self.assertFalse(cancelled["requested"])
+        interrupted = json.loads(self.call("POST", f"/api/tasks/{task}/interrupt", {})[2])
+        self.assertFalse(interrupted["requested"])
+        self.assertEqual(self.call("POST", "/api/tasks/missing/interrupt", {})[0], 404)
 
     def test_missing_task_and_execution_approval_errors(self):
         self.assertEqual(self.call("GET", "/api/tasks/missing")[0], 404)

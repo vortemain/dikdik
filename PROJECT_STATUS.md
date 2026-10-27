@@ -14,15 +14,15 @@ with conflict detection; Files and Git; model profiles and
 encrypted keys driving every call; skills, MCP servers (HTTP and stdio) and agent
 profiles; streamed replies over server-sent events; automations with stored
 approvals; a Python client/CLI; the Rust indexer loaded by default; and run
-control (pause/exact resume, per-action confirmation, hooks, subagents,
+control (interrupt/exact resume, pause-at-boundary, per-action confirmation, hooks, subagents,
 attachments, slash commands, side questions, condensing, judged goals, forks);
 an organised interface (command menu, folders and tags, file tree, onboarding);
 and model management (connections, routing, a model picker, sandbox secrets).
-The parity audit (docs/PARITY.md) moved from 89 to 325 fully matched OpenHands sub-features
+The parity audit (docs/PARITY.md) moved from 89 to 327 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **305 passed, 2 live-runtime tests skipped**; Bun
-**87 passed**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-27): Python **306 passed, 2 live-runtime tests skipped**; Bun
+**87 passed / 429 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -47,7 +47,9 @@ Test status (2026-10-27): Python **305 passed, 2 live-runtime tests skipped**; B
   Empty and whitespace-only text disables Send.
 - Added an invisible composer resize grip with pointer capture, keyboard controls,
   reset on clear/navigation and height limits that reserve space for controls.
-- Added run control: Pause and exact Resume from a saved transcript, stuck
+- Added run control: Stop interrupts an active sandbox tool without retaining
+  partial output and exact Resume passes its error result back to the model;
+  Pause still waits for the current step. Also added stuck
   detection, a never/risky/always confirmation policy with Allow/Reject cards,
   `.dikdik/hooks.json` block rules, read-only subagents, attachments, the slash
   menu, `/btw` side questions, manual/automatic condensing, a context meter,
@@ -73,8 +75,8 @@ Test status (2026-10-27): Python **305 passed, 2 live-runtime tests skipped**; B
 
 ## Test status
 
-- Python: **305 passed, 2 live-runtime tests skipped** (307 total).
-- Bun: **87 passed / 428 assertions**; strict TypeScript check and browser build passed.
+- Python: **306 passed, 2 live-runtime tests skipped** (308 total).
+- Bun: **87 passed / 429 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit

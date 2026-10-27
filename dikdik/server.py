@@ -250,6 +250,8 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(202, {"id": engine.submit(body)})
                 elif path.startswith("/api/tasks/") and path.endswith("/cancel"):
                     self.reply(200, {"requested": engine.cancel(path.split("/")[3])})
+                elif path.startswith("/api/tasks/") and path.endswith("/interrupt"):
+                    self.reply(200, {"requested": engine.interrupt(path.split("/")[3])})
                 elif not isinstance(body, dict):
                     raise ValueError("Body must be a JSON object")
                 elif path.startswith("/api/tasks/") and path.endswith("/apply") and path.count("/") == 4:

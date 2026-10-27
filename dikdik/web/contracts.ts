@@ -424,6 +424,8 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
     }
     case "cancellation_requested":
       return [{ ...base, role: "system", title: "Cancellation requested" }];
+    case "interrupt_requested":
+      return [{ ...base, role: "system", title: "Stopping the current action" }];
     case "recovery_cleanup":
       return [{ ...base, role: "system", title: "Recovered after restart", details: { warning: textOf(d.warning) } }];
     case "terminal_command":

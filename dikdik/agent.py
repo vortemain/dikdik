@@ -457,6 +457,11 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         except Exception:
                             ran = {"status": "inconclusive", "error": "Sandbox failed to run the command", "changed": {}}
                         accepted, rejected = {}, []
+                        # An interrupted sandbox may have buffered partial output or
+                        # writes.  Neither is evidence we can safely replay, and the
+                        # model needs an explicit tool result before exact resume.
+                        if cancel.is_set():
+                            ran = {"status": "cancelled", "error": "Interrupted by user", "changed": {}}
                         changed = ran.get("changed") if isinstance(ran.get("changed"), dict) else {}
                         for path, text in sorted(changed.items()):
                             if not isinstance(path, str) or not isinstance(text, str):

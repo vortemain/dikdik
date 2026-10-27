@@ -40,7 +40,8 @@ autonomous engineering platform.
   and reload. Conflicting tabs offer an explicit choice; failed sends retain text.
   Drafts stay in your private server data. See [drafts](docs/COMPOSER.md).
   Drag the composer's top edge to resize; keyboard arrows resize and Home resets.
-- **Run control.** Pause a run and Resume it from the exact step; ask before
+- **Run control.** Stop an active sandbox action and Resume from its recorded
+  interruption, or Pause after the current step and Resume from the exact step; ask before
   actions (never, risky only, or every action) with Allow/Reject cards; block
   tools with `.dikdik/hooks.json`; let the agent delegate to read-only subagents
   (`.dikdik/agents/*.md`). Attach images and text files (+, paste or drop). Type

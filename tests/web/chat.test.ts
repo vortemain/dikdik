@@ -55,4 +55,6 @@ test("cancellation and recovery events surface as system messages, not tool call
   const recovery = eventToMessages({ seq: 2, task_id: "t1", time: 0, kind: "recovery_cleanup", data: { warning: "container removed" } }, "obj");
   expect(recovery[0]?.role).toBe("system");
   expect(recovery[0]?.title).toContain("Recovered");
+  const interrupt = eventToMessages({ seq: 3, task_id: "t1", time: 0, kind: "interrupt_requested", data: {} }, "obj");
+  expect(interrupt[0]).toMatchObject({ role: "system", title: "Stopping the current action" });
 });

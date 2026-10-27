@@ -28,14 +28,14 @@ OpenHands app map (799 sub-features) and the agent-server/SDK map
 (`upstream/software-agent-sdk/.agents/skills/verify-agent-server/references/feature-map`,
 950 sub-features). The full list is in [`parity-audit.csv`](parity-audit.csv).
 
-| Status | First audit | After the first build phases | After the parity fix | Run control | Interface | Now (models) |
-|---|---|---|---|---|---|---|
-| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 |
-| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 |
-| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 |
-| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 | 61 |
-| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 |
-| **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
+| Status | First audit | After the first build phases | After the parity fix | Run control | Interface | Models | Current |
+|---|---|---|---|---|---|---|---|
+| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 327 |
+| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 211 |
+| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 1,130 |
+| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 | 61 | 61 |
+| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 | 20 |
+| **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
 
 Correction (2026-10-27): earlier versions of this table counted 1,801 rows. 51 of
 them were usage notes from the reference maps' "Gotchas" sections that the first
@@ -71,7 +71,9 @@ gating. Real Chrome checked persistence and conflicts against real HTTP/SQLite;
 offline syntax-only submissions needed no model or Docker stand-in.
 The composer also has the missing invisible resize grip, with keyboard support,
 viewport bounds and reset-on-clear behavior checked in real Chrome.
-Run control adds Pause and exact Resume (saved transcript, fresh budget), stuck
+Run control adds immediate Stop for an active sandbox tool with a resumable error
+result (contract-tested without live Docker and checked in a real browser at desktop
+and phone widths against the local model stand-in), Pause and exact Resume (saved transcript, fresh budget), stuck
 detection, per-action confirmation (never / risky only / every action) with
 Allow/Reject cards, project block hooks, a read-only explorer subagent plus
 project/personal subagents, attachments (+, paste, drop; images reach the model),

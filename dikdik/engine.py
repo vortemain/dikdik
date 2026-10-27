@@ -143,6 +143,7 @@ class Engine:
         self.pending: dict[str, list[dict]] = {}  # follow-ups sent while their task was running
         self.live: dict[str, str] = {}  # a reply as it streams in; never persisted
         self.pausing: dict[str, threading.Event] = {}
+        self.interrupting: set[str] = set()
         self.confirmations = Confirmations()
         self.attachments = Attachments(self.store, data / "attachments")
         with self.store.connect() as db:
@@ -317,6 +318,18 @@ class Engine:
                 return False
             flag.set()
             self.store.event(task, "pause_requested", {})
+            return True
+
+    def interrupt(self, task):
+        """Cancel the active step and retain a transcript that can be resumed."""
+        with self.lock:
+            self.store.get(task)  # distinguish an unknown task from an idle one
+            flag = self.active.get(task)
+            if flag is None:
+                return False
+            self.interrupting.add(task)
+            flag.set()
+            self.store.event(task, "interrupt_requested", {})
             return True
 
     def _transcript_path(self, task):
@@ -733,9 +746,11 @@ class Engine:
         # Cancellation acceptance and terminal commit have one serialization point.
         with self.lock:
             if cancel.is_set():
-                state = "cancelled"
+                interrupted = task in self.interrupting
+                self.interrupting.discard(task)
+                state = "paused" if interrupted else "cancelled"
                 if result is not None:
-                    result = {**result, "tests_verified": False, "error": "Cancelled"}
+                    result = {**result, "tests_verified": False, "error": "Interrupted by user" if interrupted else "Cancelled"}
             self.store.state(task, state, result)
         changed = (result or {}).get("changed_files") if isinstance(result, dict) else None
         if changed:

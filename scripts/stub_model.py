@@ -6,7 +6,7 @@ Anything verified with it must be reported as "checked against a stand-in",
 never as live-provider verified.
 
 Usage:
-    python scripts/stub_model.py --port 8899 --key sk-local-test --log stub.jsonl
+    python scripts/stub_model.py --port 8899 --key sk-local-test --delay 5 --log stub.jsonl
 
 Then add a model profile in Settings → Models: provider "local",
 endpoint http://127.0.0.1:8899/v1, model "stub-model", and an API key holding
@@ -55,7 +55,7 @@ def text_of(content):
     return content or ""
 
 
-def make_handler(expected_key: str, log_path: str | None):
+def make_handler(expected_key: str, log_path: str | None, delay: float):
     judged = {"n": 0}
 
     class Handler(BaseHTTPRequestHandler):
@@ -84,7 +84,7 @@ def make_handler(expected_key: str, log_path: str | None):
             elif not tools:
                 data = reply(json.dumps({"edits": [{"path": "calculator.py", "before": "return a + b", "after": "return b + a"}]}))
             elif "SLOW" in objective and done.count("read_file") < 6:
-                time.sleep(1.5)
+                time.sleep(delay)
                 data = reply("Reading again.", [call("read_file", {"path": "calculator.py" if len(done) % 2 == 0 else "test_calculator.py"}, n)])
             elif "EDIT" in objective and "edit_file" not in done:
                 data = reply("I'll make the change.", [call("edit_file", {"path": "calculator.py", "before": "return a + b", "after": "return b + a"}, n)])
@@ -110,9 +110,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=8899)
     parser.add_argument("--key", default="sk-local-test")
+    parser.add_argument("--delay", type=float, default=1.5, help="seconds before each SLOW reply")
     parser.add_argument("--log", default=None, help="append one JSON line per request (no keys are logged)")
     args = parser.parse_args()
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(args.key, args.log))
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(args.key, args.log, args.delay))
     print(f"Stand-in model on http://127.0.0.1:{args.port}/v1 (key {args.key[:6]}…)", flush=True)
     server.serve_forever()
 

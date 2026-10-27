@@ -362,6 +362,8 @@
       }
       case "cancellation_requested":
         return [{ ...base, role: "system", title: "Cancellation requested" }];
+      case "interrupt_requested":
+        return [{ ...base, role: "system", title: "Stopping the current action" }];
       case "recovery_cleanup":
         return [{ ...base, role: "system", title: "Recovered after restart", details: { warning: textOf(d.warning) } }];
       case "terminal_command":
@@ -2183,7 +2185,7 @@ ${c.output}` : "";
         return { icon: known[0], title: known[1], arg };
       }
       case "agent_tool_result":
-        return { icon: "terminal", title: `Output · ${toolName(msg)}`, arg: (msg.body ?? "").split(`
+        return { icon: msg.state === "tool_failed" ? "alert" : "terminal", title: `${msg.state === "tool_failed" ? "Agent error" : "Output"} · ${toolName(msg)}`, arg: (msg.body ?? "").split(`
 `)[0] ?? "" };
       case "inspected":
         return { icon: "folder", title: "Inspected repository", arg: detailField(details, "file_count") ? `${detailField(details, "file_count")} files` : "" };
@@ -2210,6 +2212,8 @@ ${c.output}` : "";
 `).join(", ")} · ${detailField(details, "tools") || 0} tools` };
       case "cancellation_requested":
         return { icon: "stop", title: "Cancellation requested", arg: "" };
+      case "interrupt_requested":
+        return { icon: "stop", title: "Stopping the current action", arg: "" };
       case "recovery_cleanup":
         return { icon: "alert", title: "Recovered after restart", arg: detailField(details, "warning") };
       case "hook_blocked":
@@ -2335,7 +2339,7 @@ ${c.output}` : "";
     const head = make("div", "result-head");
     const badge = make("span", "result-icon");
     badge.append(icon(state === "completed" ? "check" : state === "cancelled" ? "stop" : state === "paused" ? "pause" : "alert"));
-    const titles = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted", paused: "Paused" };
+    const titles = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted", paused: "Stopped" };
     head.append(badge, make("span", "result-title", titles[state] ?? `Task ${state}`));
     if (state === "completed") {
       const verified = result?.tests_verified === true;
@@ -5624,8 +5628,8 @@ ${c.output}` : "";
     }
     resetStop();
     try {
-      const data = await api(`/api/tasks/${selected}/cancel`, {});
-      message(data.requested ? "Stopping…" : "Task has already stopped.");
+      const data = await api(`/api/tasks/${selected}/interrupt`, {});
+      message(data.requested ? "Stopping the current action…" : "Task has already stopped.");
       await observe();
     } catch (error) {
       message(error instanceof Error ? error.message : "Cancellation failed", true);

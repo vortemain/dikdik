@@ -106,6 +106,37 @@ class ControlTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Only a paused"):
             self.engine.resume(task, AGENT)
 
+    def test_interrupt_running_tool_records_error_and_resumes(self):
+        entered = threading.Event()
+        secret = "INTERRUPT_SECRET_MUST_NOT_APPEAR"
+
+        def shell(_workdir, _files, _command, cancel, **_kwargs):
+            entered.set()
+            self.assertTrue(cancel.wait(3), "interrupt did not reach the active tool")
+            return {"status": "cancelled", "exit_code": None, "output": secret, "changed": {}}
+
+        first = Script([call(1, "run_command", command="sleep 30")])
+        resumed = Script([ModelResponse("Recovered after the interruption.", [])])
+        with patch("dikdik.engine.CompatibleAgentModel", side_effect=[first, resumed]), patch("dikdik.engine.run_shell", side_effect=shell):
+            task = self.engine.submit({"objective": "Run slowly", "mode": "agent", "verification": "docker",
+                                       "approve_external": True, "approve_execution": True})
+            self.assertTrue(entered.wait(2))
+            started = time.monotonic()
+            self.assertTrue(self.engine.interrupt(task))
+            data = self.idle(task)
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertEqual(data["state"], "paused")
+            ended = [e["data"] for e in data["events"] if e["kind"] == "agent_tool" and e["data"].get("phase") == "end"][-1]
+            self.assertEqual((ended["id"], ended["failed"], ended["observation"]),
+                             ("c1", True, {"error": "Interrupted by user", "status": "cancelled", "exit_code": None,
+                                            "output": "", "changed_files": [], "rejected_changes": []}))
+            self.assertNotIn(secret, json.dumps(data))
+            self.assertTrue(self.engine.resume(task, AGENT))
+            data = self.idle(task)
+        self.assertEqual(data["state"], "completed")
+        self.assertIn("Interrupted by user", resumed.seen[0][0][-2]["content"])
+        self.assertFalse(self.engine.interrupt(task))
+
     def test_budget_exhaustion_can_be_resumed_with_a_fresh_budget(self):
         profile = self.engine.agents.create({"name": "Tiny", "max_model_calls": 1})
         first = Script([edit(1)])

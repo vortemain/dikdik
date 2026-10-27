@@ -278,7 +278,7 @@ function stepLabel(msg: ChatMessage): StepLabel {
       const arg = known[2] ? detailField(details, known[2]) || detailField(details, "query") || detailField(details, "pattern") : "";
       return { icon: known[0], title: known[1], arg };
     }
-    case "agent_tool_result": return { icon: "terminal", title: `Output · ${toolName(msg)}`, arg: (msg.body ?? "").split("\n")[0] ?? "" };
+    case "agent_tool_result": return { icon: msg.state === "tool_failed" ? "alert" : "terminal", title: `${msg.state === "tool_failed" ? "Agent error" : "Output"} · ${toolName(msg)}`, arg: (msg.body ?? "").split("\n")[0] ?? "" };
     case "inspected": return { icon: "folder", title: "Inspected repository", arg: detailField(details, "file_count") ? `${detailField(details, "file_count")} files` : "" };
     case "execution": return { icon: "terminal", title: "Running tests in Docker", arg: detailField(details, "command") };
     case "syntax": return { icon: detailField(details, "status") === "passed" ? "check" : "alert", title: msg.title ?? "Syntax check", arg: detailField(details, "status") };
@@ -290,6 +290,7 @@ function stepLabel(msg: ChatMessage): StepLabel {
     case "skills": return { icon: "book", title: "Using skills", arg: (msg.body ?? "").split("\n").join(", ") };
     case "mcp": return { icon: "plug", title: "Connected MCP servers", arg: `${(msg.body ?? "").split("\n").join(", ")} · ${detailField(details, "tools") || 0} tools` };
     case "cancellation_requested": return { icon: "stop", title: "Cancellation requested", arg: "" };
+    case "interrupt_requested": return { icon: "stop", title: "Stopping the current action", arg: "" };
     case "recovery_cleanup": return { icon: "alert", title: "Recovered after restart", arg: detailField(details, "warning") };
     case "hook_blocked": return { icon: "shield", title: "Blocked by a project hook", arg: msg.body ?? "" };
     case "agent_thinking": return { icon: "sparkle", title: "Thinking", arg: "" };
@@ -384,7 +385,7 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   const head = make("div", "result-head");
   const badge = make("span", "result-icon");
   badge.append(icon(state === "completed" ? "check" : state === "cancelled" ? "stop" : state === "paused" ? "pause" : "alert"));
-  const titles: Record<string, string> = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted", paused: "Paused" };
+  const titles: Record<string, string> = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted", paused: "Stopped" };
   head.append(badge, make("span", "result-title", titles[state] ?? `Task ${state}`));
   if (state === "completed") {
     const verified = result?.tests_verified === true;
@@ -2816,8 +2817,8 @@ button("cancel").onclick = async () => {
   }
   resetStop();
   try {
-    const data = await api<{ requested: boolean }>(`/api/tasks/${selected}/cancel`, {});
-    message(data.requested ? "Stopping…" : "Task has already stopped.");
+    const data = await api<{ requested: boolean }>(`/api/tasks/${selected}/interrupt`, {});
+    message(data.requested ? "Stopping the current action…" : "Task has already stopped.");
     await observe();
   } catch (error) { message(error instanceof Error ? error.message : "Cancellation failed", true); }
 };
