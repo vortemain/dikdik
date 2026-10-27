@@ -79,6 +79,21 @@ class ServerApiTests(unittest.TestCase):
     def test_events_search_unknown_task_404(self):
         self.assertEqual(self.call("GET", "/api/tasks/missing/events")[0], 404)
 
+    def test_events_batch(self):
+        self.make_task()
+        status, body = self.call("GET", "/api/events/batch")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertGreater(len(data["events"]), 0)
+        self.assertIn("task", data["events"][0])
+        self.assertIn("kind", data["events"][0])
+
+    def test_events_batch_with_limit(self):
+        self.make_task()
+        status, body = self.call("GET", "/api/events/batch?limit=2")
+        data = json.loads(body)
+        self.assertLessEqual(len(data["events"]), 2)
+
     def test_git_diff_by_commit(self):
         import subprocess
         subprocess.run(["git", "init"], cwd=self.root, capture_output=True, check=True)

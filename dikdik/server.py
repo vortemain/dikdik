@@ -258,6 +258,10 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(200, raw, kind)
                 elif path == "/api/tasks":
                     self.reply(200, engine.store.list())
+                elif path == "/api/events" or path == "/api/events/batch":
+                    query = parse_qs(urlsplit(self.path).query)
+                    limit = int(query.get("limit", ["100"])[0]) if query.get("limit", ["100"])[0].isdigit() else 100
+                    self.reply(200, {"events": engine.store.recent_events(limit)})
                 elif path.startswith("/api/tasks/") and path.endswith("/stream") and path.count("/") == 4:
                     after = parse_qs(urlsplit(self.path).query).get("after", ["0"])[0]
                     self.stream(path.split("/")[3], int(after) if after.isdigit() else 0)

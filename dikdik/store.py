@@ -142,6 +142,16 @@ class Store:
             total = db.execute("SELECT COUNT(*) AS n FROM events WHERE task_id=?", (task,)).fetchone()["n"]
         return state["state"], {"total": total, "by_kind": counts}
 
+    def recent_events(self, limit: int = 100):
+        """The latest events across all tasks, for a batch overview."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT e.task_id, e.seq, e.time, e.kind, e.data "
+                "FROM events e JOIN tasks t ON e.task_id = t.id "
+                "ORDER BY e.time DESC LIMIT ?", (min(limit, 500),)).fetchall()
+            return [{"task": r["task_id"], "seq": r["seq"], "time": r["time"],
+                     "kind": r["kind"], "data": json.loads(r["data"])} for r in rows]
+
     def update_meta(self, task, changes: dict):
         """Rename, pin, archive, file or tag a conversation. Unknown keys and bad types are rejected."""
         if not isinstance(changes, dict) or not changes or set(changes) - {"title", "pinned", "archived", "folder", "tags"}:
