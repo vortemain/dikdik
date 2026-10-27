@@ -59,8 +59,8 @@ health checks, first live model run (OpenRouter `z-ai/glm-5.2`, $0.0028).
 | 4 | Direct edits, checkpoints, Undo | Done, browser-checked | `4d1add4` |
 | 5 | Code colouring (`web/highlight.ts`) + files view (type badges, indent guides, breadcrumb) + Open in VS Code (`/api/files/open-in-editor`) | Done, browser-checked (Open in VS Code tested with a mocked launch only) | `f39da64` |
 | 6 | Git: remote status, fetch, pull (ff-only), push (approval per push), branch create/switch, Create PR via `gh` (`gitops.remote_info/fetch/pull/push/switch_branch/create_pr`, `/api/git/*`) | Done, browser-checked against a local bare remote; Create PR tested with `gh` mocked | `f39da64` |
-| 7 | Browser: computer's Edge/Chrome when Docker is not ready (`host_browser.py`: fresh profile, public-only proxy), panel redesigned like a browser (tab, Back/Forward/Reload, address bar, padlock, history) | Done; live capture of example.com/.org through the proxy; browser-checked | see `git log` |
-| 8 | On a server: `--listen/--public-url/--tls-cert/--tls-key/--behind-proxy/--projects-root` (`remote.py`), `Dockerfile`, `docs/CLOUD.md` | Done; HTTPS, host/origin, Secure cookie, sign-in limit tested on loopback; Dockerfile not built (no Docker engine) | see `git log` |
+| 7 | Browser: computer's Edge/Chrome when Docker is not ready (`host_browser.py`: fresh profile, public-only proxy), panel redesigned like a browser (tab, Back/Forward/Reload, address bar, padlock, history) | Done; live capture of example.com/.org through the proxy; browser-checked | `b9f2802` |
+| 8 | On a server: `--listen/--public-url/--tls-cert/--tls-key/--behind-proxy/--projects-root` (`remote.py`), `Dockerfile`, `docs/CLOUD.md` | Done; HTTPS, host/origin, Secure cookie, sign-in limit tested on loopback; Dockerfile not built (no Docker engine) | `b9f2802` |
 
 Update this table (and section 1 if behaviour changed) at the end of every phase.
 
