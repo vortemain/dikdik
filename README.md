@@ -116,14 +116,44 @@ a real ACP agent CLI. See [the parity audit](docs/PARITY.md) and
 Prerequisite: **Python 3.13+**. No runtime Python packages, Node/Bun, database
 server, model key, or Docker are needed for the syntax-only workflow.
 
-From this project directory:
+Install it once from this folder, then start it inside any project, like `claude`:
 
 ```powershell
-python -m dikdik.server --workspace examples/repair --data "$HOME/.dikdik-demo" --port 8787
+pip install -e .
+cd C:\Projects\my-app
+dikdik
 ```
 
-`--version` and `--info` answer stand-alone before startup; a missing workspace, an
-occupied port or a data directory already in use each stop with one plain line.
+`dikdik` opens the folder you are in (or `dikdik C:\path\to\project`). Started from a
+folder that cannot be a project, such as your home folder, it reopens the last project.
+Without installing, `python -m dikdik.server --workspace examples/repair` works from
+this folder.
+
+**How it works in a project.** Pick a mode in the composer:
+
+- **Ask before commands** (default): the agent edits files in your folder and asks
+  before each command, web visit or MCP call. *Always allow* remembers a command for
+  this project.
+- **Auto:** edits and runs commands; only risky ones (delete, install, network,
+  rewriting history) still ask.
+- **Plan only:** reads and plans; changes nothing.
+- **Classic:** the original isolated copy, Docker tests and Apply.
+
+The first message in a folder asks once whether you trust it. Every turn that
+changed your files has **Undo changes**, which puts them back unless you edited them
+since. Commands run with your own tools (Git Bash on Windows when installed,
+otherwise PowerShell).
+
+**Projects.** Click the project name at the bottom of the sidebar to switch to a
+recent project, **Open folder** (type a path or press Browse… for this computer's own
+folder picker), start a **New project** (optionally with Git), or **Clone repository**
+from an `https://`, `ssh://` or `git@host:path` URL. Cloning uses this computer's Git
+sign-in (Git Credential Manager or SSH keys); Dikdik never asks for or stores a token.
+Each project keeps its own conversations; your keys, model profiles, MCP servers,
+skills and settings are shared by all of them in `~/.dikdik`.
+
+`--version` and `--info` answer stand-alone before startup; a folder that cannot be a
+project, an occupied port or a data directory already in use each stop with one plain line.
 
 Your browser opens Dikdik and signs in automatically; there is no token to
 copy. The terminal also prints a one-time sign-in link (`http://127.0.0.1:8787/#token=…`)

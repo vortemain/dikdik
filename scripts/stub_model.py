@@ -17,6 +17,8 @@ Behaviour (keyed on words in the latest user message):
   (the judge says "not yet" once, then "achieved");
 - a request without tools (single proposal) returns one exact edit;
 - "EDIT": edit_file on calculator.py, then run_tests, then an answer;
+- "FIX": fixes calculator.py (a - b to a + b), runs `python -m unittest` with run_command,
+  then run_tests, then answers (for local mode: Ask asks before the command);
 - "SLOW": slow read_file calls, so Pause/Stop can be clicked mid-run
   (alternating two files, which Dikdik's stuck detector stops after 6 calls);
 - "SECRET": asks for a DEMO_TOKEN secret with request_secret (needs Docker approval in the task);
@@ -89,6 +91,14 @@ def make_handler(expected_key: str, log_path: str | None, delay: float):
             elif "SLOW" in objective and done.count("read_file") < 6:
                 time.sleep(delay)
                 data = reply("Reading again.", [call("read_file", {"path": "calculator.py" if len(done) % 2 == 0 else "test_calculator.py"}, n)])
+            elif "FIX" in objective and "edit_file" not in done:
+                data = reply("The add function subtracts. Fixing it.", [call("edit_file", {"path": "calculator.py", "before": "return a - b", "after": "return a + b"}, n)])
+            elif "FIX" in objective and "run_command" in tools and "run_command" not in done:
+                data = reply("Running the tests myself first.", [call("run_command", {"command": "python -m unittest"}, n)])
+            elif "FIX" in objective and "run_tests" not in done:
+                data = reply("Checking with the project's tests.", [call("run_tests", {}, n)])
+            elif "FIX" in objective:
+                data = reply("Fixed: add now returns a + b, and the tests pass on this computer.")
             elif "EDIT" in objective and "edit_file" not in done:
                 data = reply("I'll make the change.", [call("edit_file", {"path": "calculator.py", "before": "return a + b", "after": "return b + a"}, n)])
             elif "EDIT" in objective and "run_tests" not in done:

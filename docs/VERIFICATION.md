@@ -1,4 +1,25 @@
-# Verification record — updated 2026-10-27
+# Verification record — updated 2026-10-28
+
+## Projects and local mode (latest)
+
+- Full checks: Python **535 passed, 3 skipped** (538 run); Bun **107 / 500**; strict
+  TypeScript check and build passed. New: `tests/test_projects.py` (switching keeps
+  conversations apart, a task from one project cannot be applied in another, shared
+  keys and settings, no switch while a task runs, bad folders, new project with Git,
+  clone from a real local repository, URL rules, migration of an old single-folder
+  database), `tests/test_local_mode.py` (edits land in the folder and Undo restores
+  them, commands run in the folder, a file changed by someone else is not
+  overwritten, Undo leaves files edited afterwards, Ask + Always allow, approvals).
+- Real browser, scratch folders and data: started inside a folder with no argument
+  and it opened that folder; Projects dialog switched by typed path, cloned a local
+  repository (`file://`) and switched to it, created a project with Git, and showed
+  a plain message for a missing folder. Browse… (native picker) was not pressed.
+- Real browser with the **stand-in model** (`scripts/stub_model.py`, not a live
+  provider): the first send asked once to trust the folder; in Ask mode the agent
+  edited the real `calculator.py`, asked before `python -m unittest` with Allow /
+  Always allow / Reject; Always allow ran it on this computer (2 tests OK) and
+  remembered it; the project's tests then ran locally and passed; the card read
+  "Changed in your files", "Tests passed", with Undo changes, which restored the file.
 
 ## First live model run (latest)
 

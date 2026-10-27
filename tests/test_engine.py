@@ -101,11 +101,17 @@ class EngineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already in use"):
             Engine(self.root, self.base / "data")
 
-    def test_workspace_binding_prevents_reuse(self):
+    def test_workspace_binding_scopes_conversations(self):
+        """One data directory serves many projects; each sees only its own tasks."""
         store = Store(self.base / "other.sqlite3")
         store.bind_workspace(self.root)
-        with self.assertRaisesRegex(ValueError, "different workspace"):
-            store.bind_workspace(self.base / "different")
+        task = store.create(request())
+        store.bind_workspace(self.base / "different")
+        self.assertEqual(store.list(), [])
+        with self.assertRaises(KeyError):
+            store.get(task)
+        with self.assertRaises(KeyError):
+            store.update_meta(task, {"pinned": True})
 
     def test_state_storage_cannot_be_inside_source(self):
         with self.assertRaises(ValueError):

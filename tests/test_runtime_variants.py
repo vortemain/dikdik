@@ -9,9 +9,13 @@ import unittest
 from pathlib import Path
 
 
-def run_server(*flags, timeout=90):
+REPO = Path(__file__).parent.parent
+
+
+def run_server(*flags, timeout=90, cwd=REPO):
+    env = {**__import__("os").environ, "PYTHONPATH": str(REPO)}
     return subprocess.run([sys.executable, "-m", "dikdik.server", *flags], timeout=timeout,
-                          capture_output=True, text=True, cwd=Path(__file__).parent.parent)
+                          capture_output=True, text=True, cwd=cwd, env=env)
 
 
 class RuntimeVariantTests(unittest.TestCase):
@@ -36,11 +40,15 @@ class RuntimeVariantTests(unittest.TestCase):
                 self.assertNotEqual(done.returncode, 0)
                 self.assertIn("standalone", done.stderr)
 
-    def test_missing_workspace_refused_without_traceback(self):
-        done = run_server()
+    def test_no_usable_project_refused_without_traceback(self):
+        """Started without a folder, Dikdik opens the current one, like `claude`. A current
+        folder that holds Dikdik's own data cannot be a project, and with no earlier
+        project to fall back to it stops with one plain line."""
+        with tempfile.TemporaryDirectory() as home:
+            done = run_server("--data", str(Path(home) / "data"), "--no-browser", "--port", "1", cwd=home)
         self.assertNotEqual(done.returncode, 0)
         self.assertNotIn("Traceback", done.stderr + done.stdout)
-        self.assertIn("workspace", done.stderr)
+        self.assertIn("project folder", done.stderr)
 
     def test_missing_workspace_path_refused_without_traceback(self):
         done = run_server("--workspace", "absent-not-created-directory")

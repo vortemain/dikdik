@@ -13,8 +13,13 @@ TAG = re.compile(r"[\w][\w -]{0,31}")
 
 
 class Store:
+    """One database for every project. Each conversation records the project folder it
+    belongs to, and a store bound to a folder only ever sees that folder's conversations,
+    so a candidate made for one project can never be read, changed or applied in another."""
+
     def __init__(self, path: Path):
         self.path = path
+        self.workspace: str | None = None
         with self.connect() as db:
             db.executescript("""
                 PRAGMA journal_mode=WAL;
@@ -31,9 +36,14 @@ class Store:
             # Conversation metadata, added after the first release: migrate in place.
             columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)")}
             for name, kind in (("title", "TEXT"), ("pinned", "INTEGER NOT NULL DEFAULT 0"), ("archived", "INTEGER NOT NULL DEFAULT 0"),
-                               ("folder", "TEXT"), ("tags", "TEXT")):
+                               ("folder", "TEXT"), ("tags", "TEXT"), ("workspace", "TEXT")):
                 if name not in columns:
                     db.execute(f"ALTER TABLE tasks ADD COLUMN {name} {kind}")
+            db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            # Before projects, a data directory served exactly one folder: its tasks belong there.
+            bound = db.execute("SELECT value FROM settings WHERE key='workspace'").fetchone()
+            if bound:
+                db.execute("UPDATE tasks SET workspace=? WHERE workspace IS NULL", (bound[0],))
 
     @contextmanager
     def connect(self):
@@ -46,12 +56,23 @@ class Store:
             db.close()
 
     def bind_workspace(self, root: Path):
+        """Serve one project folder from now on; earlier folders' conversations stay stored."""
+        self.workspace = str(root)
         with self.connect() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            row = db.execute("SELECT value FROM settings WHERE key='workspace'").fetchone()
-            if row and row[0] != str(root):
-                raise ValueError("Data directory belongs to a different workspace; choose a separate --data directory")
-            db.execute("INSERT OR IGNORE INTO settings VALUES('workspace',?)", (str(root),))
+            db.execute("INSERT OR IGNORE INTO settings VALUES('workspace',?)", (self.workspace,))
+
+    def _mine(self, alias: str = "") -> tuple[str, tuple]:
+        """SQL condition (and its parameter) limiting tasks to the bound project."""
+        if self.workspace is None:
+            return "1=1", ()
+        return f"{alias}workspace=?", (self.workspace,)
+
+    def _owned(self, db, task):
+        where, params = self._mine()
+        row = db.execute(f"SELECT state FROM tasks WHERE id=? AND {where}", (task, *params)).fetchone()
+        if row is None:
+            raise KeyError(task)
+        return row
 
     def recover(self):
         with self.connect() as db:
@@ -67,7 +88,8 @@ class Store:
     def create(self, request):
         task = uuid.uuid4().hex
         with self.connect() as db:
-            db.execute("INSERT INTO tasks(id,created,state,request) VALUES(?,?,?,?)", (task, time.time(), "queued", json.dumps(request)))
+            db.execute("INSERT INTO tasks(id,created,state,request,workspace) VALUES(?,?,?,?,?)",
+                       (task, time.time(), "queued", json.dumps(request), self.workspace))
             db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, time.time(), "queued", json.dumps({"objective": request["objective"]})))
         return task
 
@@ -83,7 +105,8 @@ class Store:
     def get(self, task):
         with self.connect() as db:
             db.execute("BEGIN")
-            row = db.execute("SELECT * FROM tasks WHERE id=?", (task,)).fetchone()
+            where, params = self._mine()
+            row = db.execute(f"SELECT * FROM tasks WHERE id=? AND {where}", (task, *params)).fetchone()
             if row is None:
                 raise KeyError(task)
             data = dict(row)
@@ -95,9 +118,10 @@ class Store:
     def list(self):
         with self.connect() as db:
             tasks = []
+            where, params = self._mine()
             rows = db.execute("SELECT id,created,state,request,title,pinned,archived,folder,tags,"
                               "(SELECT MAX(time) FROM events WHERE task_id=tasks.id) AS updated "
-                              "FROM tasks ORDER BY pinned DESC, updated DESC LIMIT 500")
+                              f"FROM tasks WHERE {where} ORDER BY pinned DESC, updated DESC LIMIT 500", params)
             for row in rows:
                 request = json.loads(row["request"])
                 # The objective doubles as the conversation title until it is renamed.
@@ -111,18 +135,14 @@ class Store:
     def events_after(self, task, seq: int, limit: int = 200):
         """New events for one task, for the live stream."""
         with self.connect() as db:
+            state = self._owned(db, task)
             rows = db.execute("SELECT * FROM events WHERE task_id=? AND seq>? ORDER BY seq LIMIT ?", (task, seq, limit)).fetchall()
-            state = db.execute("SELECT state FROM tasks WHERE id=?", (task,)).fetchone()
-        if state is None:
-            raise KeyError(task)
         return state["state"], [{**dict(r), "data": json.loads(r["data"])} for r in rows]
 
     def search_events(self, task: str, kind: str | None = None, limit: int = 200):
         """Search one task's events by kind, newest first."""
         with self.connect() as db:
-            state = db.execute("SELECT state FROM tasks WHERE id=?", (task,)).fetchone()
-            if state is None:
-                raise KeyError(task)
+            state = self._owned(db, task)
             if kind is not None:
                 rows = db.execute("SELECT * FROM events WHERE task_id=? AND kind=? ORDER BY seq DESC LIMIT ?",
                                   (task, kind, limit)).fetchall()
@@ -134,9 +154,7 @@ class Store:
     def count_events(self, task: str):
         """Count one task's events grouped by kind."""
         with self.connect() as db:
-            state = db.execute("SELECT state FROM tasks WHERE id=?", (task,)).fetchone()
-            if state is None:
-                raise KeyError(task)
+            state = self._owned(db, task)
             counts = {row["kind"]: row["count"] for row in
                       db.execute("SELECT kind, COUNT(*) AS count FROM events WHERE task_id=? GROUP BY kind", (task,))}
             total = db.execute("SELECT COUNT(*) AS n FROM events WHERE task_id=?", (task,)).fetchone()["n"]
@@ -144,11 +162,12 @@ class Store:
 
     def recent_events(self, limit: int = 100):
         """The latest events across all tasks, for a batch overview."""
+        where, params = self._mine("t.")
         with self.connect() as db:
             rows = db.execute(
                 "SELECT e.task_id, e.seq, e.time, e.kind, e.data "
-                "FROM events e JOIN tasks t ON e.task_id = t.id "
-                "ORDER BY e.time DESC LIMIT ?", (min(limit, 500),)).fetchall()
+                f"FROM events e JOIN tasks t ON e.task_id = t.id WHERE {where} "
+                "ORDER BY e.time DESC LIMIT ?", (*params, min(limit, 500))).fetchall()
             return [{"task": r["task_id"], "seq": r["seq"], "time": r["time"],
                      "kind": r["kind"], "data": json.loads(r["data"])} for r in rows]
 
@@ -190,15 +209,13 @@ class Store:
                     raise ValueError(f"{flag} must be true or false")
                 values[flag] = int(changes[flag])
         with self.connect() as db:
-            if db.execute("SELECT 1 FROM tasks WHERE id=?", (task,)).fetchone() is None:
-                raise KeyError(task)
+            self._owned(db, task)
             for key, value in values.items():
                 db.execute(f"UPDATE tasks SET {key}=? WHERE id=?", (value, task))
 
     def delete(self, task):
         with self.connect() as db:
-            if db.execute('SELECT 1 FROM tasks WHERE id=?', (task,)).fetchone() is None:
-                raise KeyError(task)
+            self._owned(db, task)
             has_plans = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='plans'").fetchone()
             identities = [task, *[row[0] for row in db.execute('SELECT planner_id FROM plans WHERE task_id=?', (task,))]] if has_plans else [task]
             for identity in identities:

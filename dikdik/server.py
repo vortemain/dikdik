@@ -32,6 +32,7 @@ from .openapi import document as openapi_document
 from .server_state import ServerState
 from .api_keys import ApiKeyStore
 from .config import check_config_or_exit
+from .projects import Projects, check_location, pick_folder
 
 
 WEB = Path(__file__).parent / "web"
@@ -91,10 +92,48 @@ def workspace_path(root: Path, rel, write: bool = False) -> Path:
     return target
 
 
+class _Live:
+    """Stands in for whichever object `holder.<name>` currently is. The handler below
+    says `engine`, `routes` and `gateway` throughout; when the user switches project,
+    those names follow the new project's objects without any route changing."""
+
+    def __init__(self, holder, name):
+        object.__setattr__(self, "_holder", holder)
+        object.__setattr__(self, "_name", name)
+
+    def _target(self):
+        return getattr(self._holder, self._name)
+
+    def __getattr__(self, attr):
+        return getattr(self._target(), attr)
+
+    def __setattr__(self, attr, value):
+        setattr(self._target(), attr, value)
+
+    def __call__(self, *args, **kwargs):
+        return self._target()(*args, **kwargs)
+
+
+class _Wiring:
+    """The per-project objects the HTTP handler serves: rebuilt on every project switch."""
+
+    def __init__(self, engine):
+        self.port = None
+        self.wire(engine)
+
+    def wire(self, engine):
+        self.engine = engine
+        self.routes = build_routes(engine)  # M4: shared (method, path) routing table
+        self.gateway = Gateway(engine)
+        engine.gateway = self.gateway  # the gateway routes after authentication in this handler
+        if self.port is not None:
+            self.routes.oauth.port = self.port
+
+
 def make_server(engine: Engine, port: int, token: str):
-    routes = build_routes(engine)
-    gateway = Gateway(engine)
-    engine.gateway = gateway  # the gateway routes after authentication in this handler  # M4: shared (method, path) routing table
+    wiring = _Wiring(engine)
+    projects = Projects(engine, on_switch=wiring.wire)
+    engine, routes, gateway = _Live(wiring, "engine"), _Live(wiring, "routes"), _Live(wiring, "gateway")
     expected = ("Bearer " + token).encode("utf-8")
     started_at = time.monotonic()
     activity = {"last": time.monotonic()}
@@ -466,11 +505,18 @@ def make_server(engine: Engine, port: int, token: str):
                 if path == "/api/keys":
                     self.reply(200, {"keys": api_keys.list()})
                     return
+                if path == "/api/projects":
+                    self.reply(200, projects.describe())
+                    return
+                if path == "/api/commands/allowed":
+                    self.reply(200, {"commands": engine.allowed_commands()})
+                    return
                 if path == "/api/tasks/count":
+                    mine, mine_params = engine.store._mine()
                     with engine.store.connect() as db:
-                        total = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+                        total = db.execute(f"SELECT COUNT(*) FROM tasks WHERE {mine}", mine_params).fetchone()[0]
                         by_state = {row["state"]: row["count"] for row in
-                                    db.execute("SELECT state, COUNT(*) AS count FROM tasks GROUP BY state")}
+                                    db.execute(f"SELECT state, COUNT(*) AS count FROM tasks WHERE {mine} GROUP BY state", mine_params)}
                     self.reply(200, {"total": total, "by_state": by_state})
                     return
                 if path == "/api/tasks/search":
@@ -479,16 +525,16 @@ def make_server(engine: Engine, port: int, token: str):
                     state_filter = query.get("state", [""])[0]
                     with engine.store.connect() as db:
                         sql = "SELECT id,created,state,request,title,pinned,archived,folder,tags FROM tasks"
-                        params: list = []
-                        conditions = []
+                        mine, mine_params = engine.store._mine()
+                        params: list = [*mine_params]
+                        conditions = [mine]
                         if q:
                             conditions.append("title LIKE ?")
                             params.append(f"%{q}%")
                         if state_filter:
                             conditions.append("state=?")
                             params.append(state_filter)
-                        if conditions:
-                            sql += " WHERE " + " AND ".join(conditions)
+                        sql += " WHERE " + " AND ".join(conditions)
                         sql += " ORDER BY pinned DESC, created DESC LIMIT 100"
                         rows = db.execute(sql, params).fetchall()
                     tasks = [{"id": r["id"], "created": r["created"], "state": r["state"],
@@ -508,7 +554,8 @@ def make_server(engine: Engine, port: int, token: str):
                 if bash is not None:
                     self.reply(*bash)
                 elif path == "/api/project":
-                    self.reply(200, {"name": engine.root.name, "indexer": INDEXER, **metadata(inventory(engine.root)), "images": workspace_images(engine.root)})
+                    self.reply(200, {"name": engine.root.name, "path": str(engine.root), "trusted": engine.trusted(), "indexer": INDEXER,
+                                     **metadata(inventory(engine.root)), "images": workspace_images(engine.root)})
                 elif path == "/api/files/image":
                     kind, raw = workspace_image(engine.root, parse_qs(urlsplit(self.path).query).get("path", [""])[0])
                     self.reply(200, raw, kind)
@@ -643,6 +690,17 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(*bash)
                 elif path == "/api/init":
                     self.reply(200, server_state.initialize(body, engine))
+                elif path == "/api/projects/open" and isinstance(body, dict):
+                    self.reply(200, projects.open(body.get("path")))
+                elif path == "/api/projects/trust" and isinstance(body, dict):
+                    self.reply(200, {"trusted": engine.set_trusted(body.get("trusted"))})
+                elif path == "/api/projects/new":
+                    self.reply(201, projects.create(body))
+                elif path == "/api/projects/clone":
+                    self.reply(201, projects.clone(body))
+                elif path == "/api/projects/pick":
+                    self.reply(200, {"path": pick_folder(str(body.get("title") or "Choose a project folder")[:80]
+                                                         if isinstance(body, dict) else "Choose a project folder")})
                 elif path == "/api/tasks":
                     self.reply(202, {"id": engine.submit(body)})
                 elif path == "/api/tasks/batch" and isinstance(body, dict):
@@ -739,6 +797,10 @@ def make_server(engine: Engine, port: int, token: str):
                     if body.get("confirm") is not True:
                         raise ValueError("Applying changes needs explicit confirmation")
                     self.reply(200, engine.apply(path.split("/")[3], body.get("files")))
+                elif path.startswith("/api/tasks/") and path.endswith("/undo") and path.count("/") == 4:
+                    self.reply(200, engine.undo(path.split("/")[3]))
+                elif path == "/api/commands/allowed/forget":
+                    self.reply(200, {"commands": engine.forget_command(str(body.get("command") or ""))})
                 elif path == "/api/git/commit":
                     activity["last"] = time.monotonic()
                     self.reply(200, gitops.commit(engine.root, body.get("message"), body.get("files"), engine.git_identity()))
@@ -843,6 +905,10 @@ def make_server(engine: Engine, port: int, token: str):
                 if path == "/api/settings/app" and method == "PATCH":
                     self.reply(200, engine.update_app_settings(body))
                     return
+                if path == "/api/projects/recent" and method == "DELETE" and isinstance(body, dict):
+                    engine.workspaces.remove(str(body.get("path") or ""))
+                    self.reply(200, projects.describe())
+                    return
                 if path.startswith("/api/workspaces/") and method == "DELETE":
                     engine.workspaces.remove(path.split("/")[3])
                     self.reply(200, {"removed": path.split("/")[3]})
@@ -885,7 +951,9 @@ def make_server(engine: Engine, port: int, token: str):
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
+    wiring.port = server.server_port
     routes.oauth.port = server.server_port
+    server.projects = projects  # the engine open right now: projects.engine
     return server
 
 
@@ -914,7 +982,9 @@ def main():
                                      prog="python -m dikdik.server")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
     parser.add_argument("--info", action="store_true", help="Print runtime information as JSON and exit")
-    parser.add_argument("--workspace", help="Explicitly approved repository directory")
+    parser.add_argument("workspace_arg", nargs="?", metavar="FOLDER",
+                        help="Project folder to open (default: the current folder, else the last project)")
+    parser.add_argument("--workspace", help="Same as FOLDER")
     parser.add_argument("--data", default=str(Path.home() / ".dikdik"), help="Private durable state directory outside workspace")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--no-browser", action="store_true", help="Do not open the browser automatically")
@@ -922,22 +992,22 @@ def main():
     args = parser.parse_args()
     early_exits(parser)
     check_config_or_exit()
-    if not args.workspace:
-        parser.error("--workspace is required: pass an explicitly approved repository directory")
     probe = socket.socket()
     probe.settimeout(0.5)
     if probe.connect_ex(("127.0.0.1", args.port)) == 0:
         probe.close()
         parser.error(f"Port {args.port} is already in use. Stop whatever is listening on it or choose another port.")
     probe.close()
-    try:
-        root = approved_root(args.workspace)
-    except (OSError, ValueError) as exc:
-        parser.error(f"Workspace {str(exc)}")
-        raise SystemExit(2)
     data = Path(args.data).resolve()
-    if data == root or root in data.parents or data in root.parents:
-        parser.error("Data and workspace directories must be separate, not ancestors")
+    chosen = args.workspace or args.workspace_arg
+    try:
+        root = check_location(Path(chosen or os.getcwd()), data)
+    except (OSError, ValueError) as exc:
+        if chosen:
+            parser.error(f"Workspace {str(exc)}")
+        root = last_project(data)  # started from a folder that cannot be a project, such as the home folder
+        if root is None:
+            parser.error("Start Dikdik inside a project folder, or name one: dikdik C:\\path\\to\\project")
     try:
         engine = Engine(root, data)
     except ValueError as exc:
@@ -953,7 +1023,7 @@ def main():
     url = f"http://127.0.0.1:{server.server_port}"
     # The token rides in the URL fragment, which browsers never send to a server.
     link = f"{url}/#token={token}"
-    print(f"Dikdik is running at {url}\nWorkspace: {root}\nSign-in link (needed once per browser): {link}", flush=True)
+    print(f"Dikdik is running at {url}\nProject: {root}\nSign-in link (needed once per browser): {link}", flush=True)
     if not args.no_browser:
         webbrowser.open(link)
     try:
@@ -962,7 +1032,18 @@ def main():
         pass
     finally:
         server.server_close()
-        engine.close()
+        server.projects.engine.close()
+
+
+def last_project(data: Path) -> Path | None:
+    """The most recently opened project folder that still exists, if any."""
+    from .workspace_registry import WorkspaceRegistry
+    for entry in WorkspaceRegistry(data).list():
+        try:
+            return check_location(Path(entry["path"]), data)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
 
 
 if __name__ == "__main__":

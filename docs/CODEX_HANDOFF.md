@@ -1,3 +1,5 @@
+> **Superseded (2026-10-28):** read [`HANDOFF.md`](HANDOFF.md) instead; this file is history.
+
 # Handoff: finish Dikdik's remaining OpenHands-parity work
 
 **For:** the next coding agent (Codex). **From:** the agent that built phases A–C.

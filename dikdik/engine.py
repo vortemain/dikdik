@@ -43,6 +43,8 @@ from .workspace_registry import WorkspaceRegistry
 from .backends import BackendStore
 from .acp_agents import AcpAgentStore
 from .acp_client import AcpError, AcpSession, host_env
+from . import local_exec
+from .direct import DirectWrites, undo as undo_checkpoint
 from .chatgpt_login import ChatGptLogin
 from .extension_apps import ExtensionAppStore
 from .worktrees import WorktreeManager
@@ -50,7 +52,7 @@ from .worktrees import WorktreeManager
 
 TERMINAL = {"completed", "failed", "blocked", "cancelled", "interrupted", "draft", "paused"}
 RESUMABLE = {"paused", "failed", "cancelled", "interrupted", "blocked"}
-POLICIES = {"never", "risky", "always"}
+POLICIES = {"never", "risky", "ask", "always"}
 APP_DEFAULTS = {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": False, "router": "",
                 "title_model": "auto", "event_retention_seconds": 0}  # 0 = keep forever; "auto": the conversation's own model; "off"; or a model profile id
 TITLE_PROMPT = ("Write a short title (3 to 7 words) for this coding conversation. Reply with the title only: "
@@ -469,8 +471,63 @@ class Engine:
         if not isinstance(body, dict) or not isinstance(body.get("id"), str):
             raise ValueError("Say which action you are deciding on")
         self.store.get(task)  # 404 for unknown tasks
-        self.confirmations.decide(task, body["id"], body.get("accept"), body.get("reason", ""))
+        self.confirmations.decide(task, body["id"], body.get("accept"), body.get("reason", ""), body.get("remember", False))
         return True
+
+    # --- local mode: remembered commands and undo -------------------------------------
+    def allowed_commands(self) -> list[str]:
+        """Commands the user chose to always allow in this project."""
+        with self.store.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key='allowed_commands'").fetchone()
+        everything = json.loads(row[0]) if row else {}
+        return list(everything.get(str(self.root), []))
+
+    def remember_command(self, command: str) -> None:
+        with self.store.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key='allowed_commands'").fetchone()
+            everything = json.loads(row[0]) if row else {}
+            mine = everything.setdefault(str(self.root), [])
+            if command not in mine:
+                mine.append(command[:4000])
+                del mine[:-200]
+            db.execute("INSERT OR REPLACE INTO settings VALUES('allowed_commands', ?)", (json.dumps(everything),))
+
+    def forget_command(self, command: str) -> list[str]:
+        with self.store.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key='allowed_commands'").fetchone()
+            everything = json.loads(row[0]) if row else {}
+            everything[str(self.root)] = [c for c in everything.get(str(self.root), []) if c != command]
+            db.execute("INSERT OR REPLACE INTO settings VALUES('allowed_commands', ?)", (json.dumps(everything),))
+        return self.allowed_commands()
+
+    def trusted(self) -> bool:
+        """Whether the user said, once, that Dikdik may work in this folder (read it, send it to
+        their model, run commands with their permission). The UI asks the first time."""
+        with self.store.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key='trusted_projects'").fetchone()
+        return str(self.root) in (json.loads(row[0]) if row else [])
+
+    def set_trusted(self, value) -> bool:
+        if not isinstance(value, bool):
+            raise ValueError("trusted must be true or false")
+        with self.store.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key='trusted_projects'").fetchone()
+            folders = [f for f in (json.loads(row[0]) if row else []) if f != str(self.root)] + ([str(self.root)] if value else [])
+            db.execute("INSERT OR REPLACE INTO settings VALUES('trusted_projects', ?)", (json.dumps(folders),))
+        return value
+
+    def undo(self, task):
+        """Put back the files the task's latest turn changed in the project folder."""
+        with self.lock:
+            if task in self.active:
+                raise ValueError("Wait for the task to finish before undoing its changes")
+            result = self.store.get(task)["result"] or {}
+            name = result.get("checkpoint")
+            if not result.get("direct") or not isinstance(name, str) or not name.isalnum():
+                raise ValueError("This turn did not change your files directly; there is nothing to undo")
+            done = undo_checkpoint(self.root, self.data / "checkpoints" / task / f"{name}.json")
+            self.store.event(task, "undone", done)
+        return done
 
     def ask(self, task, body):
         """A side question answered from the conversation; nothing is added to it."""
@@ -668,6 +725,8 @@ class Engine:
             if task in self.active:
                 raise ValueError("Wait for the task to finish before applying its changes")
             result = self.store.get(task)["result"] or {}
+            if result.get("direct"):
+                raise ValueError("These changes are already in your files; use Undo to take them back")
             changed = result.get("changed_files") or []
             if not changed:
                 raise ValueError("This task has no changes to apply")
@@ -760,10 +819,16 @@ class Engine:
             raise ValueError("Objective must contain 1–4000 characters")
         if request.get("mode") not in {"offline", "model", "agent", "plan", "acp"}:
             raise ValueError("Choose offline, model, agent or acp mode")
-        if request.get("verification") not in {"syntax", "docker"}:
-            raise ValueError("Choose syntax or docker verification")
+        if request.get("verification") not in {"syntax", "docker", "local"}:
+            raise ValueError("Choose syntax, docker or local verification")
         if request["verification"] == "docker" and request.get("approve_execution") is not True:
             raise ValueError("Explicit Docker execution approval required")
+        if request["verification"] == "local":
+            # Commands, tests and edits happen in the real project folder on this computer.
+            if request.get("approve_execution") is not True:
+                raise ValueError("Explicit approval to run commands on this computer is required")
+            if request.get("mode") != "agent":
+                raise ValueError("Working directly in your files needs agent mode")
         if "approve_browser" in request and type(request["approve_browser"]) is not bool:
             raise ValueError("Browser approval must be a Boolean")
         if request.get("approve_browser") is True and (request["mode"] != "agent" or request.get("approve_execution") is not True):
@@ -926,7 +991,7 @@ class Engine:
                 self.store.event(task, "plan", {"steps": ["Inspect bounded repository snapshot", "Validate minimal edit proposal", "Produce isolated candidate and diff", "Run selected checks", "Report evidence without changing source"]})
             original = inventory(self.root)
             self.store.event(task, "inspected", {"file_count": len(original), "manifests": metadata(original)["manifests"]})
-            files = self._starting_files(task, original) if follow_up else original
+            files = self._starting_files(task, original) if follow_up and request.get("verification") != "local" else original
             if cancel.is_set():
                 self._finish(task, "cancelled", None, cancel)
                 return
@@ -1032,7 +1097,50 @@ class Engine:
             return result
 
         docker = request["verification"] == "docker"
+        local = request["verification"] == "local"
         sandbox_env: dict[str, str] = {}  # filled below once the profile is known; read when a command runs
+        turn_id = uuid.uuid4().hex
+        writes = DirectWrites(self.root, original, self.data / "checkpoints" / task / f"{turn_id}.json") if local else None
+
+        def stream_command(command, kind):
+            command_id = uuid.uuid4().hex
+            self.store.event(task, "terminal_command", {"command_id": command_id, "command": command, "image": kind, "timeout": 0})
+            order = 0
+
+            def chunk(text):
+                nonlocal order
+                order += 1
+                self.store.event(task, "terminal_output", {"command_id": command_id, "order": order, "output": text, "final": False})
+
+            def done(result):
+                self.store.event(task, "terminal_output", {"command_id": command_id, "order": order + 1, "output": "", "final": True,
+                                                            "exit_code": result.get("exit_code"), "status": result.get("status")})
+            return chunk, done
+
+        def local_shell(files, command, timeout, image):
+            conflicts = writes.write(files)
+            if conflicts:
+                return {"status": "failed", "changed": {}, "error": "These files were changed outside the agent while it worked, so it "
+                        f"did not overwrite them: {', '.join(conflicts[:10])}. Read them again before editing."}
+            before = inventory(self.root)
+            chunk, done = stream_command(command, "this computer")
+            result = local_exec.run(self.root, command, cancel, timeout=min(int(timeout or 60), 600), on_chunk=chunk, env=sandbox_env or None)
+            done(result)
+            after = inventory(self.root)
+            writes.observe(after)
+            changed = {path: text for path, text in after.items() if before.get(path) != text}
+            return {**result, "changed": changed, "deleted_ignored": sorted(p for p in before if p not in after)}
+
+        def local_verify(files):
+            conflicts = writes.write(files)
+            if conflicts:
+                return {"kind": "tests", "status": "failed", "error": f"Changed outside the agent meanwhile: {', '.join(conflicts[:10])}"}
+            chunk, done = stream_command("run the project's tests", "this computer")
+            self.store.event(task, "execution", {"runner": "This computer", "command": runner_label(files), "timeout_seconds": 300})
+            result = local_exec.run_tests(self.root, detect_runners(files), cancel, on_chunk=chunk)
+            done(result)
+            writes.observe(inventory(self.root))
+            return result
 
         profile = self._profile(request)
         model_id = self._model_for(task, request, profile)
@@ -1080,11 +1188,19 @@ class Engine:
             risk, why = assess(call)
             if not needs_approval(policy, risk, call.name):
                 return True, ""
+            command = str(call.arguments.get("command", "")) if call.name == "run_command" else ""
+            if local and command and command in self.allowed_commands():
+                return True, ""
             shown = json.dumps(call.arguments)
             self.store.event(task, "confirmation_requested", {"id": call.id, "tool": call.name, "risk": risk, "reason": why,
                                                               "arguments": call.arguments if len(shown) <= 8192 else {"preview": shown[:2000]}})
             allowed, note = self.confirmations.wait(task, call, _Either(cancel, pause))
-            self.store.event(task, "confirmation_resolved", {"id": call.id, "accepted": allowed, "reason": note})
+            remembered = (task, call.id) in self.confirmations.remembered
+            self.confirmations.remembered.discard((task, call.id))
+            if allowed and remembered and local and command:
+                self.remember_command(command)
+            self.store.event(task, "confirmation_resolved", {"id": call.id, "accepted": allowed, "reason": note,
+                                                             **({"remembered": True} if allowed and remembered and command else {})})
             return allowed, note
 
         def checkpoint(state):
@@ -1114,9 +1230,10 @@ class Engine:
         try:
             outcome = run_agent(
                 original, request["objective"], CompatibleAgentModel(request["approve_external"], lambda: self.models.resolve(model_id), lambda text: self._live(task, text)),
-                verify if docker else None, lambda kind, data: self.store.event(task, "agent_" + kind, data), cancel, budget,
+                local_verify if local else verify if docker else None, lambda kind, data: self.store.event(task, "agent_" + kind, data), cancel, budget,
                 creation_policy=lambda path: can_create_file(self.root, path),
-                start=files, history=history, shell=shell if docker and (profile is None or profile["allow_shell"]) else None,
+                start=files, history=history,
+                shell=(local_shell if local else shell) if (docker or local) and (profile is None or profile["allow_shell"]) else None,
                 extra_tools=extra_tools, extra_call=extra_call if extra_tools else None,
                 pause=pause, confirm=confirm, checkpoint=checkpoint, resume=resume, images=request.get("images"),
                 delegate=delegate, subagents=subagents,
@@ -1126,6 +1243,7 @@ class Engine:
                 session.close()  # stdio servers stop with the task
         if outcome.transcript is not None:
             checkpoint(outcome.transcript)
+        conflicts = writes.write(outcome.files) if local else []
         snapshot(outcome.files)
         diff = candidate_diff(original, outcome.files)
         if len(diff.encode()) > 1_000_000:
@@ -1145,7 +1263,16 @@ class Engine:
             "limitations": ("Candidate only. Tests ran in a network-less Docker sandbox; a pass is not proof of every objective." if docker
                             else "Candidate only. Syntax checked only; no tests were run.") + " Provider usage may be unavailable; costs are shown only when the provider reports them.",
         }
-        if outcome.error:
+        if local:
+            result.update({"direct": True, "checkpoint": turn_id if writes.changed() else None,
+                           "source_modified": bool(writes.changed()), "conflicts": conflicts,
+                           "limitations": "Changed directly in your files on this computer; Undo puts back what this turn changed. "
+                                          + ("Tests ran on this computer." if outcome.checks and any(c.get("runs_on") for c in outcome.checks if isinstance(c, dict))
+                                             else "No tests were run.")})
+            if conflicts:
+                result["error"] = (outcome.error + " " if outcome.error else "") + \
+                    f"Not written because they were changed outside the agent meanwhile: {', '.join(conflicts[:10])}"
+        if outcome.error and "error" not in result:
             result["error"] = outcome.error
         if outcome.state == "paused":
             result["paused"] = True

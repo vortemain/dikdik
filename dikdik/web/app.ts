@@ -396,6 +396,8 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   const badge = make("span", "result-icon");
   badge.append(icon(state === "completed" ? "check" : state === "cancelled" ? "stop" : state === "paused" ? "pause" : "alert"));
   const titles: Record<string, string> = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted", paused: "Stopped" };
+  const direct = result?.direct === true;
+  if (direct && state === "completed") titles.completed = result?.source_modified === true ? "Changed in your files" : "Done";
   head.append(badge, make("span", "result-title", titles[state] ?? `Task ${state}`));
   if (state === "completed") {
     const verified = result?.tests_verified === true;
@@ -407,9 +409,27 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   if (result && typeof result.diff === "string" && result.diff) {
     const open = make("button", "small");
     open.type = "button";
-    open.append(icon("diff"), make("span", "", "Review & apply"));
+    open.append(icon("diff"), make("span", "", direct ? "Review changes" : "Review & apply"));
     open.onclick = () => openCanvas("changes");
     actions.append(open, copyButton(() => review.diff, "Copy diff"));
+  }
+  if (direct && typeof result?.checkpoint === "string" && result.checkpoint && isLatestTurn(msg)) {
+    // Local mode wrote the files already; Undo puts back what this turn changed.
+    const undo = make("button", "small") as HTMLButtonElement;
+    undo.type = "button";
+    undo.append(icon("refresh"), make("span", "", "Undo changes"));
+    undo.title = "Put back every file this turn changed, unless you changed it since";
+    undo.onclick = async () => {
+      if (!selected) return;
+      undo.disabled = true;
+      try {
+        const done = await request<{ restored: string[]; conflicts: string[] }>(`/api/tasks/${encodeURIComponent(selected)}/undo`, "POST", {});
+        message(done.conflicts.length ? `Restored ${done.restored.length} file(s); left ${done.conflicts.join(", ")} because you changed them since.`
+          : `Restored ${done.restored.length} file(s).`, done.conflicts.length > 0);
+        await observe(true);
+      } catch (error) { undo.disabled = false; message(error instanceof Error ? error.message : "Undo failed", true); }
+    };
+    actions.append(undo);
   }
   const latest = isLatestTurn(msg);
   if (state !== "completed" && latest) {
@@ -575,17 +595,22 @@ function confirmationCard(msg: ChatMessage): HTMLLIElement {
   const allow = make("button", "small primary", "Allow"); allow.type = "button"; allow.title = "Allow (Y, Enter or Ctrl+Enter)";
   const reject = make("button", "small", "Reject"); reject.type = "button"; reject.title = "Reject (N, Esc or Shift+Ctrl+Backspace)";
   const status = make("span", "confirm-status");
-  actions.append(allow, reject, status);
+  // In local mode a command can be allowed for good in this project, like Claude Code's "don't ask again".
+  const always = make("button", "small", "Always allow") as HTMLButtonElement; always.type = "button";
+  always.title = "Allow this exact command now and from now on in this project";
+  always.hidden = !(typeof args.command === "string" && taskRequest?.verification === "local");
+  actions.append(allow, always, reject, status);
   card.append(actions);
   li.append(card);
   const id = d.id ?? "";
-  const decide = async (accept: boolean) => {
+  const decide = async (accept: boolean, remember = false) => {
     if (!selected || allow.disabled) return;
-    allow.disabled = reject.disabled = true;
-    try { await api(`/api/tasks/${encodeURIComponent(selected)}/confirm`, { id, accept }); status.textContent = accept ? "Allowed" : "Rejected"; }
-    catch (error) { allow.disabled = reject.disabled = false; message(error instanceof Error ? error.message : "Could not send the decision", true); }
+    allow.disabled = reject.disabled = always.disabled = true;
+    try { await api(`/api/tasks/${encodeURIComponent(selected)}/confirm`, { id, accept, remember }); status.textContent = accept ? (remember ? "Always allowed here" : "Allowed") : "Rejected"; }
+    catch (error) { allow.disabled = reject.disabled = always.disabled = false; message(error instanceof Error ? error.message : "Could not send the decision", true); }
   };
   allow.onclick = () => { void decide(true); };
+  always.onclick = () => { void decide(true, true); };
   reject.onclick = () => { void decide(false); };
   card.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.ctrlKey || event.metaKey) return;  // the global shortcuts below handle these
@@ -1303,10 +1328,12 @@ async function project(): Promise<void> {
   const summary = `${plural(data.files.length, "file")} · ${plural(data.python_tests.length, "test")}`;
   el("project-name").textContent = data.name;
   el("project-summary").textContent = summary;
+  projectTrusted = (data as Project & { trusted?: boolean }).trusted === true;
+  applyRunMode();
   el("settings-project").textContent = data.name;
   el("settings-indexer").textContent = (data as Project & { indexer?: string }).indexer === "rust" ? "Rust (native, parallel)" : "Python (run scripts/build_native.py for the faster Rust indexer)";
   el("settings-inventory").textContent = `${data.files.length} text files · ${data.python_tests.length} potential Python tests · ${data.manifests.length} manifests`;
-  el("welcome-sub").textContent = `Working in ${data.name}. Describe a bug, feature or change — Dikdik works on an isolated copy and shows you every diff.`;
+  el("welcome-sub").textContent = `Working in ${data.name}. Describe a bug, feature or change.`;
 }
 
 let lastTasks: TaskSummary[] = [];
@@ -2135,7 +2162,7 @@ function syncMode(): void {
   if (mode === 'plan') { el('agent-hint').hidden = false; el('agent-hint').textContent = 'The planner can inspect files and write a private PLAN.md for review. It cannot execute tools or modify repository files.'; }
   (el("external-field") as HTMLElement).hidden = !policy.requiresExternal;
   input("external").disabled = !policy.requiresExternal;
-  input("external").required = policy.requiresExternal;
+  input("external").required = policy.requiresExternal && runMode() === "classic";  // else the trust question answers it
   select("verification").value = policy.verification;
   select("verification").disabled = policy.locksVerification;
   el("browser-field").hidden = mode !== "agent";
@@ -2145,7 +2172,7 @@ function syncMode(): void {
   input("secrets-approval").disabled = el("secrets-field").hidden === true;
   (el("execution-field") as HTMLElement).hidden = !execution;
   input("execution").disabled = !execution;
-  input("execution").required = execution;
+  input("execution").required = execution && runMode() === "classic";
   el("execution-field").title = "Runs approved tools and tests inside restricted Docker containers.";
   el("model-pill").hidden = !policy.requiresExternal;
   syncModelBanner();
@@ -2182,8 +2209,52 @@ if (typeof document.querySelectorAll === "function") {
   }
 }
 
+// --- how Dikdik works in this project: Ask, Auto, Plan or the classic copy-then-Apply ----
+type RunMode = "ask" | "auto" | "plan" | "classic";
+let projectTrusted = false;
+function runMode(): RunMode {
+  const value = select("run-mode").value;
+  return value === "auto" || value === "plan" || value === "classic" ? value : "ask";
+}
+const FOOTNOTES: Record<RunMode, string> = {
+  ask: "Dikdik edits files in this folder and asks before running commands. Undo any turn.",
+  auto: "Dikdik edits files and runs commands in this folder; risky commands still ask. Undo any turn.",
+  plan: "Plan only: Dikdik reads and plans, and changes nothing.",
+  classic: "Dikdik works on an isolated copy. Your files change only when you apply.",
+};
+/** Ask/Auto/Plan set the classic controls underneath, so one request builder serves all four. */
+function applyRunMode(): void {
+  const mode = runMode();
+  try { localStorage.setItem("dikdik.runMode", mode); } catch { void 0; }
+  document.body?.classList?.toggle("run-simple", mode !== "classic");
+  el("composer-footnote").textContent = FOOTNOTES[mode];
+  if (mode === "classic") return;
+  select("mode").value = mode === "plan" ? "plan" : "agent";
+  select("verification").value = mode === "plan" ? "syntax" : "local";
+  input("external").checked = projectTrusted;
+  input("execution").checked = projectTrusted && mode !== "plan";
+  syncMode();
+}
+/** The first message in a project asks once whether Dikdik may work in this folder. */
+async function ensureTrusted(): Promise<void> {
+  if (runMode() === "classic" || projectTrusted) return;
+  const yes = confirm(`Trust “${projectName}”?\n\nDikdik will read this folder, send what it reads to your model provider, `
+    + `edit its files and run commands here (asking first as your permission mode says). You can undo each turn.`);
+  if (!yes) throw new Error("Dikdik only works in folders you trust. Choose Classic to work on an isolated copy instead.");
+  await request("/api/projects/trust", "POST", { trusted: true });
+  projectTrusted = true;
+  applyRunMode();
+}
+select("run-mode").addEventListener("change", applyRunMode);
+try {
+  const saved = localStorage.getItem("dikdik.runMode");
+  if (saved) select("run-mode").value = saved;
+} catch { void 0; }
+
 function composerRequest(text: string, goalMaxTurns?: number) {
+  const simple = runMode();
   return buildTaskRequest({
+    confirmation: simple === "ask" ? "ask" : simple === "auto" ? "risky" : undefined,
     modelProfile: modelOverride?.id, attachments: attached.map(file => file.id), goalMaxTurns,
     objective: text, mode: parseMode(select("mode").value),
     edits: textarea("edits").value, verification: parseVerification(select("verification").value),
@@ -2320,6 +2391,7 @@ el("task-form").addEventListener("submit", async event => {
     }
     if (!text.trim() && attached.length) text = attached.length === 1 ? `Take a look at the attached file “${attached[0]?.name ?? "file"}”.` : "Take a look at the attached files.";
     if (selected && select('mode').value === 'plan' && observedTaskMode !== 'plan' && command?.name !== 'plan') await enterPlanning();
+    await ensureTrusted();
     if (selected) {
       composerRequest(text, goalTurns);  // validate before clearing the field
       if (await sendMessage(text, goalTurns)) await composerDrafts.sent(originalScope, originalText);
@@ -3465,6 +3537,97 @@ el("app-add").addEventListener("click", async () => {
   if (!source) return;
   try { await request("/api/apps", "POST", { name, source }); message("App installed."); void loadApps(); }
   catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
+
+// --- Projects: open a folder, start one, or clone a repository ----------------
+type ProjectEntry = { path: string; name: string; exists: boolean; current: boolean };
+const projectsDialog = el("projects-dialog") as HTMLDialogElement;
+function projectStatus(text: string, error = false): void {
+  const status = el("projects-status");
+  status.textContent = text;
+  status.classList.toggle("error-text", error);
+}
+function showProjectForm(name: string | null): void {
+  for (const button of projectsDialog.querySelectorAll<HTMLElement>("[data-project-tab]")) button.setAttribute("aria-selected", String(button.dataset.projectTab === name));
+  for (const form of projectsDialog.querySelectorAll<HTMLElement>("[data-project-form]")) form.hidden = form.dataset.projectForm !== name;
+  const first = name ? projectsDialog.querySelector<HTMLInputElement>(`[data-project-form="${name}"] input`) : null;
+  first?.focus();
+}
+async function loadProjects(): Promise<void> {
+  const data = await api<{ current: { path: string; name: string }; recent: ProjectEntry[] }>("/api/projects");
+  el("projects-current-name").textContent = data.current.name;
+  el("projects-current-path").textContent = data.current.path;
+  const list = el("projects-recent");
+  list.replaceChildren(...data.recent.map(entry => {
+    const item = make("li");
+    const open = make("button", "open-project") as HTMLButtonElement;
+    open.type = "button";
+    open.append(make("strong", "", entry.name), make("p", "muted", entry.exists ? entry.path : `${entry.path} · folder not found`));
+    open.disabled = !entry.exists;
+    if (entry.current) open.setAttribute("aria-current", "true");
+    open.onclick = () => { if (!entry.current) void switchProject("/api/projects/open", { path: entry.path }, `Opening ${entry.name}…`); };
+    const forget = make("button", "ghost icon") as HTMLButtonElement;
+    forget.type = "button";
+    forget.title = forget.ariaLabel = `Remove ${entry.name} from this list`;
+    forget.innerHTML = '<svg class="i"><use href="#i-x"/></svg>';
+    forget.hidden = entry.current;
+    forget.onclick = async () => { await request("/api/projects/recent", "DELETE", { path: entry.path }); void loadProjects(); };
+    item.append(open, forget);
+    return item;
+  }));
+}
+/** Every project switch reloads the page: conversations, files and panels all belong to the new folder. */
+async function switchProject(route: string, body: Record<string, unknown>, working: string): Promise<void> {
+  projectStatus(working);
+  for (const button of projectsDialog.querySelectorAll<HTMLButtonElement>("button")) button.disabled = true;
+  try {
+    await request(route, "POST", body);
+    globalThis.location.assign(globalThis.location.pathname);
+  } catch (error) {
+    projectStatus(error instanceof Error ? error.message : String(error), true);
+    for (const button of projectsDialog.querySelectorAll<HTMLButtonElement>("button")) button.disabled = false;
+    void loadProjects();
+  }
+}
+function openProjects(form: string | null = null): void {
+  projectStatus("");
+  showProjectForm(form);
+  if (!projectsDialog.open) projectsDialog.showModal();
+  void loadProjects().catch(error => projectStatus(error instanceof Error ? error.message : String(error), true));
+}
+el("project-switch").addEventListener("click", () => openProjects());
+el("projects-close").addEventListener("click", () => projectsDialog.close());
+for (const button of projectsDialog.querySelectorAll<HTMLElement>("[data-project-tab]")) {
+  button.addEventListener("click", () => showProjectForm(button.getAttribute("aria-selected") === "true" ? null : button.dataset.projectTab ?? null));
+}
+for (const button of projectsDialog.querySelectorAll<HTMLButtonElement>("[data-browse]")) {
+  button.addEventListener("click", async () => {
+    projectStatus("Choose a folder in the window that opened…");
+    try {
+      const picked = await request<{ path: string | null }>("/api/projects/pick", "POST", {});
+      if (picked.path) (el(button.dataset.browse ?? "") as HTMLInputElement).value = picked.path;
+      projectStatus("");
+    } catch (error) { projectStatus(error instanceof Error ? error.message : String(error), true); }
+  });
+}
+el("project-open-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const path = (el("project-open-path") as HTMLInputElement).value.trim();
+  if (path) void switchProject("/api/projects/open", { path }, "Opening…");
+});
+el("project-new-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const name = (el("project-new-name") as HTMLInputElement).value.trim();
+  if (!name) { projectStatus("Give the project a name.", true); return; }
+  void switchProject("/api/projects/new", { name, parent: (el("project-new-parent") as HTMLInputElement).value.trim(),
+    git: (el("project-new-git") as HTMLInputElement).checked }, `Creating ${name}…`);
+});
+el("project-clone-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const url = (el("project-clone-url") as HTMLInputElement).value.trim();
+  if (!url) { projectStatus("Paste the repository URL.", true); return; }
+  void switchProject("/api/projects/clone", { url, parent: (el("project-clone-parent") as HTMLInputElement).value.trim() },
+    "Cloning… large repositories can take a few minutes.");
+});
 
 // Register the panes for lazy loading on first open.
 Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps });

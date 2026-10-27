@@ -1,12 +1,39 @@
 # Security model — local developer preview
 
-## Trust and permissions
+## Local mode (the default since 2026-10-28)
+
+The owner chose to make Dikdik work like Claude Code: in a project you trust, the
+agent edits your real files and runs commands **on this computer, outside Docker**,
+with your own tools and environment. This deliberately relaxes the earlier rule that
+no repository code runs on the host. What protects you instead:
+
+- **One trust decision per project.** The first message in a folder asks whether
+  Dikdik may read it, send what it reads to your model provider, edit it and run
+  commands there. Each request still carries explicit `approve_external` and
+  `approve_execution` Booleans; the interface fills them only for a trusted folder.
+- **Permission modes.** *Ask* asks before every command, web visit and MCP call;
+  *Auto* asks only for high-risk commands (deleting, installing, network, rewriting
+  history); *Plan* only reads. *Always allow* remembers one exact command for one
+  project; the list is shown and can be cleared (`/api/commands/allowed`).
+- **Checkpoints and Undo.** Before a turn first changes a file, its previous content
+  is recorded; Undo restores every file the turn changed, including files its
+  commands changed, unless you changed it since. Writes never overwrite a file that
+  changed outside the agent after it last looked.
+- **Limits that still apply:** original tests are protected (a command that edits
+  them is undone), `.git` is never written, commands have a time limit and an
+  output cap, and Stop ends the whole process tree.
+- **What it cannot protect against:** a command you allow runs with your user's
+  rights and can reach the network and any file you can. Use *Classic* mode (an
+  isolated copy, Docker for tests, Apply to write) for repositories you do not trust.
+
+## Trust and permissions (Classic mode)
 
 The local operator, host OS, Python installation, Docker CLI/daemon/image and
 private data directory are trusted. Repository contents, objectives, model
 proposals and tool output are untrusted. An objective cannot change policy.
 
-- Startup `--workspace` explicitly approves read access to one project.
+- Opening a project (startup folder, Open folder, New project, Clone) approves read
+  access to that folder; switching closes the previous project's engine.
 - API calls require a random session secret and exact loopback Host. Browser
   Origins must match exactly. There is no CORS opt-in.
 - The secret lives in `<data>/web.token` (created with owner-only permissions) and

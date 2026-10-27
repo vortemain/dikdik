@@ -39,13 +39,13 @@ test("actual polling retains file selection and control nodes, with safe fallbac
   const nodes = new Map<string, Node>();
   for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url", "attach-input", "condenser", "palette-input", "meta-folder", "meta-tags", "sounds", "git-name", "git-email", "secrets-approval", "agent-critic", "agent-memory", "agent-secrets"]) nodes.set(id, new Input());
   for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-external-empty", "planner-create", "planner-build", "pause", "git-save"]) nodes.set(id, new Button());
-  for (const id of ["mode", "verification", "confirmation-policy", "task-sort", "task-since", "task-scope", "title-model"]) nodes.set(id, new Select());
+  for (const id of ["run-mode", "mode", "verification", "confirmation-policy", "task-sort", "task-since", "task-scope", "title-model"]) nodes.set(id, new Select());
   for (const id of ["edits", "objective"]) nodes.set(id, new Textarea());
   const node = (id: string): Node => {
     if (!nodes.has(id)) nodes.set(id, new Node());
     return nodes.get(id)!;
   };
-  node("mode").value = "offline"; node("verification").value = "syntax";
+  node("run-mode").value = "classic"; node("mode").value = "offline"; node("verification").value = "syntax";
   const path = "<script>alert(1)</script>.py";
   const diff = `diff --git a/${path} b/${path}\nnew file mode 100644\n`;
   let result: unknown = { diff, file_changes: [{ path, status: "added", start_line: 0, end_line: 2 }] };

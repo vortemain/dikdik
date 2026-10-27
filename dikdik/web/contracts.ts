@@ -1,5 +1,5 @@
 export type Mode = "offline" | "model" | "agent" | "plan";
-export type Verification = "syntax" | "docker";
+export type Verification = "syntax" | "docker" | "local";
 export interface Edit { path: string; before: string; after: string }
 export interface TaskRequest {
   objective: string;
@@ -17,7 +17,7 @@ export interface TaskRequest {
   goal_max_turns?: number;
   approve_secrets?: boolean;
 }
-export type ConfirmationPolicy = "never" | "risky" | "always";
+export type ConfirmationPolicy = "never" | "risky" | "ask" | "always";
 export interface AttachmentMeta { id: string; name: string; type: string; size: number }
 export interface AgentProfile {
   id: string; name: string; instructions: string; model_profile_id: string;
@@ -39,6 +39,10 @@ export interface TaskResult {
   error?: string;
   tests_verified?: boolean;
   checks?: { kind: string; status: string }[];
+  /** Local mode: the turn wrote the project folder directly; `checkpoint` names its Undo. */
+  direct?: boolean;
+  source_modified?: boolean;
+  checkpoint?: string | null;
 }
 export type FileStatus = "added" | "modified" | "deleted";
 export interface FileChange { path: string; status: FileStatus; start_line: number; end_line: number }
@@ -199,9 +203,10 @@ export function modePolicy(mode: Mode, verification: Verification) {
   return {
     showEdits: mode === "offline",
     requiresExternal: mode !== "offline",
-    verification: mode === 'plan' ? 'syntax' as const : verification,
+    // Working directly in the folder on this computer is an agent-mode feature.
+    verification: mode === 'plan' || (verification === "local" && mode !== "agent") ? 'syntax' as const : verification,
     locksVerification: mode === 'plan',
-    requiresExecution: mode !== 'plan' && verification === "docker",
+    requiresExecution: mode !== 'plan' && (verification === "docker" || (verification === "local" && mode === "agent")),
   };
 }
 export function parseMode(value: string): Mode {
@@ -209,18 +214,20 @@ export function parseMode(value: string): Mode {
   throw new Error("Select a supported proposal source.");
 }
 export function parseVerification(value: string): Verification {
-  if (value === "syntax" || value === "docker") return value;
+  if (value === "syntax" || value === "docker" || value === "local") return value;
   throw new Error("Select a supported verification boundary.");
 }
 export function buildTaskRequest(input: {
   objective: string; mode: Mode; verification: Verification;
   approveExecution: boolean; approveExternal: boolean; approveBrowser?: boolean; edits: string; agentProfile?: string;
   modelProfile?: string | undefined; attachments?: string[]; goalMaxTurns?: number | undefined; approveSecrets?: boolean;
+  confirmation?: ConfirmationPolicy | undefined;
 }): TaskRequest {
   const policy = modePolicy(input.mode, input.verification);
   if (!input.objective.trim()) throw new Error("Enter an objective.");
   if (policy.requiresExternal && !input.approveExternal) throw new Error("Approve sending code and the objective to the external provider.");
-  if (policy.requiresExecution && !input.approveExecution) throw new Error("Approve execution inside Docker before starting this task.");
+  if (policy.requiresExecution && !input.approveExecution) throw new Error(policy.verification === "local"
+    ? "Approve running commands on this computer before starting this task." : "Approve execution inside Docker before starting this task.");
   const browsing = input.mode === "agent" && input.approveBrowser === true;
   if (browsing && !input.approveExecution) throw new Error("Approve Docker execution to use the browser.");
   let edits: Edit[] = [];
@@ -245,6 +252,7 @@ export function buildTaskRequest(input: {
     ...(input.attachments?.length ? { attachments: input.attachments } : {}),
     ...(input.mode === "agent" && input.approveSecrets && input.approveExecution && (policy.requiresExecution || browsing) ? { approve_secrets: true } : {}),
     ...(input.goalMaxTurns ? goalTurns(input.mode, input.goalMaxTurns) : {}),
+    ...(input.confirmation && input.mode === "agent" ? { confirmation: input.confirmation } : {}),
   };
 }
 function goalTurns(mode: Mode, turns: number): { goal_max_turns: number } {

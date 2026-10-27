@@ -39,7 +39,7 @@ def assess(call: ToolCall) -> tuple[str, str]:
         for pattern, reason in HIGH:
             if pattern.search(command):
                 return "high", f"the command {reason}"
-        return "medium", "runs a command in the sandbox"
+        return "medium", "runs a command"
     if call.name == "browse_url":
         return "medium", "opens a public web page"
     if call.name.startswith("mcp__"):
@@ -52,8 +52,14 @@ def assess(call: ToolCall) -> tuple[str, str]:
     return "medium", "uses a tool"
 
 
+ACTION_TOOLS = {"run_command", "browse_url"}  # reach outside the agent's own edits
+
+
 def needs_approval(policy: str, risk: str, tool: str | None = None) -> bool:
-    """never: no prompts; risky: high-risk actions only; always: every action that is not read-only."""
+    """never: no prompts; risky: high-risk actions only; ask: every command, web visit and
+    MCP call (edits are undoable, so they do not ask); always: every action that is not read-only."""
+    if policy == "ask":
+        return tool is not None and (tool in ACTION_TOOLS or tool.startswith("mcp__"))
     if policy == "always":
         return tool not in READ_TOOLS if tool is not None else risk != "low"
     return policy == "risky" and risk == "high"
@@ -106,9 +112,10 @@ class Confirmations:
     def __init__(self):
         self.lock = threading.Lock()
         self.pending: dict[tuple[str, str], dict] = {}
+        self.remembered: set[tuple[str, str]] = set()  # allowed with "always allow this here"
 
     def wait(self, task: str, call: ToolCall, cancel, timeout: float = 1800) -> tuple[bool, str]:
-        slot = {"event": threading.Event(), "accept": False, "reason": ""}
+        slot = {"event": threading.Event(), "accept": False, "reason": "", "remember": False}
         with self.lock:
             self.pending[(task, call.id)] = slot
         try:
@@ -116,19 +123,22 @@ class Confirmations:
             while not slot["event"].wait(0.2):
                 if cancel.is_set() or time.monotonic() > deadline:
                     return False, "No decision was made, so the action did not run"
+            if slot["accept"] and slot["remember"]:
+                self.remembered.add((task, call.id))
             return slot["accept"], slot["reason"]
         finally:
             with self.lock:
                 self.pending.pop((task, call.id), None)
 
-    def decide(self, task: str, call_id: str, accept, reason="") -> None:
-        if not isinstance(accept, bool):
-            raise ValueError("accept must be true or false")
+    def decide(self, task: str, call_id: str, accept, reason="", remember=False) -> None:
+        if not isinstance(accept, bool) or not isinstance(remember, bool):
+            raise ValueError("accept and remember must be true or false")
         with self.lock:
             slot = self.pending.get((task, call_id))
         if slot is None:
             raise KeyError(call_id)
         slot["accept"], slot["reason"] = accept, (reason if isinstance(reason, str) else "")[:500] or ("" if accept else "The user rejected this action")
+        slot["remember"] = remember
         slot["event"].set()
 
     def waiting(self, task: str) -> list[str]:

@@ -123,7 +123,7 @@
       <div class="sidebar-foot">
         <div class="project">
           <span class="project-icon"><svg class="i"><use href="#i-folder"/></svg></span>
-          <div class="project-text"><h2 id="project-name">—</h2><p id="project-summary"></p></div>
+          <button id="project-switch" class="project-text project-switch" type="button" title="Switch project" aria-haspopup="dialog"><h2 id="project-name">—</h2><p id="project-summary"></p></button>
           <button id="refresh" type="button" class="ghost icon" aria-label="Refresh inventory" title="Refresh inventory"><svg class="i"><use href="#i-refresh"/></svg></button>
         </div>
         <button id="open-settings" class="foot-button" type="button"><svg class="i"><use href="#i-gear"/></svg>Settings</button>
@@ -190,7 +190,7 @@
               <div id="offline-fields"><label for="edits">Exact replacements (JSON)</label><textarea id="edits" rows="5" spellcheck="false">[{"path":"calculator.py","before":"return a - b","after":"return a + b"}]</textarea><p class="hint">Existing inventoried files only. Each match must be unique; existing tests are protected.</p></div>
               <div id="model-fields"><p id="model-hint" class="hint">One bounded model proposal using your default model profile. No repair loop.</p><p id="agent-hint" class="hint" hidden>The agent inspects files, edits or creates candidate files inside the safety limits, and runs checks. Your source stays unchanged.</p></div>
             </div>
-            <div id="approvals" class="approvals">
+            <div id="approvals" class="approvals classic-only">
               <span class="approvals-label">Allow for this task</span>
               <label id="external-field" class="toggle" title="Sends the objective, bounded repository text and tool output to your configured model provider."><input id="external" type="checkbox">Share code with model</label>
               <label id="execution-field" class="toggle" title="Runs approved tools and tests inside restricted Docker containers." hidden><input id="execution" type="checkbox">Run tools in Docker</label>
@@ -199,8 +199,9 @@
             </div>
             <div class="composer-controls">
               <button id="attach" class="ghost icon" type="button" aria-label="Attach files" title="Attach images or text files (or paste / drop them)"><svg class="i"><use href="#i-paperclip"/></svg></button>
-              <label class="pill" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="plan">Plan</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
-              <label class="pill" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="docker">Docker tests</option></select></label>
+              <label class="pill run-mode-pill" title="How Dikdik works in this project"><span class="sr-only">Permissions</span><svg class="i"><use href="#i-shield"/></svg><select id="run-mode"><option value="ask">Ask before commands</option><option value="auto">Auto</option><option value="plan">Plan only</option><option value="classic">Classic (copy, then Apply)</option></select></label>
+              <label class="pill classic-only" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="plan">Plan</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
+              <label class="pill classic-only" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="docker">Docker tests</option><option value="local">On this computer</option></select></label>
               <label id="agent-profile-pill" class="pill" title="Agent profile"><span class="sr-only">Agent profile</span><svg class="i"><use href="#i-book"/></svg><select id="agent-profile"><option value="">Default agent</option></select></label>
               <button id="model-pill" class="ghost small model-pill" type="button" title="Model used by model and agent tasks"><svg class="i"><use href="#i-cpu"/></svg><span id="model-label">Model</span></button>
               <button id="options-toggle" class="ghost icon options-toggle" type="button" aria-expanded="false" aria-controls="options-panel" aria-label="Mode options" title="Mode options"><svg class="i"><use href="#i-sliders"/></svg></button>
@@ -209,7 +210,7 @@
               <button id="start" type="submit" class="primary" aria-label="Start task" title="Start task (Enter)" disabled><svg class="i"><use href="#i-arrow-up"/></svg></button>
             </div>
           </form>
-          <p class="composer-footnote">Dikdik works on an isolated copy. Your files change only when you apply.</p>
+          <p id="composer-footnote" class="composer-footnote">Dikdik works on an isolated copy. Your files change only when you apply.</p>
         </div>
       </section>
     </main>
@@ -322,7 +323,7 @@
       <div class="settings-head"><button id="settings-back" class="ghost small settings-back" type="button" aria-label="Back to settings"><svg class="i"><use href="#i-chevron"/></svg>Settings</button><h3 id="settings-pane-title">General</h3><button id="close-settings" class="ghost icon" type="button" aria-label="Close settings"><svg class="i"><use href="#i-x"/></svg></button></div>
       <section class="settings-pane" data-pane="general" role="tabpanel">
         <div class="setting-row"><div><h4>Appearance</h4><p>Match your system, or pick light or dark.</p></div><select id="theme" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
-        <div class="setting-row"><div><h4>Confirm actions</h4><p>Ask before the agent runs a tool. “Risky only” asks for commands that delete, install, use the network or rewrite history.</p></div><select id="confirmation-policy" aria-label="Confirm actions"><option value="never">Never ask</option><option value="risky">Risky only</option><option value="always">Every action</option></select></div>
+        <div class="setting-row"><div><h4>Confirm actions</h4><p>Ask before the agent runs a tool. “Risky only” asks for commands that delete, install, use the network or rewrite history.</p></div><select id="confirmation-policy" aria-label="Confirm actions"><option value="never">Never ask</option><option value="risky">Risky only</option><option value="ask">Every command</option><option value="always">Every action</option></select></div>
         <div class="setting-row"><div><h4>Condense long conversations</h4><p>When a conversation outgrows the history budget, older turns are replaced with a summary written by your model.</p></div><label class="check"><input id="condenser" type="checkbox" checked>On</label></div>
         <div class="setting-row"><div><h4>Sound when a task finishes</h4><p>A short chime when a run ends while you are in another tab or window.</p></div><label class="check"><input id="sounds" type="checkbox">On</label></div>
         <div class="setting-row setting-stack"><div><h4>Git identity</h4><p>Name and email for commits made from the Git tab. Leave blank to use your Git configuration.</p></div>
@@ -486,6 +487,41 @@
       <p id="meta-error" class="error-text" role="alert" hidden></p>
       <div class="row"><button id="meta-cancel" class="ghost small" type="button">Cancel</button><button id="meta-save" class="primary small" type="submit">Save</button></div>
     </form>
+  </dialog>
+  <dialog id="projects-dialog" class="small-dialog wide-dialog projects-dialog" aria-labelledby="projects-title">
+    <div class="settings-head"><h3 id="projects-title">Projects</h3><button id="projects-close" class="ghost icon" type="button" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+    <div class="projects-body">
+      <div class="projects-current"><span class="project-icon"><svg class="i"><use href="#i-folder"/></svg></span><div><strong id="projects-current-name">—</strong><p id="projects-current-path" class="muted"></p></div></div>
+      <div class="projects-actions" role="tablist" aria-label="Start a project">
+        <button class="secondary small" type="button" data-project-tab="open" role="tab"><svg class="i"><use href="#i-folder"/></svg>Open folder</button>
+        <button class="secondary small" type="button" data-project-tab="new" role="tab"><svg class="i"><use href="#i-plus"/></svg>New project</button>
+        <button class="secondary small" type="button" data-project-tab="clone" role="tab"><svg class="i"><use href="#i-branch"/></svg>Clone repository</button>
+      </div>
+      <form id="project-open-form" class="project-form" data-project-form="open" hidden>
+        <label for="project-open-path">Folder</label>
+        <div class="field-row"><input id="project-open-path" placeholder="C:\Projects\my-app" autocomplete="off" spellcheck="false"><button class="ghost small" type="button" data-browse="project-open-path">Browse…</button></div>
+        <div class="row"><button class="primary small" type="submit">Open</button></div>
+      </form>
+      <form id="project-new-form" class="project-form" data-project-form="new" hidden>
+        <label for="project-new-name">Name</label>
+        <input id="project-new-name" placeholder="my-app" maxlength="100" autocomplete="off" spellcheck="false">
+        <label for="project-new-parent">Location</label>
+        <div class="field-row"><input id="project-new-parent" placeholder="Your Projects folder" autocomplete="off" spellcheck="false"><button class="ghost small" type="button" data-browse="project-new-parent">Browse…</button></div>
+        <label class="check"><input id="project-new-git" type="checkbox" checked> Set up Git</label>
+        <div class="row"><button class="primary small" type="submit">Create</button></div>
+      </form>
+      <form id="project-clone-form" class="project-form" data-project-form="clone" hidden>
+        <label for="project-clone-url">Repository URL</label>
+        <input id="project-clone-url" placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false">
+        <label for="project-clone-parent">Clone into</label>
+        <div class="field-row"><input id="project-clone-parent" placeholder="Your Projects folder" autocomplete="off" spellcheck="false"><button class="ghost small" type="button" data-browse="project-clone-parent">Browse…</button></div>
+        <p class="hint">Uses this computer's Git sign-in. Private repositories may open a sign-in window once.</p>
+        <div class="row"><button class="primary small" type="submit">Clone</button></div>
+      </form>
+      <p id="projects-status" class="hint" role="status"></p>
+      <h4 class="projects-heading">Recent</h4>
+      <ul id="projects-recent" class="projects-recent"></ul>
+    </div>
   </dialog>
   <dialog id="info-dialog" class="small-dialog wide-dialog" aria-labelledby="info-title">
     <div class="settings-head"><h3 id="info-title">Skills, hooks and tools</h3><button id="info-close" class="ghost icon" type="button" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
