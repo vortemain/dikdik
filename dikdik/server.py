@@ -336,6 +336,35 @@ def make_server(engine: Engine, port: int, token: str):
                 elif path == "/api/files/content":
                     query = parse_qs(urlsplit(self.path).query)
                     self.reply(200, engine.file_text(query.get("path", [""])[0], query.get("task", [None])[0]))
+                elif path == "/api/files/download":
+                    query = parse_qs(urlsplit(self.path).query)
+                    rel = query.get("path", [""])[0]
+                    if not isinstance(rel, str) or not rel.strip() or len(rel) > 500 or rel.startswith("-"):
+                        raise ValueError("path must be a safe relative path")
+                    target = (engine.root / rel).resolve()
+                    if engine.root.resolve() not in target.parents and target != engine.root.resolve():
+                        raise ValueError("path must stay inside the workspace")
+                    if not target.is_file():
+                        raise KeyError(rel)
+                    raw = target.read_bytes()
+                    self.reply(200, raw, "application/octet-stream")
+                elif path == "/api/files/list":
+                    query = parse_qs(urlsplit(self.path).query)
+                    rel = query.get("path", [""])[0] or "."
+                    if not isinstance(rel, str) or len(rel) > 500 or rel.startswith("-"):
+                        raise ValueError("path must be a safe relative path")
+                    target = (engine.root / rel).resolve()
+                    if engine.root.resolve() not in target.parents and target != engine.root.resolve():
+                        raise ValueError("path must stay inside the workspace")
+                    if not target.is_dir():
+                        raise KeyError(rel)
+                    entries = []
+                    for child in sorted(target.iterdir(), key=lambda p: p.name):
+                        if child.name.startswith("."):
+                            continue
+                        entries.append({"name": child.name, "type": "dir" if child.is_dir() else "file",
+                                         "size": child.stat().st_size if child.is_file() else None})
+                    self.reply(200, {"path": rel, "entries": entries})
                 elif path == "/api/git":
                     self.reply(200, gitops.info(engine.root))
                 elif path.startswith("/api/git/") and path.endswith("/diff") and path.count("/") == 4:

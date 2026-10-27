@@ -135,6 +135,26 @@ class ServerApiTests(unittest.TestCase):
     def test_file_upload_refuses_missing_key(self):
         self.assertEqual(self.call("POST", "/api/files/upload", {"path": "x"})[0], 400)
 
+    def test_file_download(self):
+        (self.root / "app.py").write_text("value = 2\n", encoding="utf-8")
+        status, body = self.call("GET", "/api/files/download?path=app.py")
+        self.assertEqual(status, 200)
+        self.assertIn(b"value = 2", body)
+
+    def test_file_download_missing_file(self):
+        self.assertEqual(self.call("GET", "/api/files/download?path=absent.py")[0], 404)
+
+    def test_file_download_refuses_escape(self):
+        status, body = self.call("GET", "/api/files/download?path=../../escape.txt")
+        self.assertEqual(status, 400)
+
+    def test_files_list(self):
+        status, body = self.call("GET", "/api/files/list?path=.")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        names = [e["name"] for e in data["entries"]]
+        self.assertIn("app.py", names)
+
 
 if __name__ == "__main__":
     unittest.main()
