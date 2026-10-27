@@ -1,5 +1,30 @@
 # Verification record — updated 2026-10-27
 
+## First live model run (latest)
+
+One real agent task against a live provider, run by the owner's server with the
+owner's key; the key was supplied as `DIKDIK_MODEL_URL` / `DIKDIK_MODEL` /
+`DIKDIK_API_KEY` in the server's own shell and never seen by the person testing.
+
+- Provider and model: OpenRouter (`https://openrouter.ai/api/v1/chat/completions`),
+  `z-ai/glm-5.2`; `/api/model` reported `source: environment`.
+- Task: `examples/repair`, agent mode, syntax verification, `approve_external`
+  true, `approve_execution` false (Docker was not running). Objective: fix `add()`
+  so the tests would pass, changing only what is needed.
+- Outcome: **completed in 6.8 s**; 5 model calls, 6 tool calls, 0 repairs; the
+  provider reported 5,836 input tokens (3,072 cached), 275 output, 6,111 total
+  and a cost of **$0.0028**. The candidate diff changed exactly one line,
+  `return a - b` to `return a + b`; the syntax check passed.
+- `calculator.py` in the workspace still read `return a - b` afterwards (candidate
+  only, nothing applied); `tests_verified` stayed false because no tests ran.
+  The key's `sk-or-` prefix appears neither in the task JSON nor in the SQLite
+  database.
+- The conversation rendered in the app: Completed, 1 changed file, the model
+  shown in the composer.
+- Not established: tests passing in a sandbox (Docker unavailable), tool-calling
+  reliability over many tasks, or any other provider. A single small task is not
+  a benchmark.
+
 ## ACP agent runs, extension apps and backend checks (latest)
 
 - **ACP agents** now run: `mode: "acp"` needs `approve_external` and a new
@@ -88,7 +113,8 @@ and uninstalled a local app. 1440-wide light and 375-wide dark layouts had no
 horizontal overflow; the only console error was the deliberate ChatGPT 400.
 
 Left open by that pass (ACP runs, app opening and isolation, and real backend
-checks were built afterwards; see the section above): VS Code only reports
+checks were built afterwards, and a first live model run was recorded; see the
+sections above): VS Code only reports
 whether `code-server` is on PATH; ChatGPT tokens, once a real flow exists, must
 move from plain JSON into the encrypted key store. No live provider, Docker
 engine or OpenAI account was used.

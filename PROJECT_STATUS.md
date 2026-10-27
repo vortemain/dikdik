@@ -25,7 +25,8 @@ an OpenAI-compatible gateway (/v1/models, /v1/chat/completions,
 /v1/responses) that runs one ordinary Dikdik agent task per request, always
 keyed and with consent explicit per request.
 The parity audit (docs/PARITY.md) moved from 89 to 425 fully matched OpenHands sub-features
-of 1,749. Live model-provider and live-Docker runs are still not recorded.
+of 1,749. One live model run is recorded (OpenRouter, GLM 5.2: the example bug fixed
+for $0.0028); live-Docker runs are still not recorded.
 
 Test status (2026-10-27): Python **521 passed, 3 skipped** (524 run); Bun
 **105 passed / 490 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
@@ -154,8 +155,8 @@ Test status (2026-10-27): Python **521 passed, 3 skipped** (524 run); Bun
 ## Blockers / limits
 
 - Docker Linux daemon unavailable; no real container boundary/acceptance pass.
-- No real provider credentials used or charged model task executed; live behavior,
-  usage and repair success are unverified.
+- One live provider task only (OpenRouter `z-ai/glm-5.2`, `examples/repair`, completed,
+  $0.0028); reliability across tasks, other providers and repair loops is unverified.
 - No semantic index, arbitrary project runners, automatic apply, advanced delegation or
   public/hostile-repository release assurance.
 - Owner must select copyright/license terms; private frontend is `UNLICENSED`.

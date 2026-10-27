@@ -126,7 +126,8 @@ outside service": the ACP rows are now built, though no real agent CLI has run).
 
 Largest remaining gaps: live browser execution, VS Code serving, a sidebar rail
 for apps and in-tab backend switching, ChatGPT sign-in, and any recorded run
-against a live model provider, real ACP agent or Docker engine.
+against a real ACP agent or Docker engine. One live model run is recorded
+(OpenRouter, GLM 5.2); it does not change any grade on its own.
 
 ## Capability groups and acceptance gates
 

@@ -104,8 +104,11 @@ open in a sandboxed frame with no access to Dikdik, your files or the network.
 **Remote backends** can be checked (a real request to their `/health`) and opened
 in a new tab. ChatGPT sign-in is not available yet.
 
-**Not yet:** a desktop app, and any recorded run against a live model provider or
-Docker engine. See [the parity audit](docs/PARITY.md) and
+**Live so far:** one agent task through OpenRouter (`z-ai/glm-5.2`) fixed the
+example bug for $0.0028; see the verification record.
+
+**Not yet:** a desktop app, and any recorded run against a live Docker engine or
+a real ACP agent CLI. See [the parity audit](docs/PARITY.md) and
 [the verification record](docs/VERIFICATION.md).
 
 ## Run without installation
