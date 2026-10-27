@@ -433,6 +433,9 @@ def make_server(engine: Engine, port: int, token: str):
                 if path == "/api/apps":
                     self.reply(200, {"apps": engine.apps.list()})
                     return
+                if path == "/api/worktrees":
+                    self.reply(200, {"worktrees": engine.worktrees.list()})
+                    return
                 if path.startswith("/api/apps/") and path.endswith("/bundle") and path.count("/") == 4:
                     app_name = path.split("/")[3]
                     raw, mime = engine.apps.bundle(app_name, "index.html")
@@ -641,6 +644,17 @@ def make_server(engine: Engine, port: int, token: str):
                         self.reply(201, engine.apps.install(body))
                     except ValueError as exc:
                         self.reply(400, {"error": str(exc)})
+                elif path == "/api/worktrees" and isinstance(body, dict):
+                    task_id = body.get("task_id", "")
+                    branch = body.get("branch")
+                    if not isinstance(task_id, str) or not task_id.strip():
+                        self.reply(400, {"error": "task_id is required"})
+                        return
+                    try:
+                        wt_path = engine.worktrees.create(task_id, branch)
+                        self.reply(201, {"task": task_id, "path": str(wt_path)})
+                    except ValueError as exc:
+                        self.reply(400, {"error": str(exc)})
                 elif path.startswith("/api/apps/") and path.endswith("/enable") and path.count("/") == 4:
                     app_name = path.split("/")[3]
                     try:
@@ -793,6 +807,13 @@ def make_server(engine: Engine, port: int, token: str):
                         self.reply(200, {"deleted": path.split("/")[3]})
                     except KeyError:
                         self.reply(404, {"error": "App not found"})
+                    return
+                if path.startswith("/api/worktrees/") and method == "DELETE" and path.count("/") == 3:
+                    try:
+                        engine.worktrees.remove(path.split("/")[3])
+                        self.reply(200, {"removed": path.split("/")[3]})
+                    except KeyError:
+                        self.reply(404, {"error": "Worktree not found"})
                     return
                 if path.startswith("/api/tasks/") and path.count("/") == 3:
                     task = path.split("/")[3]
