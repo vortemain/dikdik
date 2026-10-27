@@ -29,9 +29,10 @@ from .secrets_store import SecretsError, SecretsStore
 from .skills import SkillIndex
 from .plugins import fill_prompt
 from .skills_market import InstallConflict, SkillStore
+from .webhooks import WebhookStore
 
 ROUTE_PREFIXES = ("/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts",
-                  "/api/connections", "/api/routers", "/api/model-catalog", "/api/plugins")
+                  "/api/connections", "/api/routers", "/api/model-catalog", "/api/plugins", "/api/webhooks")
 MANAGED_PREFIX = ("conn.", OAUTH_PREFIX)  # provider connection keys and MCP sign-ins; managed there, hidden from API keys
 
 
@@ -45,6 +46,7 @@ def build_routes(engine_or_stores):
     market = SkillStore(stores.data, stores.store)
     automations = stores.automation
     automation_git = AutomationGitSync(stores, automations)
+    webhooks = getattr(stores, "webhooks", None) or WebhookStore(stores.store)
     drafts = Drafts(stores.store)
     connections = ConnectionStore(stores.store, secrets)
     routers = getattr(stores, "routers", None) or RouterStore(stores.store)
@@ -359,6 +361,21 @@ def build_routes(engine_or_stores):
             return 200, agents.delete(parts[2])
         return None
 
+    def webhook_routes(method, parts, body, query):
+        if method == "GET" and len(parts) == 2:
+            return 200, webhooks.list()
+        if method == "POST" and len(parts) == 2:
+            return 201, webhooks.create(body, time.time())
+        if len(parts) == 3:
+            if method == "GET":
+                return 200, webhooks.get(parts[2])
+            if method == "PATCH":
+                return 200, webhooks.update(parts[2], body)
+            if method == "DELETE":
+                webhooks.delete(parts[2])
+                return 200, {"deleted": parts[2]}
+        return None
+
     def rename_references(old: str, new: str) -> None:
         """Model profiles, MCP servers and agent profiles keep pointing at a renamed key."""
         with stores.store.connect() as db:
@@ -387,6 +404,7 @@ def build_routes(engine_or_stores):
         "/api/automations": automations_routes,
         "/api/mcp": mcp_routes,
         "/api/agent-profiles": agent_routes,
+        "/api/webhooks": webhook_routes,
     }
 
     def ref_valid(ref) -> bool:

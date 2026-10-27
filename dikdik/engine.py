@@ -38,6 +38,7 @@ from .sandbox import cleanup_container
 from .secrets_store import SecretsStore
 from .skills import SkillIndex
 from .store import Store
+from .webhooks import WebhookStore
 
 
 TERMINAL = {"completed", "failed", "blocked", "cancelled", "interrupted", "draft", "paused"}
@@ -156,6 +157,7 @@ class Engine:
         self.confirmations = Confirmations()
         self.secret_requests = SecretRequests()
         self.attachments = Attachments(self.store, data / "attachments")
+        self.webhooks = WebhookStore(self.store)
         with self.store.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS goals (task_id TEXT PRIMARY KEY, objective TEXT NOT NULL, max_turns INTEGER NOT NULL, turns INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created REAL NOT NULL)")
         self.plugins = PluginStore(data, root, self.store, self.mcp)
@@ -858,6 +860,12 @@ class Engine:
                 if result is not None:
                     result = {**result, "tests_verified": False, "error": "Interrupted by user" if interrupted else "Cancelled"}
             self.store.state(task, state, result)
+            if state in {"completed", "failed", "blocked", "cancelled", "interrupted"}:
+                try:
+                    self.webhooks.fire(task, state, time.time(),
+                                       reveal=lambda ref: self.models.secrets.reveal(ref) if ref else None)
+                except Exception:
+                    pass  # webhooks never break the task
         changed = (result or {}).get("changed_files") if isinstance(result, dict) else None
         if changed:
             with self.store.connect() as db:
