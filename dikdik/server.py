@@ -177,6 +177,36 @@ def make_server(engine: Engine, port: int, token: str):
             state, _ = engine.store.events_after(task, after, 0)  # 404s before any header is sent
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+            self.end_headers()
+            self.close_connection = True
+            last, live, quiet, deadline = after, None, time.monotonic(), time.monotonic() + 900
+            try:
+                while time.monotonic() < deadline:
+                    state, events = engine.store.events_after(task, last)
+                    out = []
+                    for event in events:
+                        last = event["seq"]
+                        out.append(f"id: {last}\nevent: task\ndata: {json.dumps(event)}\n\n")
+                    text = engine.live.get(task)
+                    if text != live:
+                        live = text
+                        out.append(f"event: delta\ndata: {json.dumps({'text': text or ''})}\n\n")
+                    if not events and state in TERMINAL and not engine.busy(task) and not engine.bash.busy(task) and not engine.browser.busy(task):
+                        out.append(f"event: end\ndata: {json.dumps({'state': state})}\n\n")
+                    if not out and time.monotonic() - quiet > 15:
+                        out.append(": keep-alive\n\n")
+                    if out:
+                        self.wfile.write("".join(out).encode())
+                        self.wfile.flush()
+                        quiet = time.monotonic()
+                        if out[-1].startswith("event: end"):
+                            return
+                    time.sleep(0.2)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                return
 
         def websocket(self, task, after):
             """Upgrade to a WebSocket and stream task events bidirectionally."""
