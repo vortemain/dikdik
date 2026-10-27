@@ -39,6 +39,8 @@
   --diff-del-ink: #a8322a;
   --diff-hunk: #eef1fb;
   --diff-hunk-ink: #4559a6;
+  --tok-keyword: #a3215f; --tok-string: #2f7a3d; --tok-comment: #8a8a85; --tok-number: #a85a00; --tok-fn: #2b55b5;
+  --tok-type: #7a4bb5; --tok-builtin: #b5462b; --tok-attr: #1f6f8b; --tok-meta: #7d6b00; --tok-tag: #2b55b5;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / .04);
   --shadow: 0 1px 2px rgb(0 0 0 / .04), 0 4px 16px rgb(0 0 0 / .05);
   --shadow-lg: 0 8px 40px rgb(0 0 0 / .16);
@@ -93,6 +95,8 @@
   --diff-del-ink: #f2a09a;
   --diff-hunk: #222a40;
   --diff-hunk-ink: #9fb0ec;
+  --tok-keyword: #f08ab8; --tok-string: #9dd49a; --tok-comment: #85857f; --tok-number: #f2b36a; --tok-fn: #8fb4f5;
+  --tok-type: #c9a6f2; --tok-builtin: #f29b85; --tok-attr: #7fcbe0; --tok-meta: #e0cf6a; --tok-tag: #8fb4f5;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / .3);
   --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 4px 16px rgb(0 0 0 / .25);
   --shadow-lg: 0 12px 48px rgb(0 0 0 / .5);
@@ -106,6 +110,7 @@
     --danger: #f0857c; --danger-soft: #3a2220; --warn: #e0b45c; --warn-soft: #362c18; --ok: #7cc29b; --ok-soft: #1f3329;
     --code-bg: #1e1e1d; --code-head: #262625;
     --diff-add: #1b3324; --diff-add-ink: #8fd6a8; --diff-del: #3b201e; --diff-del-ink: #f2a09a; --diff-hunk: #222a40; --diff-hunk-ink: #9fb0ec;
+    --tok-keyword: #f08ab8; --tok-string: #9dd49a; --tok-comment: #85857f; --tok-number: #f2b36a; --tok-fn: #8fb4f5; --tok-type: #c9a6f2; --tok-builtin: #f29b85; --tok-attr: #7fcbe0; --tok-meta: #e0cf6a; --tok-tag: #8fb4f5;
     --shadow-sm: 0 1px 2px rgb(0 0 0 / .3); --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 4px 16px rgb(0 0 0 / .25); --shadow-lg: 0 12px 48px rgb(0 0 0 / .5);
   }
 }
@@ -350,6 +355,34 @@ div.conv-item:hover .conv-more, div.conv-item:focus-within .conv-more, div.conv-
 
 /* diff lines (chat code blocks and the canvas) */
 .dl { display: block; padding: 0 14px; margin: 0 -14px; min-width: max-content; }
+.file-badge { flex: 0 0 auto; display: inline-grid; place-items: center; min-width: 18px; height: 14px; padding: 0 2px; border-radius: 3px;
+  font: 700 8.5px/1 var(--mono, ui-monospace, monospace); letter-spacing: -.02em; color: #fff; background: #8a8a85; }
+.badge-py { background: #3572a5; } .badge-ts { background: #3178c6; } .badge-js { background: #c9a700; color: #1d1d1f; }
+.badge-json { background: #8a6d3b; } .badge-md { background: #4a6fa5; } .badge-rs { background: #b7410e; } .badge-go { background: #00a7d0; }
+.badge-java { background: #b07219; } .badge-c { background: #555c9a; } .badge-rb { background: #b22f2a; } .badge-sh { background: #3d8b4e; }
+.badge-css { background: #6a3fb0; } .badge-html { background: #d9532c; } .badge-img { background: #a14a8c; } .badge-yaml { background: #8b6e2c; }
+.badge-muted { background: var(--faint); }
+.tree-row { background-image: repeating-linear-gradient(to right, transparent 0 calc(12px - 1px), var(--line) calc(12px - 1px) 12px);
+  background-size: calc(var(--depth, 0) * 12px) 100%; background-repeat: no-repeat; background-position: 10px 0; }
+.crumb { color: var(--muted); } .crumb-file { color: var(--ink); font-weight: 600; } .crumb-sep { color: var(--faint); margin: 0 4px; }
+#file-name { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+.projects-current-text { flex: 1 1 auto; min-width: 0; }
+.git-remote { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin-bottom: 12px; }
+.git-remote-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.git-remote-row select { max-width: 220px; }
+.git-sync-state { font-size: 12.5px; margin-left: auto; }
+.git-hint { margin: 0; font-size: 12.5px; }
+.tok-keyword { color: var(--tok-keyword); }
+.tok-string { color: var(--tok-string); }
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-number { color: var(--tok-number); }
+.tok-fn { color: var(--tok-fn); }
+.tok-type { color: var(--tok-type); }
+.tok-builtin { color: var(--tok-builtin); }
+.tok-attr { color: var(--tok-attr); }
+.tok-meta { color: var(--tok-meta); }
+.tok-tag { color: var(--tok-tag); }
+.tok-heading { color: var(--tok-keyword); font-weight: 600; }
 .dl-add { background: var(--diff-add); color: var(--diff-add-ink); }
 .dl-del { background: var(--diff-del); color: var(--diff-del-ink); }
 .dl-hunk { background: var(--diff-hunk); color: var(--diff-hunk-ink); }

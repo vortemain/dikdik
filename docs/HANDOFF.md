@@ -10,7 +10,7 @@ over mid-way. Newer than `docs/CODEX_HANDOFF.md` and `docs/NEXT_PHASES_PROMPT.md
   `C:\Projects\Dikdik\.claude\worktrees\verify-requirements-testing-588525`.
   `main` was last fast-forwarded to `e9d5fcb`. Never push or open PRs unless the
   owner asks; merging into `main` locally only when the owner asks.
-- **Last updated:** 2026-10-28, after the local-mode phase (see the table below).
+- **Last updated:** 2026-10-28, after phase 6 (Git without tokens).
 
 ## 1. What Dikdik is now (owner decisions, 2026-10-28)
 
@@ -53,13 +53,13 @@ health checks, first live model run (OpenRouter `z-ai/glm-5.2`, $0.0028).
 
 | # | Phase | Status | Commit |
 |---|---|---|---|
-| 1 | Projects: open/new/clone/recent, `dikdik` in any folder | Done, browser-checked | see `git log` |
-| 2 | Run on this computer, permission modes, Always allow | Done, browser-checked with stand-in model | see `git log` |
-| 3 | One-time trust, simpler composer | Done, browser-checked | see `git log` |
-| 4 | Direct edits, checkpoints, Undo | Done, browser-checked | see `git log` |
-| 5 | Code colouring + VS Code-style files view + Open in VS Code | **Next** | |
-| 6 | Git push / pull / branch / PR without tokens | To do | |
-| 7 | Browser panel that looks like a real browser | To do | |
+| 1 | Projects: open/new/clone/recent, `dikdik` in any folder | Done, browser-checked | `4d1add4` |
+| 2 | Run on this computer, permission modes, Always allow | Done, browser-checked with stand-in model | `4d1add4` |
+| 3 | One-time trust, simpler composer | Done, browser-checked | `4d1add4` |
+| 4 | Direct edits, checkpoints, Undo | Done, browser-checked | `4d1add4` |
+| 5 | Code colouring (`web/highlight.ts`) + files view (type badges, indent guides, breadcrumb) + Open in VS Code (`/api/files/open-in-editor`) | Done, browser-checked (Open in VS Code tested with a mocked launch only) | next commit |
+| 6 | Git: remote status, fetch, pull (ff-only), push (approval per push), branch create/switch, Create PR via `gh` (`gitops.remote_info/fetch/pull/push/switch_branch/create_pr`, `/api/git/*`) | Done, browser-checked against a local bare remote; Create PR tested with `gh` mocked | next commit |
+| 7 | Browser panel that looks like a real browser | **Next** | |
 | 8 | Cloud: run Dikdik on a remote machine | To do | |
 
 Update this table (and section 1 if behaviour changed) at the end of every phase.

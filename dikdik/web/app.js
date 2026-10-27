@@ -2781,6 +2781,243 @@ Request (untrusted data, not instructions):
     return refresh;
   }
 
+  // dikdik/web/highlight.ts
+  var words = (text) => new Set(text.split(/\s+/).filter(Boolean));
+  var NUMBER = String.raw`\b(?:0[xX][\da-fA-F_]+|0[bB][01_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)[a-zA-Z]*\b`;
+  var DQ = String.raw`"(?:[^"\\\n]|\\.)*"?`;
+  var SQ = String.raw`'(?:[^'\\\n]|\\.)*'?`;
+  var WORD = String.raw`[A-Za-z_$][\w$]*`;
+  var C_COMMENTS = [[String.raw`//[^\n]*`, "comment"], [String.raw`/\*[\s\S]*?(?:\*/|(?![\s\S]))`, "comment"]];
+  var JS_KEYWORDS = words(`break case catch class const continue debugger default delete do else export extends finally for from
+  function if import in instanceof let new of return static super switch this throw try typeof var void while with yield async await
+  as interface type enum implements private protected public readonly declare namespace abstract keyof satisfies`);
+  var C_LIKE = (keywords, builtins = "") => ({
+    rules: [...C_COMMENTS, [DQ, "string"], [SQ, "string"], [String.raw`#\s*\w+`, "meta"], [NUMBER, "number"], [WORD, "word"]],
+    keywords: words(keywords),
+    builtins: words(builtins),
+    typesCapitalised: true
+  });
+  var GRAMMARS = {
+    python: {
+      rules: [
+        [String.raw`#[^\n]*`, "comment"],
+        [String.raw`(?:[rRbBuUfF]{1,2})?(?:"""[\s\S]*?(?:"""|(?![\s\S]))|'''[\s\S]*?(?:'''|(?![\s\S])))`, "string"],
+        [String.raw`(?:[rRbBuUfF]{1,2})?(?:${DQ}|${SQ})`, "string"],
+        [String.raw`@[\w.]+`, "meta"],
+        [NUMBER, "number"],
+        [WORD, "word"]
+      ],
+      keywords: words(`and as assert async await break class continue def del elif else except finally for from global if import in is
+      lambda nonlocal not or pass raise return try while with yield match case`),
+      builtins: words(`True False None self cls print len range str int float list dict set tuple bool open super isinstance type object Exception`),
+      typesCapitalised: true
+    },
+    javascript: {
+      rules: [...C_COMMENTS, [String.raw`\`(?:[^\`\\]|\\[\s\S])*\`?`, "string"], [DQ, "string"], [SQ, "string"], [NUMBER, "number"], [WORD, "word"]],
+      keywords: JS_KEYWORDS,
+      builtins: words(`true false null undefined NaN Infinity console window document globalThis Promise JSON Math`),
+      typesCapitalised: true
+    },
+    json: { rules: [[String.raw`"(?:[^"\\\n]|\\.)*"(?=\s*:)`, "attr"], [DQ, "string"], [NUMBER, "number"], [String.raw`\b(?:true|false|null)\b`, "builtin"]] },
+    bash: {
+      rules: [
+        [String.raw`(?:^|(?<=\s))#[^\n]*`, "comment"],
+        [DQ, "string"],
+        [SQ, "string"],
+        [String.raw`\$(?:\{[^}\n]*\}|\w+|[@#?$!*\d])`, "attr"],
+        [String.raw`(?<=\s)--?[\w-]+`, "meta"],
+        [NUMBER, "number"],
+        [WORD, "word"]
+      ],
+      keywords: words(`if then else elif fi for in do done while until case esac function return export local readonly set unset shift exit break continue`),
+      builtins: words(`echo cd ls cat grep sed awk git npm npx bun python pip cargo node mkdir rm cp mv touch chmod sudo curl docker make source test`)
+    },
+    rust: {
+      rules: [
+        ...C_COMMENTS,
+        [String.raw`r#*"[\s\S]*?"#*`, "string"],
+        [DQ, "string"],
+        [String.raw`'[a-zA-Z_]\w*\b(?!')`, "meta"],
+        [SQ, "string"],
+        [String.raw`#!?\[[^\]\n]*\]`, "meta"],
+        [String.raw`\b[a-z_]\w*!`, "fn"],
+        [NUMBER, "number"],
+        [WORD, "word"]
+      ],
+      keywords: words(`as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref
+      return self Self static struct super trait type unsafe use where while`),
+      builtins: words(`true false Some None Ok Err Vec String Option Result Box usize isize u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 bool str char`),
+      typesCapitalised: true
+    },
+    go: C_LIKE(`break case chan const continue default defer else fallthrough for func go goto if import interface map package range
+    return select struct switch type var`, `true false nil iota string int int64 float64 bool error byte rune make len append new panic`),
+    java: C_LIKE(`abstract boolean break byte case catch char class const continue default do double else enum extends final finally float
+    for if implements import instanceof int interface long native new package private protected public return short static super switch
+    synchronized this throw throws try void volatile while var record`, `true false null String System`),
+    c: C_LIKE(`auto break case char const continue default do double else enum extern float for goto if inline int long register return
+    short signed sizeof static struct switch typedef union unsigned void volatile while class namespace template typename public private
+    protected virtual override new delete using try catch throw nullptr bool true false auto constexpr`, `NULL std size_t printf`),
+    ruby: {
+      rules: [[String.raw`#[^\n]*`, "comment"], [DQ, "string"], [SQ, "string"], [String.raw`:[A-Za-z_]\w*`, "attr"], [String.raw`@{1,2}\w+`, "meta"], [NUMBER, "number"], [WORD, "word"]],
+      keywords: words(`alias and begin break case class def defined do else elsif end ensure false for if in module next nil not or redo rescue
+      retry return self super then true undef unless until when while yield require attr_accessor`),
+      typesCapitalised: true
+    },
+    html: {
+      rules: [
+        [String.raw`<!--[\s\S]*?(?:-->|(?![\s\S]))`, "comment"],
+        [String.raw`</?[A-Za-z][\w:-]*|/?>`, "tag"],
+        [String.raw`\b[\w:-]+(?==)`, "attr"],
+        [DQ, "string"],
+        [SQ, "string"],
+        [String.raw`&[#\w]+;`, "builtin"]
+      ]
+    },
+    css: {
+      rules: [
+        [String.raw`/\*[\s\S]*?(?:\*/|(?![\s\S]))`, "comment"],
+        [DQ, "string"],
+        [SQ, "string"],
+        [String.raw`@[\w-]+`, "keyword"],
+        [String.raw`#[\da-fA-F]{3,8}\b`, "number"],
+        [String.raw`-?\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|dvh|s|ms|deg|fr)?\b`, "number"],
+        [String.raw`[\w-]+(?=\s*:(?!:))`, "attr"],
+        [String.raw`[.#][\w-]+|::?[\w-]+`, "type"],
+        [String.raw`\b(?:var|calc|rgba?|hsla?|min|max|clamp|url)(?=\()`, "fn"]
+      ]
+    },
+    yaml: {
+      rules: [
+        [String.raw`#[^\n]*`, "comment"],
+        [String.raw`^[ \t]*-?[ \t]*[\w.-]+(?=\s*:)`, "attr"],
+        [DQ, "string"],
+        [SQ, "string"],
+        [String.raw`\b(?:true|false|null|yes|no|on|off)\b`, "builtin"],
+        [NUMBER, "number"],
+        [String.raw`[&*][\w-]+`, "meta"]
+      ]
+    },
+    toml: {
+      rules: [
+        [String.raw`#[^\n]*`, "comment"],
+        [String.raw`^\s*\[\[?[^\]\n]*\]\]?`, "type"],
+        [String.raw`^[ \t]*[\w.-]+(?=\s*=)`, "attr"],
+        [String.raw`"""[\s\S]*?(?:"""|(?![\s\S]))`, "string"],
+        [DQ, "string"],
+        [SQ, "string"],
+        [String.raw`\b(?:true|false)\b`, "builtin"],
+        [NUMBER, "number"]
+      ]
+    },
+    markdown: {
+      rules: [
+        [String.raw`^#{1,6} [^\n]*`, "heading"],
+        [String.raw`^\`\`\`[^\n]*`, "meta"],
+        [String.raw`\`[^\`\n]+\``, "string"],
+        [String.raw`\*\*[^*\n]+\*\*|__[^_\n]+__`, "keyword"],
+        [String.raw`\[[^\]\n]*\]\([^)\n]*\)`, "attr"],
+        [String.raw`^[ \t]*(?:[-*+]|\d+\.)(?= )`, "meta"]
+      ]
+    }
+  };
+  var ALIASES = {
+    py: "python",
+    typescript: "javascript",
+    ts: "javascript",
+    tsx: "javascript",
+    jsx: "javascript",
+    js: "javascript",
+    mjs: "javascript",
+    sh: "bash",
+    shell: "bash",
+    zsh: "bash",
+    console: "bash",
+    powershell: "bash",
+    ps1: "bash",
+    rs: "rust",
+    golang: "go",
+    cpp: "c",
+    "c++": "c",
+    h: "c",
+    hpp: "c",
+    cs: "java",
+    csharp: "java",
+    kotlin: "java",
+    kt: "java",
+    swift: "java",
+    rb: "ruby",
+    xml: "html",
+    svg: "html",
+    vue: "html",
+    scss: "css",
+    less: "css",
+    yml: "yaml",
+    md: "markdown",
+    jsonc: "json"
+  };
+  var compiled = new Map;
+  var HIGHLIGHT_LIMIT = 300000;
+  function grammarFor(lang) {
+    const name = ALIASES[lang.toLowerCase()] ?? lang.toLowerCase();
+    return name in GRAMMARS ? name : null;
+  }
+  function highlight(text, lang) {
+    const name = grammarFor(lang);
+    if (!name || !text || text.length > HIGHLIGHT_LIMIT)
+      return [["", text]];
+    const grammar = GRAMMARS[name];
+    let pattern = compiled.get(name);
+    if (!pattern) {
+      pattern = new RegExp(grammar.rules.map(([source]) => `(${source})`).join("|"), "gm");
+      compiled.set(name, pattern);
+    }
+    pattern.lastIndex = 0;
+    const tokens = [];
+    let last = 0;
+    const push = (kind, value) => {
+      if (!value)
+        return;
+      const previous = tokens[tokens.length - 1];
+      if (previous && previous[0] === kind)
+        previous[1] += value;
+      else
+        tokens.push([kind, value]);
+    };
+    for (let match = pattern.exec(text);match; match = pattern.exec(text)) {
+      if (match[0] === "") {
+        pattern.lastIndex++;
+        continue;
+      }
+      const group = match.findIndex((value, index) => index > 0 && value !== undefined);
+      const rule = grammar.rules[group - 1];
+      push("", text.slice(last, match.index));
+      let kind = rule[1] === "word" ? "" : rule[1];
+      if (rule[1] === "word") {
+        const word = match[0];
+        const next = text.slice(match.index + word.length).match(/^\s*(.)/)?.[1];
+        kind = grammar.keywords?.has(word) ? "keyword" : grammar.builtins?.has(word) ? "builtin" : next === "(" ? "fn" : grammar.typesCapitalised && /^[A-Z][a-z0-9]/.test(word) ? "type" : "";
+      }
+      push(kind, match[0]);
+      last = match.index + match[0].length;
+    }
+    push("", text.slice(last));
+    return tokens;
+  }
+  function highlightLines(text, lang) {
+    const lines = [[]];
+    for (const [kind, value] of highlight(text, lang)) {
+      const parts = value.split(`
+`);
+      parts.forEach((part, index) => {
+        if (index > 0)
+          lines.push([]);
+        if (part)
+          lines[lines.length - 1].push([kind, part]);
+      });
+    }
+    return lines;
+  }
+
   // dikdik/web/organise.ts
   var RUNNING = new Set(["queued", "running"]);
   var ATTENTION = new Set(["paused", "failed", "blocked", "interrupted"]);
@@ -3153,6 +3390,9 @@ Request (untrusted data, not instructions):
 ` : ""));
     });
   }
+  function tokenNodes(tokens) {
+    return tokens.map(([kind, value]) => kind ? make("span", `tok tok-${kind}`, value) : document.createTextNode(value));
+  }
   function codeBlock(text, lang = "", options = {}) {
     const block = make("div", options.wrap ? "code-block wrap" : "code-block");
     const head = make("div", "code-head");
@@ -3161,7 +3401,7 @@ Request (untrusted data, not instructions):
     if (lang === "diff" || !lang && looksLikeDiff(text))
       code.append(...diffLines(text));
     else
-      code.textContent = text;
+      code.append(...tokenNodes(highlight(text, lang)));
     pre.append(code);
     block.append(head, pre);
     return block;
@@ -4419,20 +4659,21 @@ Request (untrusted data, not instructions):
       rememberTab(path);
       for (const folder of parentFolders(path))
         expandedDirs.add(folder);
-      el("file-name").textContent = path;
+      el("file-name").replaceChildren(...path.split("/").flatMap((part, index, parts) => index < parts.length - 1 ? [make("span", "crumb", part), make("span", "crumb-sep", "›")] : [make("span", "crumb crumb-file", part)]));
+      el("open-editor").hidden = false;
       const markdown = /\.(md|markdown)$/i.test(path);
       el("file-preview").hidden = !markdown;
       if (!markdown)
         filePreview = false;
       showFilePreview();
       renderFileTabs();
-      const lines = data.text.split(`
-`);
-      if (lines.length > 1 && lines[lines.length - 1] === "")
+      const lines = highlightLines(data.text, languageFor(path));
+      if (lines.length > 1 && !lines[lines.length - 1].length)
         lines.pop();
       el("file-view").replaceChildren(...lines.map((line, index) => {
-        const span = make("span", "ln", line + `
-`);
+        const span = make("span", "ln");
+        span.append(...tokenNodes(line), document.createTextNode(`
+`));
         span.dataset.n = String(index + 1);
         return span;
       }));
@@ -4445,6 +4686,91 @@ Request (untrusted data, not instructions):
     } catch (error) {
       message(error instanceof Error ? error.message : "Could not open the file", true);
     }
+  }
+  async function remoteBar() {
+    const bar = make("section", "git-remote");
+    let remote;
+    try {
+      remote = await api("/api/git/remote");
+    } catch {
+      bar.append(make("p", "muted", "Remote status unavailable."));
+      return bar;
+    }
+    const run = async (button3, route, body, done) => {
+      const label = button3.textContent;
+      button3.disabled = true;
+      button3.textContent = "Working…";
+      try {
+        const value = await request(route, "POST", body);
+        message(done(value));
+        await loadGit();
+      } catch (error) {
+        message(error instanceof Error ? error.message : "Git failed", true);
+        button3.disabled = false;
+        button3.textContent = label;
+      }
+    };
+    const top = make("div", "git-remote-row");
+    const picker = make("select");
+    picker.setAttribute("aria-label", "Branch");
+    for (const name of remote.branches) {
+      const option = make("option", "", name);
+      option.value = name;
+      option.selected = name === remote.branch;
+      picker.append(option);
+    }
+    picker.onchange = () => {
+      run(newBranch, "/api/git/branch", { name: picker.value }, () => `Switched to ${picker.value}.`);
+    };
+    const newBranch = make("button", "ghost small", "New branch");
+    newBranch.type = "button";
+    newBranch.onclick = () => {
+      const name = prompt("New branch name (from the current commit):", "");
+      if (name?.trim())
+        run(newBranch, "/api/git/branch", { name: name.trim(), create: true }, () => `Created and switched to ${name.trim()}.`);
+    };
+    const where = remote.upstream ? `${remote.upstream} · ↑${remote.ahead ?? 0} ↓${remote.behind ?? 0}` : Object.keys(remote.remotes).length ? "Not pushed yet" : "No remote";
+    top.append(picker, newBranch, make("span", "muted git-sync-state", where));
+    const actions = make("div", "git-remote-row");
+    const button2 = (text, title) => {
+      const b = make("button", "small", text);
+      b.type = "button";
+      b.title = title;
+      return b;
+    };
+    const fetchButton = button2("Fetch", "Download what changed on the remote, without touching your files");
+    fetchButton.onclick = () => {
+      run(fetchButton, "/api/git/fetch", {}, () => "Fetched.");
+    };
+    const pullButton = button2("Pull", "Bring your branch up to date (fast-forward only; never creates a merge)");
+    pullButton.disabled = !remote.upstream || !remote.behind;
+    pullButton.onclick = () => {
+      run(pullButton, "/api/git/pull", {}, () => "Up to date with the remote.");
+    };
+    const pushButton = button2(remote.upstream ? "Push" : "Publish branch", "Send your commits to the remote with this computer's Git sign-in");
+    pushButton.disabled = !Object.keys(remote.remotes).length || !!remote.upstream && !remote.ahead;
+    pushButton.onclick = () => {
+      if (!confirm(`Push ${remote.branch ?? "this branch"} to ${remote.upstream ?? "origin"}? Everyone with access to the repository will see these commits.`))
+        return;
+      run(pushButton, "/api/git/push", { approve_push: true }, () => "Pushed.");
+    };
+    const prButton = button2("Create PR", remote.gh.installed ? remote.gh.signed_in ? "Open a pull request for this branch with the GitHub CLI" : "Run `gh auth login` once to open pull requests" : "Install the GitHub CLI (gh) to open pull requests");
+    prButton.disabled = !remote.gh.signed_in || !remote.upstream;
+    prButton.onclick = () => {
+      const title = prompt("Pull request title (leave empty to use your commits):", "");
+      if (title === null || !confirm(`Open a pull request for ${remote.branch}?`))
+        return;
+      run(prButton, "/api/git/pr", { approve: true, ...title.trim() ? { title: title.trim(), body: "" } : {} }, (value) => {
+        if (typeof value.url === "string")
+          globalThis.open(value.url, "_blank", "noopener,noreferrer");
+        return value.existing ? `A pull request already exists: ${String(value.url ?? "")}` : `Opened ${String(value.url ?? "the pull request")}.`;
+      });
+    };
+    actions.append(fetchButton, pullButton, pushButton, prButton);
+    bar.append(top, actions);
+    if (!remote.gh.signed_in)
+      bar.append(make("p", "muted git-hint", remote.gh.installed ? "Pull requests: run `gh auth login` once in a terminal." : "Pull requests need the GitHub CLI (gh)."));
+    return bar;
   }
   async function loadGit() {
     const panel = el("git-panel");
@@ -4502,7 +4828,7 @@ Request (untrusted data, not instructions):
       if (!info.commits?.length)
         log.append(make("li", "muted", "No commits yet"));
       logBox.append(log);
-      panel.replaceChildren(head, ...info.status?.length ? [statusBox, form] : [statusBox], logBox);
+      panel.replaceChildren(head, await remoteBar(), ...info.status?.length ? [statusBox, form] : [statusBox], logBox);
     } catch (error) {
       panel.replaceChildren(make("p", "error", error instanceof Error ? error.message : "Git status unavailable"));
     }
@@ -6680,6 +7006,66 @@ Dikdik will read this folder, send what it reads to your model provider, ` + `ed
   input("condenser").addEventListener("change", () => {
     saveAppSetting({ condenser: input("condenser").checked });
   });
+  var BADGES = {
+    py: ["PY", "py"],
+    ts: ["TS", "ts"],
+    tsx: ["TS", "ts"],
+    js: ["JS", "js"],
+    jsx: ["JS", "js"],
+    mjs: ["JS", "js"],
+    json: ["{}", "json"],
+    md: ["MD", "md"],
+    rs: ["RS", "rs"],
+    go: ["GO", "go"],
+    java: ["JV", "java"],
+    c: ["C", "c"],
+    h: ["H", "c"],
+    cpp: ["C+", "c"],
+    rb: ["RB", "rb"],
+    sh: ["SH", "sh"],
+    ps1: ["PS", "sh"],
+    css: ["#", "css"],
+    scss: ["#", "css"],
+    html: ["<>", "html"],
+    xml: ["<>", "html"],
+    svg: ["SV", "img"],
+    png: ["IM", "img"],
+    jpg: ["IM", "img"],
+    gif: ["IM", "img"],
+    yml: ["YM", "yaml"],
+    yaml: ["YM", "yaml"],
+    toml: ["TM", "yaml"],
+    lock: ["LK", "muted"],
+    txt: ["TX", "muted"],
+    env: ["EN", "muted"],
+    cfg: ["CF", "muted"],
+    ini: ["CF", "muted"]
+  };
+  function fileBadge(name) {
+    const lower = name.toLowerCase();
+    const ext = lower.includes(".") ? lower.split(".").pop() ?? "" : "";
+    const [label, kind] = lower === "dockerfile" ? ["DK", "sh"] : lower.startsWith(".git") ? ["GI", "muted"] : BADGES[ext] ?? ["·", "muted"];
+    const badge = make("span", `file-badge badge-${kind}`, label);
+    badge.setAttribute("aria-hidden", "true");
+    return badge;
+  }
+  async function openInEditor(path, line) {
+    try {
+      await request("/api/files/open-in-editor", "POST", { path, ...line ? { line } : {} });
+      message(path === "." ? "Opened the project in VS Code." : `Opened ${path} in VS Code.`);
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Could not open VS Code", true);
+    }
+  }
+  el("open-editor").addEventListener("click", () => {
+    if (!openFile)
+      return;
+    const view = el("file-view"), first = [...view.querySelectorAll(".ln")].find((line) => line.offsetTop >= view.scrollTop);
+    openInEditor(openFile, Number(first?.dataset.n ?? 1));
+  });
+  el("project-open-editor").addEventListener("click", () => {
+    openInEditor(".");
+  });
   function treeRows(paths, changed) {
     return fileTree(paths, expandedDirs).map((row) => {
       const item = make("button", row.dir ? "tree-row tree-dir" : "tree-row");
@@ -6701,7 +7087,7 @@ Dikdik will read this folder, send what it reads to your model provider, ` + `ed
         };
       } else {
         item.setAttribute("aria-selected", String(row.path === openFile));
-        item.append(icon("file"), make("span", "tree-name", row.name));
+        item.append(fileBadge(row.name), make("span", "tree-name", row.name));
         if (changed.has(row.path))
           item.dataset.changed = "true";
         item.onclick = () => {

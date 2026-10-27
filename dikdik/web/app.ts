@@ -7,6 +7,7 @@ import { keysPane, modelsPane } from "./models-pane";
 import { skillsPane } from "./skills-pane";
 import { pluginsPane } from "./plugins-pane";
 import { mcpPane } from "./mcp-pane";
+import { highlight, highlightLines, type Token } from "./highlight";
 import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, workspacePath } from "./organise";
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
@@ -130,13 +131,17 @@ function diffLines(text: string): HTMLElement[] {
     return make("span", `dl dl-${kind}`, line + (index < lines.length - 1 ? "\n" : ""));
   });
 }
+/** Coloured spans for highlighter tokens; plain text stays a text node. */
+function tokenNodes(tokens: Token[]): Node[] {
+  return tokens.map(([kind, value]) => kind ? make("span", `tok tok-${kind}`, value) : document.createTextNode(value));
+}
 function codeBlock(text: string, lang = "", options: { wrap?: boolean } = {}): HTMLElement {
   const block = make("div", options.wrap ? "code-block wrap" : "code-block");
   const head = make("div", "code-head");
   head.append(make("span", "code-lang", lang || "text"), copyButton(() => text));
   const pre = make("pre"), code = make("code");
   if (lang === "diff" || (!lang && looksLikeDiff(text))) code.append(...diffLines(text));
-  else code.textContent = text;
+  else code.append(...tokenNodes(highlight(text, lang)));
   pre.append(code);
   block.append(head, pre);
   return block;
@@ -1067,16 +1072,19 @@ async function showFile(path: string, version: string): Promise<void> {
     openFile = path; fileVersion = data.version; fileText = data.text;
     rememberTab(path);
     for (const folder of parentFolders(path)) expandedDirs.add(folder);
-    el("file-name").textContent = path;
+    el("file-name").replaceChildren(...path.split("/").flatMap((part, index, parts) =>
+      index < parts.length - 1 ? [make("span", "crumb", part), make("span", "crumb-sep", "›")] : [make("span", "crumb crumb-file", part)]));
+    el("open-editor").hidden = false;
     const markdown = /\.(md|markdown)$/i.test(path);
     el("file-preview").hidden = !markdown;
     if (!markdown) filePreview = false;
     showFilePreview();
     renderFileTabs();
-    const lines = data.text.split("\n");
-    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    const lines = highlightLines(data.text, languageFor(path));
+    if (lines.length > 1 && !lines[lines.length - 1]!.length) lines.pop();
     el("file-view").replaceChildren(...lines.map((line, index) => {
-      const span = make("span", "ln", line + "\n");
+      const span = make("span", "ln");
+      span.append(...tokenNodes(line), document.createTextNode("\n"));
       span.dataset.n = String(index + 1);
       return span;
     }));
@@ -1092,6 +1100,61 @@ interface GitInfo {
   repo: boolean; installed: boolean; branch?: string; ahead?: number | null;
   status?: { path: string; status: string; staged: boolean }[];
   commits?: { short: string; subject: string; author: string; time: number }[];
+}
+interface RemoteInfo {
+  branch: string | null; branches: string[]; remotes: Record<string, string>; upstream: string | null;
+  ahead: number | null; behind: number | null; gh: { installed: boolean; signed_in: boolean };
+}
+/** Branches, sync with the remote and pull requests, all with this computer's own Git sign-in. */
+async function remoteBar(): Promise<HTMLElement> {
+  const bar = make("section", "git-remote");
+  let remote: RemoteInfo;
+  try { remote = await api<RemoteInfo>("/api/git/remote"); }
+  catch { bar.append(make("p", "muted", "Remote status unavailable.")); return bar; }
+  const run = async (button: HTMLButtonElement, route: string, body: Record<string, unknown>, done: (value: Record<string, unknown>) => string) => {
+    const label = button.textContent; button.disabled = true; button.textContent = "Working…";
+    try { const value = await request<Record<string, unknown>>(route, "POST", body); message(done(value)); await loadGit(); }
+    catch (error) { message(error instanceof Error ? error.message : "Git failed", true); button.disabled = false; button.textContent = label; }
+  };
+  const top = make("div", "git-remote-row");
+  const picker = make("select") as HTMLSelectElement;
+  picker.setAttribute("aria-label", "Branch");
+  for (const name of remote.branches) { const option = make("option", "", name) as HTMLOptionElement; option.value = name; option.selected = name === remote.branch; picker.append(option); }
+  picker.onchange = () => { void run(newBranch, "/api/git/branch", { name: picker.value }, () => `Switched to ${picker.value}.`); };
+  const newBranch = make("button", "ghost small", "New branch") as HTMLButtonElement; newBranch.type = "button";
+  newBranch.onclick = () => {
+    const name = prompt("New branch name (from the current commit):", "");
+    if (name?.trim()) void run(newBranch, "/api/git/branch", { name: name.trim(), create: true }, () => `Created and switched to ${name.trim()}.`);
+  };
+  const where = remote.upstream ? `${remote.upstream} · ↑${remote.ahead ?? 0} ↓${remote.behind ?? 0}` : Object.keys(remote.remotes).length ? "Not pushed yet" : "No remote";
+  top.append(picker, newBranch, make("span", "muted git-sync-state", where));
+  const actions = make("div", "git-remote-row");
+  const button = (text: string, title: string) => { const b = make("button", "small", text) as HTMLButtonElement; b.type = "button"; b.title = title; return b; };
+  const fetchButton = button("Fetch", "Download what changed on the remote, without touching your files");
+  fetchButton.onclick = () => { void run(fetchButton, "/api/git/fetch", {}, () => "Fetched."); };
+  const pullButton = button("Pull", "Bring your branch up to date (fast-forward only; never creates a merge)");
+  pullButton.disabled = !remote.upstream || !remote.behind;
+  pullButton.onclick = () => { void run(pullButton, "/api/git/pull", {}, () => "Up to date with the remote."); };
+  const pushButton = button(remote.upstream ? "Push" : "Publish branch", "Send your commits to the remote with this computer's Git sign-in");
+  pushButton.disabled = !Object.keys(remote.remotes).length || (!!remote.upstream && !remote.ahead);
+  pushButton.onclick = () => {
+    if (!confirm(`Push ${remote.branch ?? "this branch"} to ${remote.upstream ?? "origin"}? Everyone with access to the repository will see these commits.`)) return;
+    void run(pushButton, "/api/git/push", { approve_push: true }, () => "Pushed.");
+  };
+  const prButton = button("Create PR", remote.gh.installed ? (remote.gh.signed_in ? "Open a pull request for this branch with the GitHub CLI" : "Run `gh auth login` once to open pull requests") : "Install the GitHub CLI (gh) to open pull requests");
+  prButton.disabled = !remote.gh.signed_in || !remote.upstream;
+  prButton.onclick = () => {
+    const title = prompt("Pull request title (leave empty to use your commits):", "");
+    if (title === null || !confirm(`Open a pull request for ${remote.branch}?`)) return;
+    void run(prButton, "/api/git/pr", { approve: true, ...(title.trim() ? { title: title.trim(), body: "" } : {}) }, value => {
+      if (typeof value.url === "string") globalThis.open(value.url, "_blank", "noopener,noreferrer");
+      return value.existing ? `A pull request already exists: ${String(value.url ?? "")}` : `Opened ${String(value.url ?? "the pull request")}.`;
+    });
+  };
+  actions.append(fetchButton, pullButton, pushButton, prButton);
+  bar.append(top, actions);
+  if (!remote.gh.signed_in) bar.append(make("p", "muted git-hint", remote.gh.installed ? "Pull requests: run `gh auth login` once in a terminal." : "Pull requests need the GitHub CLI (gh)."));
+  return bar;
 }
 async function loadGit(): Promise<void> {
   const panel = el("git-panel");
@@ -1144,7 +1207,7 @@ async function loadGit(): Promise<void> {
     }
     if (!info.commits?.length) log.append(make("li", "muted", "No commits yet"));
     logBox.append(log);
-    panel.replaceChildren(head, ...(info.status?.length ? [statusBox, form] : [statusBox]), logBox);
+    panel.replaceChildren(head, await remoteBar(), ...(info.status?.length ? [statusBox, form] : [statusBox]), logBox);
   } catch (error) {
     panel.replaceChildren(make("p", "error", error instanceof Error ? error.message : "Git status unavailable"));
   }
@@ -2707,6 +2770,32 @@ select("confirmation-policy").addEventListener("change", () => { void saveAppSet
 input("condenser").addEventListener("change", () => { void saveAppSetting({ condenser: input("condenser").checked }); });
 
 // --- files: tree, tabs, Markdown preview, open from chat, resizable panel -------
+/** A small coloured badge per file type, like an editor's file icons (text only, no images). */
+const BADGES: Record<string, [string, string]> = {
+  py: ["PY", "py"], ts: ["TS", "ts"], tsx: ["TS", "ts"], js: ["JS", "js"], jsx: ["JS", "js"], mjs: ["JS", "js"], json: ["{}", "json"],
+  md: ["MD", "md"], rs: ["RS", "rs"], go: ["GO", "go"], java: ["JV", "java"], c: ["C", "c"], h: ["H", "c"], cpp: ["C+", "c"],
+  rb: ["RB", "rb"], sh: ["SH", "sh"], ps1: ["PS", "sh"], css: ["#", "css"], scss: ["#", "css"], html: ["<>", "html"], xml: ["<>", "html"],
+  svg: ["SV", "img"], png: ["IM", "img"], jpg: ["IM", "img"], gif: ["IM", "img"], yml: ["YM", "yaml"], yaml: ["YM", "yaml"],
+  toml: ["TM", "yaml"], lock: ["LK", "muted"], txt: ["TX", "muted"], env: ["EN", "muted"], cfg: ["CF", "muted"], ini: ["CF", "muted"],
+};
+function fileBadge(name: string): HTMLElement {
+  const lower = name.toLowerCase();
+  const ext = lower.includes(".") ? lower.split(".").pop() ?? "" : "";
+  const [label, kind] = lower === "dockerfile" ? ["DK", "sh"] : lower.startsWith(".git") ? ["GI", "muted"] : BADGES[ext] ?? ["·", "muted"];
+  const badge = make("span", `file-badge badge-${kind}`, label);
+  badge.setAttribute("aria-hidden", "true");
+  return badge;
+}
+async function openInEditor(path: string, line?: number): Promise<void> {
+  try { await request("/api/files/open-in-editor", "POST", { path, ...(line ? { line } : {}) }); message(path === "." ? "Opened the project in VS Code." : `Opened ${path} in VS Code.`); }
+  catch (error) { message(error instanceof Error ? error.message : "Could not open VS Code", true); }
+}
+el("open-editor").addEventListener("click", () => {
+  if (!openFile) return;
+  const view = el("file-view"), first = [...view.querySelectorAll<HTMLElement>(".ln")].find(line => line.offsetTop >= view.scrollTop);
+  void openInEditor(openFile, Number(first?.dataset.n ?? 1));
+});
+el("project-open-editor").addEventListener("click", () => { void openInEditor("."); });
 function treeRows(paths: string[], changed: Set<string>): HTMLElement[] {
   return fileTree(paths, expandedDirs).map(row => {
     const item = make("button", row.dir ? "tree-row tree-dir" : "tree-row");
@@ -2721,7 +2810,7 @@ function treeRows(paths: string[], changed: Set<string>): HTMLElement[] {
       item.onclick = () => { if (expandedDirs.has(row.path)) expandedDirs.delete(row.path); else expandedDirs.add(row.path); renderFileList(); };
     } else {
       item.setAttribute("aria-selected", String(row.path === openFile));
-      item.append(icon("file"), make("span", "tree-name", row.name));
+      item.append(fileBadge(row.name), make("span", "tree-name", row.name));
       if (changed.has(row.path)) item.dataset.changed = "true";
       item.onclick = () => { void showFile(row.path, changed.has(row.path) && selected ? "candidate" : "workspace"); };
     }

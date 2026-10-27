@@ -130,6 +130,22 @@ class _Wiring:
             self.routes.oauth.port = self.port
 
 
+def open_in_editor(root: Path, rel: str, line=None) -> dict:
+    """Open a project file (or the project, for ".") in the VS Code on this computer.
+    Only paths inside the project; the editor is the user's own `code` command."""
+    target = root.resolve() if rel in (".", "") else workspace_path(root, rel)
+    if not target.exists():
+        raise KeyError(rel)
+    editor = shutil.which("code")
+    if editor is None:
+        raise ValueError("VS Code's `code` command is not on PATH. In VS Code, run “Shell Command: Install 'code' command in PATH”.")
+    where = str(target) + (f":{int(line)}" if isinstance(line, int) and not isinstance(line, bool) and line > 0 and target.is_file() else "")
+    args = [editor, "--reuse-window", "--goto", where] if target.is_file() else [editor, str(target)]
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+    return {"opened": rel or ".", "editor": "VS Code"}
+
+
 def make_server(engine: Engine, port: int, token: str):
     wiring = _Wiring(engine)
     projects = Projects(engine, on_switch=wiring.wire)
@@ -628,6 +644,8 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(200, gitops.info(engine.root))
                 elif path.startswith("/api/git/") and path.endswith("/diff") and path.count("/") == 4:
                     self.reply(200, gitops.diff(engine.root, path.split("/")[3]))
+                elif path == "/api/git/remote":
+                    self.reply(200, gitops.remote_info(engine.root))
                 elif path == "/api/git/search":
                     query = parse_qs(urlsplit(self.path).query)
                     q = query.get("q", [""])[0]
@@ -801,9 +819,21 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(200, engine.undo(path.split("/")[3]))
                 elif path == "/api/commands/allowed/forget":
                     self.reply(200, {"commands": engine.forget_command(str(body.get("command") or ""))})
+                elif path == "/api/git/fetch":
+                    self.reply(200, gitops.fetch(engine.root))
+                elif path == "/api/git/pull":
+                    self.reply(200, gitops.pull(engine.root))
+                elif path == "/api/git/push":
+                    self.reply(200, gitops.push(engine.root, body.get("approve_push")))
+                elif path == "/api/git/branch":
+                    self.reply(200, gitops.switch_branch(engine.root, body.get("name"), body.get("create") is True))
+                elif path == "/api/git/pr":
+                    self.reply(200, gitops.create_pr(engine.root, body))
                 elif path == "/api/git/commit":
                     activity["last"] = time.monotonic()
                     self.reply(200, gitops.commit(engine.root, body.get("message"), body.get("files"), engine.git_identity()))
+                elif path == "/api/files/open-in-editor":
+                    self.reply(200, open_in_editor(engine.root, str(body.get("path") or "."), body.get("line")))
                 elif path == "/api/files/upload" and isinstance(body, dict):
                     activity["last"] = time.monotonic()
                     rel = body.get("path")
