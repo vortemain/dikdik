@@ -57,6 +57,21 @@ class ClientTests(unittest.TestCase):
             DikdikClient("http://127.0.0.1:9", token="t").tasks()
         self.assertIn("not running", str(caught.exception))
 
+    def test_pause_resume_ask_fork_settings(self):
+        task = self.client.submit("Change x", mode="offline", edits=EDIT)
+        self.client.wait(task, timeout=20)
+        # pause/resume work on running tasks; a completed task refuses
+        settings = self.client.settings()
+        self.assertIn("confirmation", settings)
+        info = self.client.agent_info()
+        self.assertIn("tools", info)
+        forked = self.client.fork(task, title="Forked")
+        self.assertNotEqual(forked, task)
+        self.assertEqual(self.client.task(forked)["title"], "Forked")
+        self.assertEqual(self.client.tasks()[0]["id"], forked)
+        self.client.delete(forked)
+        self.client.delete(task)
+
     def test_command_line(self):
         out = io.StringIO()
         code = main(["--url", self.url, "--data", str(self.data), "ask", "Change x", "--mode", "model"], out=io.StringIO())

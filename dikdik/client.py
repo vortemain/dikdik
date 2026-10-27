@@ -93,6 +93,32 @@ class DikdikClient:
     def cancel(self, task: str) -> bool:
         return self._call("POST", f"/api/tasks/{quote(task)}/cancel", {})["requested"]
 
+    def pause(self, task: str) -> bool:
+        return self._call("POST", f"/api/tasks/{quote(task)}/pause", {})["requested"]
+
+    def resume(self, task: str, body: dict | None = None) -> dict:
+        return self._call("POST", f"/api/tasks/{quote(task)}/resume", body or {})
+
+    def ask(self, task: str, question: str) -> dict:
+        """A side question: the agent answers without changing files."""
+        return self._call("POST", f"/api/tasks/{quote(task)}/ask", {"question": question})
+
+    def fork(self, task: str, *, title: str | None = None, tags: list[str] | None = None) -> str:
+        body = {k: v for k, v in {"title": title, "tags": tags}.items() if v is not None}
+        return self._call("POST", f"/api/tasks/{quote(task)}/fork", body)["id"]
+
+    def condense(self, task: str, share_code: bool = False) -> dict:
+        return self._call("POST", f"/api/tasks/{quote(task)}/condense", {"approve_external": bool(share_code)})
+
+    def settings(self) -> dict:
+        return self._call("GET", "/api/settings/app")
+
+    def update_settings(self, body: dict) -> dict:
+        return self._call("PATCH", "/api/settings/app", body)
+
+    def agent_info(self) -> dict:
+        return self._call("GET", "/api/agent-info")
+
     def rename(self, task: str, title: str) -> None:
         self._call("PATCH", f"/api/tasks/{quote(task)}", {"title": title})
 
