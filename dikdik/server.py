@@ -427,6 +427,9 @@ def make_server(engine: Engine, port: int, token: str):
                 if path == "/api/workspaces":
                     self.reply(200, {"workspaces": engine.workspaces.list()})
                     return
+                if path == "/api/chatgpt/status":
+                    self.reply(200, engine.chatgpt.status())
+                    return
                 if path == "/api/keys":
                     self.reply(200, {"keys": api_keys.list()})
                     return
@@ -611,6 +614,20 @@ def make_server(engine: Engine, port: int, token: str):
                         self.reply(201, {"token": token, "scopes": scopes})
                     except ValueError as exc:
                         self.reply(400, {"error": str(exc)})
+                elif path == "/api/chatgpt/device/start":
+                    try:
+                        self.reply(200, engine.chatgpt.device_start())
+                    except ValueError as exc:
+                        self.reply(400, {"error": str(exc)})
+                elif path == "/api/chatgpt/device/poll":
+                    try:
+                        self.reply(200, engine.chatgpt.device_poll(body))
+                    except KeyError:
+                        self.reply(404, {"error": "Device login not found or expired"})
+                    except ValueError as exc:
+                        self.reply(400, {"error": str(exc)})
+                elif path == "/api/chatgpt/logout":
+                    self.reply(200, engine.chatgpt.logout())
                 elif path.startswith("/api/keys/") and path.endswith("/rotate"):
                     try:
                         token = api_keys.rotate(path.split("/")[3])
