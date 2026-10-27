@@ -13,12 +13,14 @@ Docker browser tool with screenshots in chat and a Browser tab; safe apply
 with conflict detection; Files and Git; model profiles and
 encrypted keys driving every call; skills, MCP servers (HTTP and stdio) and agent
 profiles; streamed replies over server-sent events; automations with stored
-approvals; a Python client/CLI; and the Rust indexer loaded by default. The parity
-audit (docs/PARITY.md) moved from 89 to 230 fully matched OpenHands sub-features
+approvals; a Python client/CLI; the Rust indexer loaded by default; and run
+control (pause/exact resume, per-action confirmation, hooks, subagents,
+attachments, slash commands, side questions, condensing, judged goals, forks).
+The parity audit (docs/PARITY.md) moved from 89 to 260 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **269 passed, 2 live-runtime tests skipped**; Bun
-**62 passed**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-27): Python **286 passed, 2 live-runtime tests skipped**; Bun
+**73 passed**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -43,6 +45,12 @@ Test status (2026-10-27): Python **269 passed, 2 live-runtime tests skipped**; B
   Empty and whitespace-only text disables Send.
 - Added an invisible composer resize grip with pointer capture, keyboard controls,
   reset on clear/navigation and height limits that reserve space for controls.
+- Added run control: Pause and exact Resume from a saved transcript, stuck
+  detection, a never/risky/always confirmation policy with Allow/Reject cards,
+  `.dikdik/hooks.json` block rules, read-only subagents, attachments, the slash
+  menu, `/btw` side questions, manual/automatic condensing, a context meter,
+  judged goal loops, fork/branch and Copy. Checked in real Chrome with a local
+  model stand-in; not run against a live provider or Docker.
 - Independent review findings fixed: early-exit verification bypass, finalization
   cancellation race, component-token undercount; reviewer reran regressions.
 - Built wheel offline, inspected its 22 entries (no upstream/Python runtime deps),
@@ -53,8 +61,8 @@ Test status (2026-10-27): Python **269 passed, 2 live-runtime tests skipped**; B
 
 ## Test status
 
-- Python: **269 passed, 2 live-runtime tests skipped** (271 total).
-- Bun: **62 passed / 338 assertions**; strict TypeScript check and browser build passed.
+- Python: **286 passed, 2 live-runtime tests skipped** (288 total).
+- Bun: **73 passed / 378 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit

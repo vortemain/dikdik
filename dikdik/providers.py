@@ -5,6 +5,7 @@ import urllib.error
 import urllib.request
 from typing import Callable
 
+from .agent import context_size
 from .model_config import ModelConfig, from_environment
 
 
@@ -66,7 +67,7 @@ def chat_completion(messages: list[dict], tools: list[dict] | None = None, max_t
     arrives; a provider that rejects streaming gets the same request unstreamed.
     """
     config = config or from_environment()
-    if len(json.dumps(messages, ensure_ascii=False).encode()) > 128000:
+    if context_size(messages) > 128000:  # attached images count as a fixed weight
         raise ValueError("Model context exceeds 128KB; use a smaller approved workspace")
     body = {"model": config.model, "max_tokens": max_tokens, "messages": messages}
     if tools is not None:

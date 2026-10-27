@@ -129,7 +129,10 @@
     return end === lines.length - 1 ? { diff, files, metadata: "available" } : fallback("invalid");
   }
   function isTerminal(state) {
-    return ["completed", "failed", "blocked", "cancelled", "interrupted", "draft"].includes(state);
+    return ["completed", "failed", "blocked", "cancelled", "interrupted", "draft", "paused"].includes(state);
+  }
+  function isResumable(state) {
+    return ["paused", "failed", "cancelled", "interrupted", "blocked"].includes(state);
   }
   function modePolicy(mode, verification) {
     return {
@@ -176,8 +179,96 @@
       approve_execution: (policy.requiresExecution || browsing) && input.approveExecution,
       approve_external: policy.requiresExternal && input.approveExternal,
       ...browsing ? { approve_browser: true } : {},
-      ...["agent", "plan"].includes(input.mode) && input.agentProfile ? { agent_profile: input.agentProfile } : {}
+      ...["agent", "plan"].includes(input.mode) && input.agentProfile ? { agent_profile: input.agentProfile } : {},
+      ...input.mode !== "offline" && input.modelProfile ? { model_profile: input.modelProfile } : {},
+      ...input.attachments?.length ? { attachments: input.attachments } : {},
+      ...input.goalMaxTurns ? goalTurns(input.mode, input.goalMaxTurns) : {}
     };
+  }
+  function goalTurns(mode, turns) {
+    if (mode !== "agent")
+      throw new Error("A goal needs Agent mode.");
+    if (!Number.isInteger(turns) || turns < 1 || turns > 20)
+      throw new Error("A goal can run 1–20 turns.");
+    return { goal_max_turns: turns };
+  }
+  var SLASH_COMMANDS = [
+    { name: "plan", hint: "[request]", description: "Switch to the read-only planner" },
+    { name: "code", hint: "[request]", description: "Back to the coding agent" },
+    { name: "goal", hint: "[--max N] goal", description: "Keep working, turn after turn, until a judge says the goal is met" },
+    { name: "btw", hint: "question", description: "Ask a side question; the answer is not added to the conversation" },
+    { name: "model", hint: "[name]", description: "Use another model profile for the next messages" },
+    { name: "condense", hint: "", description: "Summarise older turns to free up context" },
+    { name: "fork", hint: "", description: "Copy this conversation into a new one" }
+  ];
+  function parseSlash(text) {
+    const match = /^\/([a-z][a-z0-9_-]{0,63})(?:\s+([\s\S]*))?$/i.exec(text.trim());
+    return match ? { name: (match[1] ?? "").toLowerCase(), arg: (match[2] ?? "").trim() } : null;
+  }
+  function parseGoal(arg) {
+    const match = /^--max\s+(\d{1,2})\s*([\s\S]*)$/.exec(arg.trim());
+    const turns = match ? Number(match[1]) : 5;
+    const goal = (match ? match[2] ?? "" : arg).trim();
+    if (!goal)
+      throw new Error("Say what the goal is, for example /goal --max 5 make the tests pass.");
+    if (turns < 1 || turns > 20)
+      throw new Error("A goal can run 1–20 turns.");
+    return { turns, goal };
+  }
+  function slashMatches(text, skills = []) {
+    const typed = /^\/([a-z0-9_-]*)$/i.exec(text);
+    if (!typed)
+      return [];
+    const all = [...SLASH_COMMANDS, ...skills.map((name) => ({ name, hint: "[request]", description: "Use this skill" }))];
+    const prefix = (typed[1] ?? "").toLowerCase();
+    return all.filter((command) => command.name.startsWith(prefix)).slice(0, 12);
+  }
+  function contextUsage(events) {
+    for (let i = events.length - 1;i >= 0; i--) {
+      const event = events[i];
+      if (!event)
+        continue;
+      if (event.kind === "condensed")
+        return null;
+      const bytes = numOrUndef(event.data?.context_bytes), limit = numOrUndef(event.data?.context_limit);
+      if (event.kind === "agent_model" && bytes !== undefined && limit !== undefined && limit > 0)
+        return { bytes, limit, ratio: Math.min(1, bytes / limit) };
+    }
+    return null;
+  }
+  function goalState(events) {
+    for (let i = events.length - 1;i >= 0; i--) {
+      const event = events[i];
+      if (!event || event.kind !== "goal_status")
+        continue;
+      const d = event.data ?? {};
+      return { status: textOf(d.status, 20), turns: numOrUndef(d.turns) ?? 0, maxTurns: numOrUndef(d.max_turns) ?? 0, objective: textOf(d.objective, 2000), reason: textOf(d.reason, 2000) };
+    }
+    return null;
+  }
+  function openConfirmations(events) {
+    const open = new Set;
+    for (const event of events) {
+      const id = textOf(event.data?.id, 200);
+      if (event.kind === "confirmation_requested" && id)
+        open.add(id);
+      else if (event.kind === "confirmation_resolved" && id)
+        open.delete(id);
+      else if (isTerminal(event.kind))
+        open.clear();
+    }
+    return [...open];
+  }
+  function attachmentList(value) {
+    if (!Array.isArray(value))
+      return [];
+    return value.flatMap((item) => {
+      if (typeof item !== "object" || item === null)
+        return [];
+      const r = item;
+      const id = textOf(r.id, 64), name = textOf(r.name, 255), type = textOf(r.type, 100);
+      return /^[0-9a-f]{32}$/.test(id) && name ? [{ id, name, type, size: numOrUndef(r.size) ?? 0 }] : [];
+    });
   }
   var CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
   function textOf(value, max = 8000) {
@@ -198,6 +289,8 @@
         return [{ id: `user-${seq}`, role: "user", time, kind, title: "Objective", body: objective }];
       case "user_message": {
         const text = textOf(d.text, 4000);
+        if (d.goal === true && text)
+          return [{ ...base, role: "system", kind: "goal_turn", title: "Next goal turn", body: text }];
         return text ? [{ id: `user-${seq}`, role: "user", time, kind, title: d.queued === true ? "Queued" : "Message", body: text }] : [];
       }
       case "agent_tool": {
@@ -282,11 +375,37 @@
         return [];
       case "draft":
         return [];
+      case "attachments": {
+        const files = attachmentList(d.files);
+        return files.length ? [{ id: `user-${seq}`, role: "user", time, kind, title: "Attachments", details: files }] : [];
+      }
+      case "confirmation_requested":
+        return [{ ...base, role: "system", title: "Approval needed", details: { id: textOf(d.id, 200), tool: textOf(d.tool, 120), risk: textOf(d.risk, 20), reason: textOf(d.reason, 500), arguments: d.arguments } }];
+      case "confirmation_resolved":
+        return [{ ...base, role: "system", title: d.accepted === true ? "Approved" : "Rejected", details: { id: textOf(d.id, 200), accepted: d.accepted === true, reason: textOf(d.reason, 500) } }];
+      case "hook_blocked":
+        return [{ ...base, role: "system", title: "Blocked by a project hook", body: textOf(d.message, 1000), details: { tool: textOf(d.tool, 120) } }];
+      case "subagent":
+        return d.phase === "end" ? [{ ...base, role: "tool", title: `${textOf(d.agent, 64) || "Subagent"} reported back`, body: textOf(d.findings, 4000), details: { agent: textOf(d.agent, 64), state: textOf(d.state, 40), tool_calls: numOrUndef(d.tool_calls) } }] : [{ ...base, role: "tool", title: `Asked ${textOf(d.agent, 64) || "a subagent"}`, body: textOf(d.task, 500), details: { agent: textOf(d.agent, 64) } }];
+      case "condensed":
+        return [{ ...base, role: "system", title: "Condensed the earlier conversation", body: textOf(d.summary, 8000) }];
+      case "resumed":
+        return [{ ...base, role: "system", title: "Resumed", details: { from_state: textOf(d.from_state, 40) } }];
+      case "pause_requested":
+        return [{ ...base, role: "system", title: "Pausing after this step" }];
+      case "forked":
+        return [{ ...base, role: "system", title: "Forked from another conversation", details: { from_task: textOf(d.from_task, 64), from_seq: numOrUndef(d.from_seq) } }];
+      case "goal_status": {
+        const turns = numOrUndef(d.turns) ?? 0, max = numOrUndef(d.max_turns) ?? 0;
+        const titles = { active: "Goal in progress", achieved: "Goal achieved", capped: "Goal stopped at its turn limit", stopped: "Goal stopped", error: "Goal check failed" };
+        return [{ ...base, role: "system", title: `${titles[textOf(d.status, 20)] ?? "Goal"} · ${turns}/${max}`, body: textOf(d.reason, 2000), details: { status: textOf(d.status, 20), objective: textOf(d.objective, 2000) } }];
+      }
       case "completed":
       case "failed":
       case "blocked":
       case "cancelled":
       case "interrupted":
+      case "paused":
         return [{ id: `terminal-${seq}`, role: "system", time, kind, title: `Task ${kind}`, state: kind, details: d }];
       default:
         return [];
@@ -1314,6 +1433,8 @@ ${c.output}` : "";
   function resultStatus(state, result) {
     if (result && typeof result.error === "string" && result.error)
       return result.error;
+    if (state === "paused")
+      return "Paused. Resume to continue from the exact step where it stopped.";
     if (result?.tests_verified === true)
       return "Container tests passed. Review the diff; this is not proof of every acceptance criterion.";
     if (result) {
@@ -1557,6 +1678,15 @@ ${c.output}` : "";
   var viewEpoch = 0;
   var observeQueued = false;
   var submitting = false;
+  var attached = [];
+  var modelOverride = null;
+  var modelProfiles = [];
+  var skillNames = [];
+  var slashItems = [];
+  var slashIndex = 0;
+  var slashModels = false;
+  var taskRequest = null;
+  var confirmCards = new Map;
   var composerSize = new ComposerSize;
   function make(tag, className = "", text = "") {
     const node = document.createElement(tag);
@@ -1826,6 +1956,27 @@ ${c.output}` : "";
         return { icon: "stop", title: "Cancellation requested", arg: "" };
       case "recovery_cleanup":
         return { icon: "alert", title: "Recovered after restart", arg: detailField(details, "warning") };
+      case "hook_blocked":
+        return { icon: "shield", title: "Blocked by a project hook", arg: msg.body ?? "" };
+      case "confirmation_resolved":
+        return { icon: msg.title === "Approved" ? "check" : "x", title: `${msg.title} · ${detailField(details, "id") ? "action" : ""}`.replace(/ · $/, ""), arg: detailField(details, "reason") };
+      case "subagent":
+        return { icon: "sparkle", title: msg.title ?? "Subagent", arg: (msg.body ?? "").split(`
+`)[0] ?? "" };
+      case "condensed":
+        return { icon: "list", title: msg.title ?? "Condensed", arg: "" };
+      case "resumed":
+        return { icon: "play", title: "Resumed", arg: detailField(details, "from_state") ? `from ${detailField(details, "from_state")}` : "" };
+      case "pause_requested":
+        return { icon: "pause", title: "Pausing after this step", arg: "" };
+      case "forked":
+        return { icon: "branch", title: "Forked from another conversation", arg: "" };
+      case "goal_status":
+        return { icon: "target", title: msg.title ?? "Goal", arg: (msg.body ?? "").split(`
+`)[0] ?? "" };
+      case "goal_turn":
+        return { icon: "target", title: "Next goal turn", arg: (msg.body ?? "").split(`
+`)[0] ?? "" };
       default:
         return { icon: "terminal", title: msg.title ?? "Step", arg: "" };
     }
@@ -1894,20 +2045,35 @@ ${c.output}` : "";
     const result = msg.details;
     if (state === "completed" && result?.turn_changed === false) {
       li.className = "msg msg-system msg-turn-note";
-      li.append(make("p", "turn-note", "No files changed in this turn."));
+      const note = make("p", "turn-note", `No files changed in this turn.${usageText(msg.details) ? " " + usageText(msg.details) : ""}`);
+      const seq2 = Number(msg.id.replace("terminal-", ""));
+      if (selected && Number.isInteger(seq2)) {
+        const branch = make("button", "ghost small turn-branch");
+        branch.type = "button";
+        branch.append(icon("branch"), make("span", "", "Branch"));
+        branch.title = "Start a new conversation with the history up to this point";
+        branch.onclick = () => {
+          if (selected)
+            forkTask(selected, isLatestTurn(msg) ? undefined : seq2).catch((error) => message(error instanceof Error ? error.message : "Fork failed", true));
+        };
+        note.append(branch);
+      }
+      li.append(note);
       return li;
     }
     const card = make("div", `result-card result-${state}`);
     const head = make("div", "result-head");
     const badge = make("span", "result-icon");
-    badge.append(icon(state === "completed" ? "check" : state === "cancelled" ? "stop" : "alert"));
-    const titles = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted" };
+    badge.append(icon(state === "completed" ? "check" : state === "cancelled" ? "stop" : state === "paused" ? "pause" : "alert"));
+    const titles = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted", paused: "Paused" };
     head.append(badge, make("span", "result-title", titles[state] ?? `Task ${state}`));
     if (state === "completed") {
       const verified = result?.tests_verified === true;
       head.append(make("span", verified ? "verify-badge verified" : "verify-badge", verified ? "Tests passed" : "Not test-verified"));
     }
     card.append(head, make("p", "result-text", resultStatus(state, result)));
+    if (usageText(msg.details))
+      card.append(make("p", "result-usage", usageText(msg.details)));
     const actions = make("div", "result-actions");
     if (result && typeof result.diff === "string" && result.diff) {
       const open = make("button", "small");
@@ -1916,14 +2082,29 @@ ${c.output}` : "";
       open.onclick = () => openCanvas("changes");
       actions.append(open, copyButton(() => review.diff, "Copy diff"));
     }
-    if (state !== "completed") {
+    const latest = isLatestTurn(msg);
+    if (state !== "completed" && latest) {
+      const exact = taskRequest?.mode === "agent" && isResumable(state);
       const resume = make("button", "small primary");
       resume.type = "button";
-      resume.append(icon("refresh"), make("span", "", "Continue"));
+      resume.append(icon(exact ? "play" : "refresh"), make("span", "", exact ? "Resume" : "Continue"));
+      resume.title = exact ? "Continue from the exact step where it stopped, with a fresh step budget" : "Send a follow-up asking Dikdik to finish";
       resume.onclick = () => {
-        sendMessage("Continue where you left off. Finish the original request.");
+        exact ? resumeTask() : sendMessage("Continue where you left off. Finish the original request.");
       };
       actions.append(resume);
+    }
+    const seq = Number(msg.id.replace("terminal-", ""));
+    if (selected && Number.isInteger(seq)) {
+      const branch = make("button", "small ghost");
+      branch.type = "button";
+      branch.append(icon("branch"), make("span", "", "Branch from here"));
+      branch.title = "Start a new conversation with the history and changes up to this point";
+      branch.onclick = () => {
+        if (selected)
+          forkTask(selected, latest ? undefined : seq).catch((error) => message(error instanceof Error ? error.message : "Fork failed", true));
+      };
+      actions.append(branch);
     }
     const evidence = make("details", "step");
     const summary = make("summary");
@@ -1965,15 +2146,139 @@ ${c.output}` : "";
         content.append(prose);
       } else
         content.append(...evidenceBlocks(msg));
-    } else if (msg.body)
+    } else if (msg.body) {
       content.append(richText(msg.body));
+      const tools = make("div", "msg-actions");
+      tools.append(copyButton(() => msg.body ?? "", "Copy"));
+      content.append(tools);
+    }
     li.append(content);
+    return li;
+  }
+  function usageText(details) {
+    const agent = typeof details === "object" && details !== null ? details.agent : undefined;
+    if (!agent)
+      return "";
+    const count = (key) => typeof agent[key] === "number" ? agent[key] : 0;
+    const parts = [`${count("model_calls")} model call${count("model_calls") === 1 ? "" : "s"}`, `${count("tool_calls")} tool call${count("tool_calls") === 1 ? "" : "s"}`];
+    if (count("reported_usage_tokens"))
+      parts.push(`${count("reported_usage_tokens").toLocaleString()} tokens reported`);
+    return parts.join(" · ");
+  }
+  function isLatestTurn(msg) {
+    const last = [...liveEvents].reverse().find((event) => isTerminal(event.kind));
+    return !last || `terminal-${last.seq}` === msg.id;
+  }
+  function attachmentCard(msg) {
+    const li = make("li", "msg msg-user msg-attachments");
+    li.id = msg.id;
+    const grid = make("div", "attachment-grid");
+    for (const file of attachmentList(msg.details)) {
+      if (file.type.startsWith("image/")) {
+        const image = make("img", "attachment-image");
+        image.src = `/api/attachments/${file.id}`;
+        image.alt = file.name;
+        image.loading = "lazy";
+        image.title = file.name;
+        grid.append(image);
+      } else {
+        const chip = make("span", "attachment-chip");
+        chip.append(icon("file"), make("span", "", file.name));
+        grid.append(chip);
+      }
+    }
+    li.append(grid);
+    return li;
+  }
+  function confirmationCard(msg) {
+    const d = msg.details ?? {};
+    const li = make("li", "msg msg-system msg-confirm");
+    li.id = msg.id;
+    const card = make("div", `confirm-card risk-${d.risk || "low"}`);
+    const head = make("div", "result-head");
+    const badge = make("span", "result-icon");
+    badge.append(icon("shield"));
+    head.append(badge, make("span", "result-title", `Allow ${d.tool || "this action"}?`), make("span", "verify-badge", d.risk === "high" ? "High risk" : d.risk === "medium" ? "Needs review" : "Low risk"));
+    card.append(head);
+    if (d.reason)
+      card.append(make("p", "result-text", d.reason));
+    const args = typeof d.arguments === "object" && d.arguments !== null ? d.arguments : {};
+    const shown = typeof args.command === "string" ? codeBlock(args.command, "bash", { wrap: true }) : codeBlock(JSON.stringify(args, null, 2), "json", { wrap: true });
+    card.append(shown);
+    const actions = make("div", "result-actions");
+    const allow = make("button", "small primary", "Allow");
+    allow.type = "button";
+    allow.title = "Allow (Y or Enter)";
+    const reject = make("button", "small", "Reject");
+    reject.type = "button";
+    reject.title = "Reject (N or Esc)";
+    const status = make("span", "confirm-status");
+    actions.append(allow, reject, status);
+    card.append(actions);
+    li.append(card);
+    const id = d.id ?? "";
+    const decide = async (accept) => {
+      if (!selected || allow.disabled)
+        return;
+      allow.disabled = reject.disabled = true;
+      try {
+        await api(`/api/tasks/${encodeURIComponent(selected)}/confirm`, { id, accept });
+        status.textContent = accept ? "Allowed" : "Rejected";
+      } catch (error) {
+        allow.disabled = reject.disabled = false;
+        message(error instanceof Error ? error.message : "Could not send the decision", true);
+      }
+    };
+    allow.onclick = () => {
+      decide(true);
+    };
+    reject.onclick = () => {
+      decide(false);
+    };
+    card.addEventListener("keydown", (event) => {
+      const key = event.key.toLowerCase();
+      if (key === "y" || key === "enter") {
+        event.preventDefault();
+        decide(true);
+      } else if (key === "n" || key === "escape") {
+        event.preventDefault();
+        decide(false);
+      }
+    });
+    card.tabIndex = -1;
+    if (openConfirmations(liveEvents).includes(id)) {
+      confirmCards.set(id, li);
+      if (!textarea("objective").value.trim())
+        setTimeout(() => allow.focus?.(), 0);
+    } else {
+      allow.disabled = reject.disabled = true;
+      status.textContent = "Decided";
+    }
     return li;
   }
   var rendered = new Set;
   var pendingCalls = [];
   var lastRole = "";
   function renderMessage(msg) {
+    if (msg.kind === "attachments") {
+      lastRole = "user";
+      return attachmentCard(msg);
+    }
+    if (msg.kind === "confirmation_requested") {
+      lastRole = "system";
+      return confirmationCard(msg);
+    }
+    if (msg.kind === "confirmation_resolved") {
+      const id = detailField(msg.details, "id"), card = confirmCards.get(id);
+      if (card) {
+        for (const control of card.querySelectorAll("button"))
+          control.disabled = true;
+        const status = card.querySelector(".confirm-status");
+        if (status)
+          status.textContent = msg.title === "Approved" ? "Allowed" : "Rejected";
+        confirmCards.delete(id);
+      }
+    }
     if (msg.kind === "plan_updated") {
       const li2 = make("li", "msg msg-plan-preview");
       li2.id = msg.id;
@@ -2510,6 +2815,12 @@ ${c.output}` : "";
     renderedDiff = "";
     applyStep = "idle";
     lastApplied = [];
+    confirmCards.clear();
+    taskRequest = null;
+    el("goal-banner").hidden = true;
+    el("context-meter").hidden = true;
+    el("pause").hidden = true;
+    el("side-answer").hidden = true;
     el("message-stream").replaceChildren();
     el("review-controls").replaceChildren();
     el("diff").replaceChildren();
@@ -2542,7 +2853,8 @@ ${c.output}` : "";
     syncSend();
   }
   function syncSend() {
-    button("start").disabled = submitting || !textarea("objective").value.trim();
+    button("start").disabled = submitting || !textarea("objective").value.trim() && !attached.length;
+    textarea("objective").required = !attached.length;
   }
   function selectTask(id) {
     composerSize.reset();
@@ -2660,7 +2972,8 @@ ${c.output}` : "";
     const info = await api("/api/model");
     const pill = el("model-pill");
     setClass(pill, "unset", !info.configured);
-    el("model-label").textContent = info.configured ? info.model ?? "Model" : "Set up a model";
+    el("model-label").textContent = modelOverride ? modelOverride.name : info.configured ? info.model ?? "Model" : "Set up a model";
+    setClass(pill, "override", modelOverride !== null);
     pill.title = info.configured ? info.source === "profile" ? `${info.model} · ${info.provider_name} (profile “${info.profile}”). Change it in Settings → Models.` : `${info.model} from server environment variables` : info.problem ?? "No model is set up";
   }
   async function project() {
@@ -2846,6 +3159,9 @@ ${c.output}` : "";
       } else if (action === "export") {
         closeTaskMenu();
         await exportTask(task);
+      } else if (action === "fork") {
+        closeTaskMenu();
+        await forkTask(task);
       } else if (action === "delete") {
         if (!confirmingDelete) {
           confirmingDelete = true;
@@ -2935,7 +3251,12 @@ ${c.output}` : "";
       if (record.kind === "running") {
         el("working").hidden = false;
         el("working-label").textContent = "Working";
+        button("cancel").disabled = false;
+      } else if (isTerminal(record.kind)) {
+        el("working").hidden = true;
+        button("cancel").disabled = true;
       }
+      renderRunState();
     });
     source.addEventListener("delta", (event) => {
       if (id !== selected)
@@ -2979,6 +3300,7 @@ ${c.output}` : "";
       setState(task.state);
       selectedState = task.state;
       parentTask = typeof task.request.parent_task === "string" ? task.request.parent_task : null;
+      taskRequest = task.request;
       if (!observedTaskMode) {
         if (task.request.mode === "plan")
           select("mode").value = "plan";
@@ -3000,6 +3322,7 @@ ${c.output}` : "";
       renderMessageStream(messages);
       el("working").hidden = isTerminal(task.state);
       el("working-label").textContent = task.state === "queued" ? "Queued" : "Working";
+      renderRunState();
       renderReview(task.id, task.state, task.result);
       syncApplyBar();
       const known = lastTasks.find((item) => item.id === id);
@@ -3485,6 +3808,9 @@ ${c.output}` : "";
       dialog.showModal();
     showPane(pane);
     closeSidebarDrawer();
+    loadAppSettings().catch(() => {
+      return;
+    });
   }
   el("open-settings").addEventListener("click", () => openSettings("general"));
   el("model-pill").addEventListener("click", () => openSettings("models"));
@@ -3495,6 +3821,7 @@ ${c.output}` : "";
     loadAgents().catch(() => {
       return;
     });
+    ensureLists(true);
   });
   el("skill-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -3645,8 +3972,11 @@ ${c.output}` : "";
     autosize();
     syncSend();
     composerDrafts.update(textarea("objective").value);
+    renderSlash();
   });
   textarea("objective").addEventListener("keydown", (event) => {
+    if (slashKey(event))
+      return;
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && select("mode").value === "plan" && !textarea("objective").value.trim()) {
       event.preventDefault();
       buildReviewedPlan();
@@ -3671,8 +4001,11 @@ ${c.output}` : "";
       });
     }
   }
-  function composerRequest(text) {
+  function composerRequest(text, goalMaxTurns) {
     return buildTaskRequest({
+      modelProfile: modelOverride?.id,
+      attachments: attached.map((file) => file.id),
+      goalMaxTurns,
       objective: text,
       mode: parseMode(select("mode").value),
       edits: textarea("edits").value,
@@ -3785,12 +4118,13 @@ ${c.output}` : "";
       message(error instanceof Error ? error.message : "Could not save the agent profile", true);
     }
   });
-  async function sendMessage(text) {
+  async function sendMessage(text, goalMaxTurns) {
     if (!selected)
       return false;
     const task = selected;
     try {
-      const reply = await api(`/api/tasks/${encodeURIComponent(task)}/messages`, composerRequest(text));
+      const reply = await api(`/api/tasks/${encodeURIComponent(task)}/messages`, composerRequest(text, goalMaxTurns));
+      clearAttachments();
       if (task === selected)
         watching = true;
       if (reply.queued)
@@ -3810,36 +4144,51 @@ ${c.output}` : "";
   }
   el("task-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (submitting || !textarea("objective").value.trim())
+    if (submitting || !textarea("objective").value.trim() && !attached.length)
       return;
+    hideSlash();
     submitting = true;
     syncSend();
     textarea("objective").disabled = true;
     const originalScope = composerDrafts.scope, originalText = textarea("objective").value;
     try {
       let text = textarea("objective").value;
-      const command = /^\/(plan|code)(?:\s+([\s\S]*))?$/.exec(text.trim());
+      let goalTurns2;
+      const slash = parseSlash(text);
+      const command = slash && (slash.name === "plan" || slash.name === "code") ? slash : null;
       if (command) {
-        if (command[1] === "plan")
+        if (command.name === "plan")
           await enterPlanning();
         else
           await enterCode();
-        text = command[2]?.trim() ?? "";
+        text = command.arg;
         textarea("objective").value = text;
         if (!text) {
           await composerDrafts.sent(originalScope, originalText);
           return;
         }
+      } else if (slash) {
+        const done = await runSlash(slash.name, slash.arg);
+        if (done === true) {
+          await composerDrafts.sent(originalScope, originalText);
+          return;
+        }
+        if (done === false)
+          return;
+        ({ text, turns: goalTurns2 } = done);
       }
-      if (selected && select("mode").value === "plan" && observedTaskMode !== "plan" && command?.[1] !== "plan")
+      if (!text.trim() && attached.length)
+        text = attached.length === 1 ? `Take a look at the attached file “${attached[0]?.name ?? "file"}”.` : "Take a look at the attached files.";
+      if (selected && select("mode").value === "plan" && observedTaskMode !== "plan" && command?.name !== "plan")
         await enterPlanning();
       if (selected) {
-        composerRequest(text);
-        if (await sendMessage(text))
+        composerRequest(text, goalTurns2);
+        if (await sendMessage(text, goalTurns2))
           await composerDrafts.sent(originalScope, originalText);
         return;
       }
-      const task = await api("/api/tasks", composerRequest(text));
+      const task = await api("/api/tasks", composerRequest(text, goalTurns2));
+      clearAttachments();
       await composerDrafts.sent(originalScope, originalText);
       selectTask(task.id);
       await loadHistory();
@@ -3853,6 +4202,396 @@ ${c.output}` : "";
       autosize();
       syncSend();
     }
+  });
+  async function ensureLists(force = false) {
+    if (!force && (modelProfiles.length || skillNames.length))
+      return;
+    const [models, skills] = await Promise.all([
+      api("/api/profiles").catch(() => []),
+      request("/api/skills", "GET").catch(() => [])
+    ]);
+    modelProfiles = Array.isArray(models) ? models : [];
+    skillNames = (Array.isArray(skills) ? skills : []).flatMap((item) => {
+      const skill = item;
+      return typeof skill.name === "string" && skill.enabled !== false && /^[a-z0-9_-]{1,64}$/i.test(skill.name) ? [skill.name] : [];
+    });
+  }
+  function modelMatches(value) {
+    const typed = (/^\/model\s+(.*)$/i.exec(value)?.[1] ?? "").toLowerCase();
+    return [
+      { name: "default", hint: "", description: "Your default model profile" },
+      ...modelProfiles.map((profile) => ({ name: profile.name, hint: profile.model, description: "" }))
+    ].filter((item) => item.name.toLowerCase().startsWith(typed)).slice(0, 12);
+  }
+  function hideSlash() {
+    el("slash-menu").hidden = true;
+    slashItems = [];
+  }
+  function renderSlash() {
+    const value = textarea("objective").value;
+    if (!value.startsWith("/")) {
+      hideSlash();
+      return;
+    }
+    ensureLists().then(() => {
+      if (textarea("objective").value === value)
+        drawSlash(value);
+    });
+    drawSlash(value);
+  }
+  function drawSlash(value) {
+    slashModels = /^\/model\s/i.test(value) && !/\n/.test(value);
+    slashItems = slashModels ? modelMatches(value) : slashMatches(value, skillNames);
+    const menu = el("slash-menu");
+    if (!slashItems.length) {
+      hideSlash();
+      return;
+    }
+    slashIndex = Math.min(slashIndex, slashItems.length - 1);
+    menu.replaceChildren(...slashItems.map((item, index) => {
+      const row = make("li", "slash-item");
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", String(index === slashIndex));
+      row.append(make("span", "slash-name", slashModels ? item.name : `/${item.name}`));
+      if (item.hint)
+        row.append(make("span", "slash-hint", item.hint));
+      if (item.description)
+        row.append(make("span", "slash-desc", item.description));
+      row.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        chooseSlash(index);
+      });
+      return row;
+    }));
+    menu.hidden = false;
+  }
+  function chooseSlash(index) {
+    const item = slashItems[index];
+    if (!item)
+      return;
+    const field = textarea("objective");
+    hideSlash();
+    if (slashModels || ["condense", "fork"].includes(item.name)) {
+      field.value = slashModels ? `/model ${item.name}` : `/${item.name}`;
+      const form = el("task-form");
+      if (typeof form.requestSubmit === "function")
+        form.requestSubmit();
+      else
+        form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+      return;
+    }
+    field.value = `/${item.name} `;
+    composerDrafts.update(field.value);
+    field.focus?.();
+    syncSend();
+    if (item.name === "model")
+      renderSlash();
+  }
+  function slashKey(event) {
+    if (el("slash-menu").hidden || !slashItems.length)
+      return false;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      slashIndex = (slashIndex + (event.key === "ArrowDown" ? 1 : slashItems.length - 1)) % slashItems.length;
+      drawSlash(textarea("objective").value);
+    } else if (event.key === "Enter" && !event.shiftKey || event.key === "Tab")
+      chooseSlash(slashIndex);
+    else if (event.key === "Escape")
+      hideSlash();
+    else
+      return false;
+    event.preventDefault();
+    return true;
+  }
+  async function runSlash(name, arg) {
+    if (name === "btw") {
+      if (!arg) {
+        message("Ask your question after /btw.", true);
+        return false;
+      }
+      await askSide(arg);
+      return true;
+    }
+    if (name === "goal") {
+      const goal = parseGoal(arg);
+      if (select("mode").value !== "agent") {
+        select("mode").value = "agent";
+        syncMode();
+      }
+      return { text: goal.goal, turns: goal.turns };
+    }
+    if (name === "model") {
+      await ensureLists(true);
+      if (!arg) {
+        textarea("objective").value = "/model ";
+        drawSlash("/model ");
+        return false;
+      }
+      if (arg.toLowerCase() === "default")
+        modelOverride = null;
+      else {
+        const wanted = arg.toLowerCase();
+        const found = modelProfiles.find((profile) => profile.name.toLowerCase() === wanted) ?? modelProfiles.find((profile) => profile.name.toLowerCase().startsWith(wanted));
+        if (!found) {
+          message(`No model profile is called “${arg}”. Add one in Settings → Models.`, true);
+          return false;
+        }
+        modelOverride = { id: found.id, name: found.name };
+      }
+      message(modelOverride ? `Using ${modelOverride.name} for your next messages in this tab.` : "Back to your default model.");
+      await loadModel().catch(() => {
+        return;
+      });
+      return true;
+    }
+    if (name === "condense") {
+      await condenseNow();
+      return true;
+    }
+    if (name === "fork") {
+      if (!selected) {
+        message("Open a conversation to fork it.", true);
+        return false;
+      }
+      await forkTask(selected);
+      return true;
+    }
+    if (skillNames.includes(name))
+      return { text: `Use the “${name}” skill for this request.${arg ? `
+
+` + arg : ""}` };
+    message(`Unknown command /${name}. Type / to see the commands.`, true);
+    return false;
+  }
+  function needsSharing(what) {
+    if (!selected)
+      throw new Error(`Open a conversation first; ${what} works from its history.`);
+    if (!input("external").checked)
+      throw new Error(`Turn on “Share code with model” to ${what}.`);
+  }
+  async function askSide(question) {
+    needsSharing("ask a side question");
+    const task = selected;
+    el("side-answer").hidden = false;
+    el("side-question").textContent = question;
+    el("side-body").replaceChildren(make("p", "hint", "Thinking…"));
+    try {
+      const reply = await api(`/api/tasks/${encodeURIComponent(task)}/ask`, { question, approve_external: true });
+      if (task === selected)
+        el("side-body").replaceChildren(richText(reply.answer));
+    } catch (error) {
+      el("side-answer").hidden = true;
+      throw error;
+    }
+  }
+  async function condenseNow() {
+    needsSharing("condense the conversation");
+    const task = selected;
+    message("Condensing older turns…");
+    await api(`/api/tasks/${encodeURIComponent(task)}/condense`, { approve_external: true });
+    message("Condensed. Older turns now travel as a summary.");
+    if (task === selected)
+      await observe(true);
+  }
+  async function forkTask(task, upto) {
+    const reply = await api(`/api/tasks/${encodeURIComponent(task)}/fork`, upto === undefined ? {} : { upto_seq: upto });
+    await loadHistory();
+    selectTask(reply.id);
+    await observe();
+    message("Forked into a new conversation. The original is unchanged.");
+  }
+  async function resumeTask() {
+    if (!selected || !taskRequest)
+      return;
+    const r = taskRequest, task = selected;
+    const chosen = modelOverride?.id ?? r.model_profile;
+    const body = {
+      verification: r.verification,
+      approve_external: r.approve_external === true,
+      approve_execution: r.approve_execution === true,
+      ...r.approve_browser ? { approve_browser: true } : {},
+      ...r.agent_profile ? { agent_profile: r.agent_profile } : {},
+      ...r.confirmation ? { confirmation: r.confirmation } : {},
+      ...chosen ? { model_profile: chosen } : {}
+    };
+    try {
+      await api(`/api/tasks/${encodeURIComponent(task)}/resume`, body);
+      watching = true;
+      await observe(true);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "Resume failed";
+      if (/no saved agent state/i.test(text)) {
+        await sendMessage("Continue where you left off. Finish the original request.");
+        return;
+      }
+      message(text, true);
+    }
+  }
+  var GOAL_LABELS = { achieved: "Goal achieved", capped: "Goal stopped at its turn limit", stopped: "Goal stopped", error: "Goal check failed" };
+  function renderRunState() {
+    const usage = selected ? contextUsage(liveEvents) : null;
+    const meter = el("context-meter");
+    meter.hidden = !usage;
+    if (usage) {
+      const pct = Math.round(usage.ratio * 100);
+      el("context-label").textContent = `${pct}%`;
+      el("context-fill").style?.setProperty?.("--fill", `${pct}%`);
+      setClass(meter, "context-high", usage.ratio >= 0.8);
+      meter.title = `${pct}% of the context window at the last model call (${Math.round(usage.bytes / 1024)} of ${Math.round(usage.limit / 1024)} KB). Click to condense older turns.`;
+    }
+    const goal = selected ? goalState(liveEvents) : null;
+    el("goal-banner").hidden = !goal;
+    if (goal) {
+      const label = goal.status === "active" ? `Goal · turn ${Math.min(goal.turns + 1, goal.maxTurns)} of ${goal.maxTurns}` : `${GOAL_LABELS[goal.status] ?? "Goal"} · ${goal.turns}/${goal.maxTurns}`;
+      el("goal-text").textContent = `${label}: ${goal.objective}`;
+      el("goal-text").title = goal.reason;
+      el("goal-stop").hidden = goal.status !== "active";
+      el("goal-resume").hidden = goal.status === "active" || goal.status === "achieved";
+    }
+    el("pause").hidden = !selected || !selectedState || isTerminal(selectedState) || taskRequest?.mode !== "agent";
+  }
+  async function readBase64(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let i = 0;i < bytes.length; i += 32768)
+      binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+    return btoa(binary);
+  }
+  var TEXT_TYPES = { md: "text/markdown", py: "text/x-python", ts: "text/plain", tsx: "text/plain", rs: "text/plain", toml: "text/plain", yml: "text/plain", yaml: "text/plain", log: "text/plain", sh: "text/plain", sql: "text/plain", go: "text/plain" };
+  async function uploadFiles(files) {
+    for (const file of files) {
+      if (attached.length >= 10) {
+        message("Attach up to 10 files per message.", true);
+        break;
+      }
+      if (file.size > 3 * 1024 * 1024) {
+        message(`${file.name} is larger than 3 MB.`, true);
+        continue;
+      }
+      const extension = (file.name.split(".").pop() ?? "").toLowerCase();
+      const type = file.type || TEXT_TYPES[extension] || "text/plain";
+      try {
+        const data = await readBase64(file);
+        const meta = await api("/api/attachments", { name: file.name || "pasted.png", type, data });
+        attached.push({ ...meta, preview: meta.type.startsWith("image/") ? `data:${meta.type};base64,${data}` : "" });
+      } catch (error) {
+        message(error instanceof Error ? `${file.name}: ${error.message}` : "Upload failed", true);
+      }
+    }
+    renderTray();
+    syncSend();
+    autosize();
+  }
+  function renderTray() {
+    const tray = el("attachment-tray");
+    tray.hidden = !attached.length;
+    tray.replaceChildren(...attached.map((file) => {
+      const chip = make("span", file.preview ? "tray-item tray-image" : "tray-item");
+      if (file.preview) {
+        const image = make("img");
+        image.src = file.preview;
+        image.alt = "";
+        chip.append(image);
+      } else
+        chip.append(icon("file"));
+      chip.append(make("span", "tray-name", file.name));
+      const remove = make("button", "ghost icon tray-remove");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Remove ${file.name}`);
+      remove.title = "Remove";
+      remove.append(icon("x"));
+      remove.onclick = () => {
+        attached = attached.filter((item) => item.id !== file.id);
+        renderTray();
+        syncSend();
+        autosize();
+      };
+      chip.append(remove);
+      return chip;
+    }));
+  }
+  function clearAttachments() {
+    attached = [];
+    renderTray();
+    syncSend();
+  }
+  el("attach").addEventListener("click", () => input("attach-input").click());
+  input("attach-input").addEventListener("change", () => {
+    const files = [...input("attach-input").files ?? []];
+    input("attach-input").value = "";
+    uploadFiles(files);
+  });
+  textarea("objective").addEventListener("paste", (event) => {
+    const files = [...event.clipboardData?.files ?? []];
+    if (!files.length)
+      return;
+    event.preventDefault();
+    uploadFiles(files);
+  });
+  textarea("objective").addEventListener("blur", () => setTimeout(hideSlash, 120));
+  el("task-form").addEventListener("dragover", (event) => {
+    if (!event.dataTransfer?.types?.includes("Files"))
+      return;
+    event.preventDefault();
+    setClass(el("task-form"), "dropping", true);
+  });
+  el("task-form").addEventListener("dragleave", () => setClass(el("task-form"), "dropping", false));
+  el("task-form").addEventListener("drop", (event) => {
+    setClass(el("task-form"), "dropping", false);
+    const files = [...event.dataTransfer?.files ?? []];
+    if (!files.length)
+      return;
+    event.preventDefault();
+    uploadFiles(files);
+  });
+  el("context-meter").addEventListener("click", () => {
+    condenseNow().catch((error) => message(error instanceof Error ? error.message : "Condense failed", true));
+  });
+  el("side-close").addEventListener("click", () => {
+    el("side-answer").hidden = true;
+  });
+  button("pause").onclick = async () => {
+    if (!selected)
+      return;
+    try {
+      const data = await api(`/api/tasks/${encodeURIComponent(selected)}/pause`, {});
+      message(data.requested ? "Pausing after the current step…" : "This run has already stopped.");
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Pause failed", true);
+    }
+  };
+  for (const [id, action] of [["goal-stop", "stop"], ["goal-resume", "resume"]]) {
+    el(id).addEventListener("click", async () => {
+      if (!selected)
+        return;
+      try {
+        await api(`/api/tasks/${encodeURIComponent(selected)}/goal/${action}`, {});
+        await observe(true);
+      } catch (error) {
+        message(error instanceof Error ? error.message : "Goal update failed", true);
+      }
+    });
+  }
+  async function loadAppSettings() {
+    const settings = await api("/api/settings/app");
+    select("confirmation-policy").value = settings.confirmation;
+    input("condenser").checked = settings.condenser;
+  }
+  async function saveAppSetting(change) {
+    try {
+      await request("/api/settings/app", "PATCH", change);
+      message("Saved.");
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Could not save", true);
+      loadAppSettings().catch(() => {
+        return;
+      });
+    }
+  }
+  select("confirmation-policy").addEventListener("change", () => {
+    saveAppSetting({ confirmation: select("confirmation-policy").value });
+  });
+  input("condenser").addEventListener("change", () => {
+    saveAppSetting({ condenser: input("condenser").checked });
   });
   button("cancel").onclick = async () => {
     if (!selected)

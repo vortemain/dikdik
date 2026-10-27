@@ -28,14 +28,14 @@ OpenHands app map (799 sub-features) and the agent-server/SDK map
 (`upstream/software-agent-sdk/.agents/skills/verify-agent-server/references/feature-map`,
 950 sub-features). The full list is in [`parity-audit.csv`](parity-audit.csv).
 
-| Status | First audit | After the first build phases | Now |
-|---|---|---|---|
-| Has (equivalent behaviour) | 89 | 199 | 230 |
-| Partly (note says what is missing) | 91 | 154 | 165 |
-| Missing | 1,491 | 1,318 | 1,273 |
-| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 |
-| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 |
-| **Total** | **1,749** | **1,749** | **1,749** |
+| Status | First audit | After the first build phases | After the parity fix | Now (run control) |
+|---|---|---|---|---|
+| Has (equivalent behaviour) | 89 | 199 | 230 | 260 |
+| Partly (note says what is missing) | 91 | 154 | 165 | 180 |
+| Missing | 1,491 | 1,318 | 1,273 | 1,228 |
+| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 |
+| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 |
+| **Total** | **1,749** | **1,749** | **1,749** | **1,749** |
 
 Correction (2026-10-27): earlier versions of this table counted 1,801 rows. 51 of
 them were usage notes from the reference maps' "Gotchas" sections that the first
@@ -71,17 +71,25 @@ gating. Real Chrome checked persistence and conflicts against real HTTP/SQLite;
 offline syntax-only submissions needed no model or Docker stand-in.
 The composer also has the missing invisible resize grip, with keyboard support,
 viewport bounds and reset-on-clear behavior checked in real Chrome.
+Run control adds Pause and exact Resume (saved transcript, fresh budget), stuck
+detection, per-action confirmation (never / risky only / every action) with
+Allow/Reject cards, project block hooks, a read-only explorer subagent plus
+project/personal subagents, attachments (+, paste, drop; images reach the model),
+the slash menu (`/plan /code /goal /btw /model /condense /fork` and skills), side
+questions, manual and automatic condensing, a context meter, judged goal loops,
+fork and Branch from here, Copy on replies and a per-tab model choice. Real Chrome
+checked every one of these against real HTTP/SQLite and a local model stand-in;
+no live provider or Docker run was made.
 
 Gaps the first audit found in features that looked present, all fixed: unused
 model profiles and keys, unused skills, the unloaded Rust indexer, automations
 granting consent on their own, real agent tool events missing from the chat,
 and automation runs never listing (`task_id`/`id` mismatch).
 
-Largest remaining gaps: live browser execution, the full slash menu and attachments,
-the command menu, folders and tags, per-action confirmation, model routing, plugins
-and extension apps, automation Git sync and templates, WebSocket and TypeScript
-clients, conversation fork/condense/goals, VS Code serving, onboarding, and any
-recorded run against a live model provider or Docker engine.
+Largest remaining gaps: live browser execution, the command menu, folders and tags,
+model routing, plugins and extension apps, automation Git sync and templates,
+WebSocket and TypeScript clients, VS Code serving, onboarding, and any recorded run
+against a live model provider or Docker engine.
 
 ## Capability groups and acceptance gates
 
@@ -91,8 +99,8 @@ recorded run against a live model provider or Docker engine.
 | F02 Shell/navigation | Partial: responsive single-workspace UI. Missing project/sidebar/command navigation. Keyboard-only task switching, small-screen navigation and meaningful errors must work. | P1 |
 | F03 Starting work | Partial: approved startup workspace and objective submission. Missing in-product workspace selection and richer launch choices. Open an approved project and start an actual objective without manual edits. | P0 |
 | F04 History/organization | Partial: durable task list. Missing folders/tags/rename/pin/archive. Persist all CRUD/default transitions without losing the selected work item. | P1 |
-| F05 Conversation/composer | Partial: objective-driven follow-ups, Enter-to-send, private scoped drafts, explicit tab conflicts, separate planning and /plan /code commands. Missing full slash menu, attachments, side questions, goals and context meter. | P0/P1 |
-| F06 Agent lifecycle | Partial: bounded tools/repair, cancellation and persisted events. Live model/container validation and exact resume absent. Failing test → focused repair → current pass, with no post-cancellation completion. | P0 |
+| F05 Conversation/composer | Partial: objective-driven follow-ups, Enter-to-send, private scoped drafts, explicit tab conflicts, separate planning and /plan /code commands. Slash menu, attachments, side questions, judged goals, context meter, pause/resume and per-tab model choice are in. Missing dictation, a model picker on the pill and a Usage panel. | P0/P1 |
+| F06 Agent lifecycle | Partial: bounded tools/repair, cancellation and persisted events. Exact resume, stuck detection and per-action confirmation are in; live model/container validation absent. Failing test → focused repair → current pass, with no post-cancellation completion. | P0 |
 | F07 Task detail/actions | Partial: actual events, checks, counters and diff. Missing export/download, conversation menus and broader controls. Export reproducible evidence, not model claims. | P1 |
 | F08 Files/Git/review | Partial: new candidate files/tests and per-file added/modified diff review implemented in this increment. Missing full file viewer, Git history/branch/status integration and deletion. Review nested/empty/Unicode additions and edits without source writes. | P0 |
 | F09 Settings navigation | Missing: no inert settings screens presented. Add screens only with working backend/configuration behavior and useful validation. | P0 |

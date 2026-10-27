@@ -121,6 +121,31 @@ class HTTPTests(unittest.TestCase):
         self.assertIn("repo", git)
         self.assertEqual(self.call("POST", "/api/git/commit", {"message": "", "files": ["app.py"]})[0], 400)
 
+    def test_run_control_routes(self):
+        import base64
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+        status, _, body = self.call("POST", "/api/attachments", {"name": "dot.png", "type": "image/png", "data": base64.b64encode(png).decode()})
+        self.assertEqual(status, 201)
+        attachment = json.loads(body)["id"]
+        status, headers, content = self.call("GET", f"/api/attachments/{attachment}")
+        self.assertEqual((status, headers["Content-Type"], content), (200, "image/png", png))
+        self.assertEqual(self.call("GET", "/api/attachments/" + "0" * 32)[0], 404)
+        self.assertEqual(json.loads(self.call("GET", "/api/settings/app")[2])["confirmation"], "never")
+        self.assertEqual(json.loads(self.call("PATCH", "/api/settings/app", {"condenser": False})[2])["condenser"], False)
+        self.assertEqual(self.call("PATCH", "/api/settings/app", {"condenser": "no"})[0], 400)
+        status, _, body = self.call("POST", "/api/tasks", {"objective": "Change x", "mode": "offline", "verification": "syntax", "edits": [{"path": "app.py", "before": "x = 1", "after": "x = 2"}]})
+        task = json.loads(body)["id"]
+        self.wait_terminal(task)
+        self.assertEqual(json.loads(self.call("POST", f"/api/tasks/{task}/pause", {})[2]), {"requested": False})
+        status, _, body = self.call("POST", f"/api/tasks/{task}/fork", {})
+        self.assertEqual(status, 201)
+        fork = json.loads(body)["id"]
+        self.assertIn("+x = 2", json.loads(self.call("GET", f"/api/tasks/{fork}")[2])["result"]["diff"])
+        self.assertEqual(self.call("POST", f"/api/tasks/{task}/ask", {"question": "Why?"})[0], 400)  # needs approval
+        self.assertEqual(self.call("POST", f"/api/tasks/{task}/resume", {"approve_external": True, "verification": "syntax"})[0], 400)
+        self.assertEqual(self.call("POST", f"/api/tasks/{task}/goal/stop", {})[0], 400)
+        self.assertEqual(self.call("POST", f"/api/tasks/{task}/unknown", {})[0], 404)
+
     def test_bundled_fonts_are_served(self):
         status, headers, content = self.call("GET", "/fonts/inter-latin-wght-normal.woff2", auth=False)
         self.assertEqual((status, headers["Content-Type"]), (200, "font/woff2"))

@@ -11,7 +11,13 @@ export interface TaskRequest {
   approve_browser?: boolean;
   parent_task?: string;
   agent_profile?: string;
+  model_profile?: string;
+  confirmation?: ConfirmationPolicy;
+  attachments?: string[];
+  goal_max_turns?: number;
 }
+export type ConfirmationPolicy = "never" | "risky" | "always";
+export interface AttachmentMeta { id: string; name: string; type: string; size: number }
 export interface AgentProfile {
   id: string; name: string; instructions: string; model_profile_id: string;
   max_model_calls: number | null; max_tool_calls: number | null; deadline_seconds: number | null;
@@ -179,7 +185,11 @@ export interface Task extends TaskSummary {
   result?: TaskResult | null;
 }
 export function isTerminal(state: string): boolean {
-  return ["completed", "failed", "blocked", "cancelled", "interrupted", "draft"].includes(state);
+  return ["completed", "failed", "blocked", "cancelled", "interrupted", "draft", "paused"].includes(state);
+}
+/** States an agent run can be resumed from with its saved transcript. */
+export function isResumable(state: string): boolean {
+  return ["paused", "failed", "cancelled", "interrupted", "blocked"].includes(state);
 }
 export function modePolicy(mode: Mode, verification: Verification) {
   // Every mode can run with a syntax check only, or with tests in Docker.
@@ -202,6 +212,7 @@ export function parseVerification(value: string): Verification {
 export function buildTaskRequest(input: {
   objective: string; mode: Mode; verification: Verification;
   approveExecution: boolean; approveExternal: boolean; approveBrowser?: boolean; edits: string; agentProfile?: string;
+  modelProfile?: string | undefined; attachments?: string[]; goalMaxTurns?: number | undefined;
 }): TaskRequest {
   const policy = modePolicy(input.mode, input.verification);
   if (!input.objective.trim()) throw new Error("Enter an objective.");
@@ -227,7 +238,93 @@ export function buildTaskRequest(input: {
     approve_external: policy.requiresExternal && input.approveExternal,
     ...(browsing ? { approve_browser: true } : {}),
     ...(["agent", "plan"].includes(input.mode) && input.agentProfile ? { agent_profile: input.agentProfile } : {}),
+    ...(input.mode !== "offline" && input.modelProfile ? { model_profile: input.modelProfile } : {}),
+    ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+    ...(input.goalMaxTurns ? goalTurns(input.mode, input.goalMaxTurns) : {}),
   };
+}
+function goalTurns(mode: Mode, turns: number): { goal_max_turns: number } {
+  if (mode !== "agent") throw new Error("A goal needs Agent mode.");
+  if (!Number.isInteger(turns) || turns < 1 || turns > 20) throw new Error("A goal can run 1–20 turns.");
+  return { goal_max_turns: turns };
+}
+
+// --- composer slash commands ----------------------------------------------------
+export interface SlashCommand { name: string; hint: string; description: string }
+export const SLASH_COMMANDS: readonly SlashCommand[] = [
+  { name: "plan", hint: "[request]", description: "Switch to the read-only planner" },
+  { name: "code", hint: "[request]", description: "Back to the coding agent" },
+  { name: "goal", hint: "[--max N] goal", description: "Keep working, turn after turn, until a judge says the goal is met" },
+  { name: "btw", hint: "question", description: "Ask a side question; the answer is not added to the conversation" },
+  { name: "model", hint: "[name]", description: "Use another model profile for the next messages" },
+  { name: "condense", hint: "", description: "Summarise older turns to free up context" },
+  { name: "fork", hint: "", description: "Copy this conversation into a new one" },
+];
+/** `/name rest` → its parts, or null when the text is not a slash command. */
+export function parseSlash(text: string): { name: string; arg: string } | null {
+  const match = /^\/([a-z][a-z0-9_-]{0,63})(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  return match ? { name: (match[1] ?? "").toLowerCase(), arg: (match[2] ?? "").trim() } : null;
+}
+/** `/goal --max 5 ship it` → { turns: 5, goal: "ship it" }; the default is 5 turns. */
+export function parseGoal(arg: string): { turns: number; goal: string } {
+  const match = /^--max\s+(\d{1,2})\s*([\s\S]*)$/.exec(arg.trim());
+  const turns = match ? Number(match[1]) : 5;
+  const goal = (match ? match[2] ?? "" : arg).trim();
+  if (!goal) throw new Error("Say what the goal is, for example /goal --max 5 make the tests pass.");
+  if (turns < 1 || turns > 20) throw new Error("A goal can run 1–20 turns.");
+  return { turns, goal };
+}
+/** Commands (and skill names) matching what has been typed after the slash. */
+export function slashMatches(text: string, skills: readonly string[] = []): SlashCommand[] {
+  const typed = /^\/([a-z0-9_-]*)$/i.exec(text);
+  if (!typed) return [];
+  const all = [...SLASH_COMMANDS, ...skills.map(name => ({ name, hint: "[request]", description: "Use this skill" }))];
+  const prefix = (typed[1] ?? "").toLowerCase();
+  return all.filter(command => command.name.startsWith(prefix)).slice(0, 12);
+}
+
+// --- run state read from events -----------------------------------------------
+export interface ContextUsage { bytes: number; limit: number; ratio: number }
+/** How full the model's context was at the latest model call. */
+export function contextUsage(events: TaskEvent[]): ContextUsage | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (!event) continue;
+    if (event.kind === "condensed") return null;
+    const bytes = numOrUndef(event.data?.context_bytes), limit = numOrUndef(event.data?.context_limit);
+    if (event.kind === "agent_model" && bytes !== undefined && limit !== undefined && limit > 0) return { bytes, limit, ratio: Math.min(1, bytes / limit) };
+  }
+  return null;
+}
+export interface GoalView { status: string; turns: number; maxTurns: number; objective: string; reason: string }
+export function goalState(events: TaskEvent[]): GoalView | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (!event || event.kind !== "goal_status") continue;
+    const d = event.data ?? {};
+    return { status: textOf(d.status, 20), turns: numOrUndef(d.turns) ?? 0, maxTurns: numOrUndef(d.max_turns) ?? 0, objective: textOf(d.objective, 2000), reason: textOf(d.reason, 2000) };
+  }
+  return null;
+}
+/** Approval requests that are still waiting for a decision. */
+export function openConfirmations(events: TaskEvent[]): string[] {
+  const open = new Set<string>();
+  for (const event of events) {
+    const id = textOf(event.data?.id, 200);
+    if (event.kind === "confirmation_requested" && id) open.add(id);
+    else if (event.kind === "confirmation_resolved" && id) open.delete(id);
+    else if (isTerminal(event.kind)) open.clear();
+  }
+  return [...open];
+}
+export function attachmentList(value: unknown): AttachmentMeta[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(item => {
+    if (typeof item !== "object" || item === null) return [];
+    const r = item as Record<string, unknown>;
+    const id = textOf(r.id, 64), name = textOf(r.name, 255), type = textOf(r.type, 100);
+    return /^[0-9a-f]{32}$/.test(id) && name ? [{ id, name, type, size: numOrUndef(r.size) ?? 0 }] : [];
+  });
 }
 
 // =====================================================================
@@ -255,6 +352,7 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [{ id: `user-${seq}`, role: "user", time, kind, title: "Objective", body: objective }];
     case "user_message": {
       const text = textOf(d.text, 4000);
+      if (d.goal === true && text) return [{ ...base, role: "system", kind: "goal_turn", title: "Next goal turn", body: text }];
       return text ? [{ id: `user-${seq}`, role: "user", time, kind, title: d.queued === true ? "Queued" : "Message", body: text }] : [];
     }
     case "agent_tool": {
@@ -336,11 +434,39 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [];
     case 'draft':
       return [];
+    case "attachments": {
+      const files = attachmentList(d.files);
+      return files.length ? [{ id: `user-${seq}`, role: "user", time, kind, title: "Attachments", details: files }] : [];
+    }
+    case "confirmation_requested":
+      return [{ ...base, role: "system", title: "Approval needed", details: { id: textOf(d.id, 200), tool: textOf(d.tool, 120), risk: textOf(d.risk, 20), reason: textOf(d.reason, 500), arguments: d.arguments } }];
+    case "confirmation_resolved":
+      return [{ ...base, role: "system", title: d.accepted === true ? "Approved" : "Rejected", details: { id: textOf(d.id, 200), accepted: d.accepted === true, reason: textOf(d.reason, 500) } }];
+    case "hook_blocked":
+      return [{ ...base, role: "system", title: "Blocked by a project hook", body: textOf(d.message, 1000), details: { tool: textOf(d.tool, 120) } }];
+    case "subagent":
+      return d.phase === "end"
+        ? [{ ...base, role: "tool", title: `${textOf(d.agent, 64) || "Subagent"} reported back`, body: textOf(d.findings, 4000), details: { agent: textOf(d.agent, 64), state: textOf(d.state, 40), tool_calls: numOrUndef(d.tool_calls) } }]
+        : [{ ...base, role: "tool", title: `Asked ${textOf(d.agent, 64) || "a subagent"}`, body: textOf(d.task, 500), details: { agent: textOf(d.agent, 64) } }];
+    case "condensed":
+      return [{ ...base, role: "system", title: "Condensed the earlier conversation", body: textOf(d.summary, 8000) }];
+    case "resumed":
+      return [{ ...base, role: "system", title: "Resumed", details: { from_state: textOf(d.from_state, 40) } }];
+    case "pause_requested":
+      return [{ ...base, role: "system", title: "Pausing after this step" }];
+    case "forked":
+      return [{ ...base, role: "system", title: "Forked from another conversation", details: { from_task: textOf(d.from_task, 64), from_seq: numOrUndef(d.from_seq) } }];
+    case "goal_status": {
+      const turns = numOrUndef(d.turns) ?? 0, max = numOrUndef(d.max_turns) ?? 0;
+      const titles: Record<string, string> = { active: "Goal in progress", achieved: "Goal achieved", capped: "Goal stopped at its turn limit", stopped: "Goal stopped", error: "Goal check failed" };
+      return [{ ...base, role: "system", title: `${titles[textOf(d.status, 20)] ?? "Goal"} · ${turns}/${max}`, body: textOf(d.reason, 2000), details: { status: textOf(d.status, 20), objective: textOf(d.objective, 2000) } }];
+    }
     case "completed":
     case "failed":
     case "blocked":
     case "cancelled":
     case "interrupted":
+    case "paused":
       return [{ id: `terminal-${seq}`, role: "system", time, kind, title: `Task ${kind}`, state: kind, details: d }];
     default:
       return [];  // unknown event kinds are ignored, not executed
@@ -1255,6 +1381,7 @@ export function skillsPanel({ root, create, request }: M4PanelDom): M4PanelHandl
 
 export function resultStatus(state: string, result?: TaskResult | null): string {
   if (result && typeof result.error === "string" && result.error) return result.error;
+  if (state === "paused") return "Paused. Resume to continue from the exact step where it stopped.";
   if (result?.tests_verified === true) return "Container tests passed. Review the diff; this is not proof of every acceptance criterion.";
   if (result) {
     const checks = (Array.isArray(result.checks) ? result.checks : []).filter(check => check && typeof check.kind === "string" && typeof check.status === "string").map(check => `${check.kind}: ${check.status}`).join(" · ");

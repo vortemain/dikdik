@@ -1,6 +1,7 @@
 import { browserView, buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
+import { attachmentList, contextUsage, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries, profilesPanel, secretsPanel, skillsPanel } from "./contracts";
-import type { ActiveModel, AgentProfile, Automation, ChatMessage, DiffReview, M4Factory, M4Node, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
+import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, SlashCommand, TaskRequest, DiffReview, M4Factory, M4Node, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
 import { ComposerSize, composerMaximum } from './composer-size';
 
@@ -24,6 +25,13 @@ let agentProfiles: AgentProfile[] = [];  // read by syncMode at load time, so de
 let currentPlan: PlanView | null = null, parentTask: string | null = null, observedTaskMode = '';
 let viewEpoch = 0, observeQueued = false;
 let submitting = false;
+// Run control: files attached to the next message, a per-tab model choice, and the open task's request.
+let attached: (AttachmentMeta & { preview: string })[] = [];
+let modelOverride: { id: string; name: string } | null = null;
+let modelProfiles: { id: string; name: string; model: string }[] = [], skillNames: string[] = [];
+let slashItems: SlashCommand[] = [], slashIndex = 0, slashModels = false;
+let taskRequest: TaskRequest | null = null;
+const confirmCards = new Map<string, HTMLElement>();
 const composerSize = new ComposerSize();
 
 // --- small DOM helpers ----------------------------------------------------
@@ -229,6 +237,15 @@ function stepLabel(msg: ChatMessage): StepLabel {
     case "mcp": return { icon: "plug", title: "Connected MCP servers", arg: `${(msg.body ?? "").split("\n").join(", ")} · ${detailField(details, "tools") || 0} tools` };
     case "cancellation_requested": return { icon: "stop", title: "Cancellation requested", arg: "" };
     case "recovery_cleanup": return { icon: "alert", title: "Recovered after restart", arg: detailField(details, "warning") };
+    case "hook_blocked": return { icon: "shield", title: "Blocked by a project hook", arg: msg.body ?? "" };
+    case "confirmation_resolved": return { icon: msg.title === "Approved" ? "check" : "x", title: `${msg.title} · ${detailField(details, "id") ? "action" : ""}`.replace(/ · $/, ""), arg: detailField(details, "reason") };
+    case "subagent": return { icon: "sparkle", title: msg.title ?? "Subagent", arg: (msg.body ?? "").split("\n")[0] ?? "" };
+    case "condensed": return { icon: "list", title: msg.title ?? "Condensed", arg: "" };
+    case "resumed": return { icon: "play", title: "Resumed", arg: detailField(details, "from_state") ? `from ${detailField(details, "from_state")}` : "" };
+    case "pause_requested": return { icon: "pause", title: "Pausing after this step", arg: "" };
+    case "forked": return { icon: "branch", title: "Forked from another conversation", arg: "" };
+    case "goal_status": return { icon: "target", title: msg.title ?? "Goal", arg: (msg.body ?? "").split("\n")[0] ?? "" };
+    case "goal_turn": return { icon: "target", title: "Next goal turn", arg: (msg.body ?? "").split("\n")[0] ?? "" };
     default: return { icon: "terminal", title: msg.title ?? "Step", arg: "" };
   }
 }
@@ -287,20 +304,31 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   if (state === "completed" && (result as { turn_changed?: unknown } | undefined)?.turn_changed === false) {
     // An answer-only turn: the reply says it all, so just note that nothing changed.
     li.className = "msg msg-system msg-turn-note";
-    li.append(make("p", "turn-note", "No files changed in this turn."));
+    const note = make("p", "turn-note", `No files changed in this turn.${usageText(msg.details) ? " " + usageText(msg.details) : ""}`);
+    const seq = Number(msg.id.replace("terminal-", ""));
+    if (selected && Number.isInteger(seq)) {
+      const branch = make("button", "ghost small turn-branch");
+      branch.type = "button";
+      branch.append(icon("branch"), make("span", "", "Branch"));
+      branch.title = "Start a new conversation with the history up to this point";
+      branch.onclick = () => { if (selected) void forkTask(selected, isLatestTurn(msg) ? undefined : seq).catch(error => message(error instanceof Error ? error.message : "Fork failed", true)); };
+      note.append(branch);
+    }
+    li.append(note);
     return li;
   }
   const card = make("div", `result-card result-${state}`);
   const head = make("div", "result-head");
   const badge = make("span", "result-icon");
-  badge.append(icon(state === "completed" ? "check" : state === "cancelled" ? "stop" : "alert"));
-  const titles: Record<string, string> = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted" };
+  badge.append(icon(state === "completed" ? "check" : state === "cancelled" ? "stop" : state === "paused" ? "pause" : "alert"));
+  const titles: Record<string, string> = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted", paused: "Paused" };
   head.append(badge, make("span", "result-title", titles[state] ?? `Task ${state}`));
   if (state === "completed") {
     const verified = result?.tests_verified === true;
     head.append(make("span", verified ? "verify-badge verified" : "verify-badge", verified ? "Tests passed" : "Not test-verified"));
   }
   card.append(head, make("p", "result-text", resultStatus(state, result)));
+  if (usageText(msg.details)) card.append(make("p", "result-usage", usageText(msg.details)));
   const actions = make("div", "result-actions");
   if (result && typeof result.diff === "string" && result.diff) {
     const open = make("button", "small");
@@ -309,12 +337,24 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
     open.onclick = () => openCanvas("changes");
     actions.append(open, copyButton(() => review.diff, "Copy diff"));
   }
-  if (state !== "completed") {
+  const latest = isLatestTurn(msg);
+  if (state !== "completed" && latest) {
+    const exact = taskRequest?.mode === "agent" && isResumable(state);
     const resume = make("button", "small primary");
     resume.type = "button";
-    resume.append(icon("refresh"), make("span", "", "Continue"));
-    resume.onclick = () => { void sendMessage("Continue where you left off. Finish the original request."); };
+    resume.append(icon(exact ? "play" : "refresh"), make("span", "", exact ? "Resume" : "Continue"));
+    resume.title = exact ? "Continue from the exact step where it stopped, with a fresh step budget" : "Send a follow-up asking Dikdik to finish";
+    resume.onclick = () => { void (exact ? resumeTask() : sendMessage("Continue where you left off. Finish the original request.")); };
     actions.append(resume);
+  }
+  const seq = Number(msg.id.replace("terminal-", ""));
+  if (selected && Number.isInteger(seq)) {
+    const branch = make("button", "small ghost");
+    branch.type = "button";
+    branch.append(icon("branch"), make("span", "", "Branch from here"));
+    branch.title = "Start a new conversation with the history and changes up to this point";
+    branch.onclick = () => { if (selected) void forkTask(selected, latest ? undefined : seq).catch(error => message(error instanceof Error ? error.message : "Fork failed", true)); };
+    actions.append(branch);
   }
   const evidence = make("details", "step");
   const summary = make("summary");
@@ -349,8 +389,84 @@ function assistantMessage(msg: ChatMessage, showHeader: boolean): HTMLLIElement 
       prose.append(list);
       content.append(prose);
     } else content.append(...evidenceBlocks(msg));
-  } else if (msg.body) content.append(richText(msg.body));
+  } else if (msg.body) {
+    content.append(richText(msg.body));
+    const tools = make("div", "msg-actions");
+    tools.append(copyButton(() => msg.body ?? "", "Copy"));
+    content.append(tools);
+  }
   li.append(content);
+  return li;
+}
+/** Work counts the provider and agent reported for a turn; never an invented cost. */
+function usageText(details: unknown): string {
+  const agent = typeof details === "object" && details !== null ? (details as { agent?: Record<string, unknown> }).agent : undefined;
+  if (!agent) return "";
+  const count = (key: string) => typeof agent[key] === "number" ? agent[key] as number : 0;
+  const parts = [`${count("model_calls")} model call${count("model_calls") === 1 ? "" : "s"}`, `${count("tool_calls")} tool call${count("tool_calls") === 1 ? "" : "s"}`];
+  if (count("reported_usage_tokens")) parts.push(`${count("reported_usage_tokens").toLocaleString()} tokens reported`);
+  return parts.join(" · ");
+}
+function isLatestTurn(msg: ChatMessage): boolean {
+  const last = [...liveEvents].reverse().find(event => isTerminal(event.kind));
+  return !last || `terminal-${last.seq}` === msg.id;
+}
+function attachmentCard(msg: ChatMessage): HTMLLIElement {
+  const li = make("li", "msg msg-user msg-attachments"); li.id = msg.id;
+  const grid = make("div", "attachment-grid");
+  for (const file of attachmentList(msg.details)) {
+    if (file.type.startsWith("image/")) {
+      const image = make("img", "attachment-image"); image.src = `/api/attachments/${file.id}`; image.alt = file.name; image.loading = "lazy"; image.title = file.name;
+      grid.append(image);
+    } else {
+      const chip = make("span", "attachment-chip"); chip.append(icon("file"), make("span", "", file.name));
+      grid.append(chip);
+    }
+  }
+  li.append(grid);
+  return li;
+}
+function confirmationCard(msg: ChatMessage): HTMLLIElement {
+  const d = (msg.details ?? {}) as { id?: string; tool?: string; risk?: string; reason?: string; arguments?: unknown };
+  const li = make("li", "msg msg-system msg-confirm"); li.id = msg.id;
+  const card = make("div", `confirm-card risk-${d.risk || "low"}`);
+  const head = make("div", "result-head");
+  const badge = make("span", "result-icon"); badge.append(icon("shield"));
+  head.append(badge, make("span", "result-title", `Allow ${d.tool || "this action"}?`), make("span", "verify-badge", d.risk === "high" ? "High risk" : d.risk === "medium" ? "Needs review" : "Low risk"));
+  card.append(head);
+  if (d.reason) card.append(make("p", "result-text", d.reason));
+  const args = typeof d.arguments === "object" && d.arguments !== null ? d.arguments as Record<string, unknown> : {};
+  const shown = typeof args.command === "string" ? codeBlock(args.command, "bash", { wrap: true }) : codeBlock(JSON.stringify(args, null, 2), "json", { wrap: true });
+  card.append(shown);
+  const actions = make("div", "result-actions");
+  const allow = make("button", "small primary", "Allow"); allow.type = "button"; allow.title = "Allow (Y or Enter)";
+  const reject = make("button", "small", "Reject"); reject.type = "button"; reject.title = "Reject (N or Esc)";
+  const status = make("span", "confirm-status");
+  actions.append(allow, reject, status);
+  card.append(actions);
+  li.append(card);
+  const id = d.id ?? "";
+  const decide = async (accept: boolean) => {
+    if (!selected || allow.disabled) return;
+    allow.disabled = reject.disabled = true;
+    try { await api(`/api/tasks/${encodeURIComponent(selected)}/confirm`, { id, accept }); status.textContent = accept ? "Allowed" : "Rejected"; }
+    catch (error) { allow.disabled = reject.disabled = false; message(error instanceof Error ? error.message : "Could not send the decision", true); }
+  };
+  allow.onclick = () => { void decide(true); };
+  reject.onclick = () => { void decide(false); };
+  card.addEventListener("keydown", (event: KeyboardEvent) => {
+    const key = event.key.toLowerCase();
+    if (key === "y" || key === "enter") { event.preventDefault(); void decide(true); }
+    else if (key === "n" || key === "escape") { event.preventDefault(); void decide(false); }
+  });
+  card.tabIndex = -1;
+  if (openConfirmations(liveEvents).includes(id)) {
+    confirmCards.set(id, li);
+    if (!textarea("objective").value.trim()) setTimeout(() => allow.focus?.(), 0);
+  } else {
+    allow.disabled = reject.disabled = true;
+    status.textContent = "Decided";
+  }
   return li;
 }
 
@@ -358,6 +474,17 @@ let rendered = new Set<string>();
 let pendingCalls: { name: string; body: HTMLElement }[] = [];
 let lastRole = "";
 function renderMessage(msg: ChatMessage): HTMLLIElement | null {
+  if (msg.kind === "attachments") { lastRole = "user"; return attachmentCard(msg); }
+  if (msg.kind === "confirmation_requested") { lastRole = "system"; return confirmationCard(msg); }
+  if (msg.kind === "confirmation_resolved") {
+    const id = detailField(msg.details, "id"), card = confirmCards.get(id);
+    if (card) {
+      for (const control of card.querySelectorAll<HTMLButtonElement>("button")) control.disabled = true;
+      const status = card.querySelector(".confirm-status");
+      if (status) status.textContent = msg.title === "Approved" ? "Allowed" : "Rejected";
+      confirmCards.delete(id);
+    }
+  }
   if (msg.kind === 'plan_updated') {
     const li = make('li', 'msg msg-plan-preview'); li.id = msg.id;
     li.append(make('h4', '', 'PLAN.md'), richText((msg.body ?? '').slice(0, 800)));
@@ -779,6 +906,8 @@ async function applyChanges(): Promise<void> {
 // --- task lifecycle / polling ---------------------------------------------
 function resetConversation(): void {
   rendered = new Set(); pendingCalls = []; lastRole = ""; renderedDiff = ""; applyStep = "idle"; lastApplied = [];
+  confirmCards.clear(); taskRequest = null;
+  el("goal-banner").hidden = true; el("context-meter").hidden = true; el("pause").hidden = true; el("side-answer").hidden = true;
   el("message-stream").replaceChildren();
   el("review-controls").replaceChildren();
   el("diff").replaceChildren();
@@ -806,7 +935,10 @@ function syncComposer(): void {
   el("task-actions").hidden = !selected;
   syncSend();
 }
-function syncSend(): void { button('start').disabled = submitting || !textarea('objective').value.trim(); }
+function syncSend(): void {
+  button('start').disabled = submitting || (!textarea('objective').value.trim() && !attached.length);
+  textarea('objective').required = !attached.length;  // attachments alone are a message
+}
 function selectTask(id: string): void {
   composerSize.reset();
   stopStream();
@@ -894,7 +1026,8 @@ async function loadModel(): Promise<void> {
   const info = await api<ActiveModel>("/api/model");
   const pill = el("model-pill");
   setClass(pill, "unset", !info.configured);
-  el("model-label").textContent = info.configured ? info.model ?? "Model" : "Set up a model";
+  el("model-label").textContent = modelOverride ? modelOverride.name : info.configured ? info.model ?? "Model" : "Set up a model";
+  setClass(pill, "override", modelOverride !== null);
   pill.title = info.configured
     ? info.source === "profile" ? `${info.model} · ${info.provider_name} (profile “${info.profile}”). Change it in Settings → Models.` : `${info.model} from server environment variables`
     : info.problem ?? "No model is set up";
@@ -1038,6 +1171,7 @@ async function runMenuAction(action: string): Promise<void> {
     else if (action === "pin") { closeTaskMenu(); await patchTask(task, { pinned: !info?.pinned }); }
     else if (action === "archive") { closeTaskMenu(); await patchTask(task, { archived: !info?.archived }); message(info?.archived ? "Task restored." : "Task archived."); }
     else if (action === "export") { closeTaskMenu(); await exportTask(task); }
+    else if (action === "fork") { closeTaskMenu(); await forkTask(task); }
     else if (action === "delete") {
       if (!confirmingDelete) {
         confirmingDelete = true;
@@ -1106,7 +1240,9 @@ function startStream(id: string): void {
       renderPlanner();
       void loadHistory();
     }
-    if (record.kind === "running") { el("working").hidden = false; el("working-label").textContent = "Working"; }
+    if (record.kind === "running") { el("working").hidden = false; el("working-label").textContent = "Working"; button("cancel").disabled = false; }
+    else if (isTerminal(record.kind)) { el("working").hidden = true; button("cancel").disabled = true; }
+    renderRunState();
   });
   source.addEventListener("delta", event => {
     if (id !== selected) return stopStream();
@@ -1137,6 +1273,7 @@ async function observe(force = false): Promise<void> {
     setState(task.state);
     selectedState = task.state;
     parentTask = typeof task.request.parent_task === 'string' ? task.request.parent_task : null;
+    taskRequest = task.request;
     if (!observedTaskMode) {
       if (task.request.mode === 'plan') select('mode').value = 'plan';
       else if (select('mode').value === 'plan') select('mode').value = 'agent';
@@ -1152,6 +1289,7 @@ async function observe(force = false): Promise<void> {
     renderMessageStream(messages);
     el("working").hidden = isTerminal(task.state);
     el("working-label").textContent = task.state === "queued" ? "Queued" : "Working";
+    renderRunState();
     renderReview(task.id, task.state, task.result);
     syncApplyBar();
     const known = lastTasks.find(item => item.id === id);
@@ -1498,11 +1636,12 @@ function openSettings(pane: string): void {
   if (typeof dialog.showModal === "function") dialog.showModal();
   showPane(pane);
   closeSidebarDrawer();
+  void loadAppSettings().catch(() => undefined);
 }
 el("open-settings").addEventListener("click", () => openSettings("general"));
 el("model-pill").addEventListener("click", () => openSettings("models"));
 // Profiles or keys may have changed while settings were open.
-el("settings").addEventListener("close", () => { void loadModel().catch(() => undefined); void loadAgents().catch(() => undefined); });
+el("settings").addEventListener("close", () => { void loadModel().catch(() => undefined); void loadAgents().catch(() => undefined); void ensureLists(true); });
 el("skill-form").addEventListener("submit", async event => {
   event.preventDefault();
   try {
@@ -1615,8 +1754,9 @@ el("browser-approval").addEventListener("change", syncMode);
 el("options-toggle").addEventListener("click", () => setOptions(el("options-panel").hidden === true));
 syncMode();
 
-textarea("objective").addEventListener("input", () => { autosize(); syncSend(); composerDrafts.update(textarea('objective').value); });
+textarea("objective").addEventListener("input", () => { autosize(); syncSend(); composerDrafts.update(textarea('objective').value); renderSlash(); });
 textarea("objective").addEventListener("keydown", (event: KeyboardEvent) => {
+  if (slashKey(event)) return;
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && select('mode').value === 'plan' && !textarea('objective').value.trim()) { event.preventDefault(); void buildReviewedPlan(); return; }
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -1636,8 +1776,9 @@ if (typeof document.querySelectorAll === "function") {
   }
 }
 
-function composerRequest(text: string) {
+function composerRequest(text: string, goalMaxTurns?: number) {
   return buildTaskRequest({
+    modelProfile: modelOverride?.id, attachments: attached.map(file => file.id), goalMaxTurns,
     objective: text, mode: parseMode(select("mode").value),
     edits: textarea("edits").value, verification: parseVerification(select("verification").value),
     approveExecution: input("execution").checked, approveExternal: input("external").checked,
@@ -1731,11 +1872,12 @@ el("agent-form").addEventListener("submit", async event => {
   } catch (error) { message(error instanceof Error ? error.message : "Could not save the agent profile", true); }
 });
 /** A follow-up on the open task; queued by the server if that task is still running. */
-async function sendMessage(text: string): Promise<boolean> {
+async function sendMessage(text: string, goalMaxTurns?: number): Promise<boolean> {
   if (!selected) return false;
   const task = selected;
   try {
-    const reply = await api<{ queued: boolean }>(`/api/tasks/${encodeURIComponent(task)}/messages`, composerRequest(text));
+    const reply = await api<{ queued: boolean }>(`/api/tasks/${encodeURIComponent(task)}/messages`, composerRequest(text, goalMaxTurns));
+    clearAttachments();
     if (task === selected) watching = true;
     if (reply.queued) message("Queued. Dikdik will reply when the current step finishes.");
   } catch (error) { message(error instanceof Error ? error.message : "Message failed", true); return false; }
@@ -1746,30 +1888,315 @@ async function sendMessage(text: string): Promise<boolean> {
 
 el("task-form").addEventListener("submit", async event => {
   event.preventDefault();
-  if (submitting || !textarea('objective').value.trim()) return;
+  if (submitting || (!textarea('objective').value.trim() && !attached.length)) return;
+  hideSlash();
   submitting = true; syncSend(); textarea('objective').disabled = true;
   const originalScope = composerDrafts.scope, originalText = textarea('objective').value;
   try {
     let text = textarea("objective").value;
-    const command = /^\/(plan|code)(?:\s+([\s\S]*))?$/.exec(text.trim());
+    let goalTurns: number | undefined;
+    const slash = parseSlash(text);
+    const command = slash && (slash.name === "plan" || slash.name === "code") ? slash : null;
     if (command) {
-      if (command[1] === 'plan') await enterPlanning(); else await enterCode();
-      text = command[2]?.trim() ?? ''; textarea('objective').value = text;
+      if (command.name === 'plan') await enterPlanning(); else await enterCode();
+      text = command.arg; textarea('objective').value = text;
       if (!text) { await composerDrafts.sent(originalScope, originalText); return; }
+    } else if (slash) {
+      const done = await runSlash(slash.name, slash.arg);
+      if (done === true) { await composerDrafts.sent(originalScope, originalText); return; }
+      if (done === false) return;  // the command explained what is missing; keep the text
+      ({ text, turns: goalTurns } = done);
     }
-    if (selected && select('mode').value === 'plan' && observedTaskMode !== 'plan' && command?.[1] !== 'plan') await enterPlanning();
+    if (!text.trim() && attached.length) text = attached.length === 1 ? `Take a look at the attached file “${attached[0]?.name ?? "file"}”.` : "Take a look at the attached files.";
+    if (selected && select('mode').value === 'plan' && observedTaskMode !== 'plan' && command?.name !== 'plan') await enterPlanning();
     if (selected) {
-      composerRequest(text);  // validate before clearing the field
-      if (await sendMessage(text)) await composerDrafts.sent(originalScope, originalText);
+      composerRequest(text, goalTurns);  // validate before clearing the field
+      if (await sendMessage(text, goalTurns)) await composerDrafts.sent(originalScope, originalText);
       return;
     }
-    const task = await api<TaskSummary>("/api/tasks", composerRequest(text));
+    const task = await api<TaskSummary>("/api/tasks", composerRequest(text, goalTurns));
+    clearAttachments();
     await composerDrafts.sent(originalScope, originalText);
     selectTask(task.id);
     await loadHistory(); await observe();
   } catch (error) { message(error instanceof Error ? error.message : "Task failed", true); }
   finally { submitting = false; textarea('objective').disabled = false; composerDrafts.display(); autosize(); syncSend(); }
 });
+
+// --- run control: slash commands, attachments, pause/resume, goals, forks ------
+async function ensureLists(force = false): Promise<void> {
+  if (!force && (modelProfiles.length || skillNames.length)) return;
+  const [models, skills] = await Promise.all([
+    api<{ id: string; name: string; model: string }[]>("/api/profiles").catch(() => []),
+    request<unknown>("/api/skills", "GET").catch(() => []),
+  ]);
+  modelProfiles = Array.isArray(models) ? models : [];
+  skillNames = (Array.isArray(skills) ? skills : []).flatMap(item => {
+    const skill = item as { name?: unknown; enabled?: unknown };
+    return typeof skill.name === "string" && skill.enabled !== false && /^[a-z0-9_-]{1,64}$/i.test(skill.name) ? [skill.name] : [];
+  });
+}
+function modelMatches(value: string): SlashCommand[] {
+  const typed = (/^\/model\s+(.*)$/i.exec(value)?.[1] ?? "").toLowerCase();
+  return [{ name: "default", hint: "", description: "Your default model profile" },
+    ...modelProfiles.map(profile => ({ name: profile.name, hint: profile.model, description: "" }))]
+    .filter(item => item.name.toLowerCase().startsWith(typed)).slice(0, 12);
+}
+function hideSlash(): void { el("slash-menu").hidden = true; slashItems = []; }
+function renderSlash(): void {
+  const value = textarea("objective").value;
+  if (!value.startsWith("/")) { hideSlash(); return; }
+  void ensureLists().then(() => { if (textarea("objective").value === value) drawSlash(value); });
+  drawSlash(value);
+}
+function drawSlash(value: string): void {
+  slashModels = /^\/model\s/i.test(value) && !/\n/.test(value);
+  slashItems = slashModels ? modelMatches(value) : slashMatches(value, skillNames);
+  const menu = el("slash-menu");
+  if (!slashItems.length) { hideSlash(); return; }
+  slashIndex = Math.min(slashIndex, slashItems.length - 1);
+  menu.replaceChildren(...slashItems.map((item, index) => {
+    const row = make("li", "slash-item");
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", String(index === slashIndex));
+    row.append(make("span", "slash-name", slashModels ? item.name : `/${item.name}`));
+    if (item.hint) row.append(make("span", "slash-hint", item.hint));
+    if (item.description) row.append(make("span", "slash-desc", item.description));
+    row.addEventListener("mousedown", event => { event.preventDefault(); chooseSlash(index); });
+    return row;
+  }));
+  menu.hidden = false;
+}
+function chooseSlash(index: number): void {
+  const item = slashItems[index];
+  if (!item) return;
+  const field = textarea("objective");
+  hideSlash();
+  if (slashModels || ["condense", "fork"].includes(item.name)) {
+    field.value = slashModels ? `/model ${item.name}` : `/${item.name}`;
+    const form = el("task-form") as HTMLFormElement;
+    if (typeof form.requestSubmit === "function") form.requestSubmit();
+    else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    return;
+  }
+  field.value = `/${item.name} `;
+  composerDrafts.update(field.value);
+  field.focus?.();
+  syncSend();
+  if (item.name === "model") renderSlash();
+}
+/** Arrow keys, Enter/Tab and Escape drive the open command menu. */
+function slashKey(event: KeyboardEvent): boolean {
+  if (el("slash-menu").hidden || !slashItems.length) return false;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    slashIndex = (slashIndex + (event.key === "ArrowDown" ? 1 : slashItems.length - 1)) % slashItems.length;
+    drawSlash(textarea("objective").value);
+  } else if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") chooseSlash(slashIndex);
+  else if (event.key === "Escape") hideSlash();
+  else return false;
+  event.preventDefault();
+  return true;
+}
+/** Runs a composer command. true: done, clear the field; false: keep the text; otherwise send this text. */
+async function runSlash(name: string, arg: string): Promise<boolean | { text: string; turns?: number }> {
+  if (name === "btw") {
+    if (!arg) { message("Ask your question after /btw.", true); return false; }
+    await askSide(arg);
+    return true;
+  }
+  if (name === "goal") {
+    const goal = parseGoal(arg);
+    if (select("mode").value !== "agent") { select("mode").value = "agent"; syncMode(); }
+    return { text: goal.goal, turns: goal.turns };
+  }
+  if (name === "model") {
+    await ensureLists(true);
+    if (!arg) { textarea("objective").value = "/model "; drawSlash("/model "); return false; }
+    if (arg.toLowerCase() === "default") modelOverride = null;
+    else {
+      const wanted = arg.toLowerCase();
+      const found = modelProfiles.find(profile => profile.name.toLowerCase() === wanted) ?? modelProfiles.find(profile => profile.name.toLowerCase().startsWith(wanted));
+      if (!found) { message(`No model profile is called “${arg}”. Add one in Settings → Models.`, true); return false; }
+      modelOverride = { id: found.id, name: found.name };
+    }
+    message(modelOverride ? `Using ${modelOverride.name} for your next messages in this tab.` : "Back to your default model.");
+    await loadModel().catch(() => undefined);
+    return true;
+  }
+  if (name === "condense") { await condenseNow(); return true; }
+  if (name === "fork") {
+    if (!selected) { message("Open a conversation to fork it.", true); return false; }
+    await forkTask(selected);
+    return true;
+  }
+  if (skillNames.includes(name)) return { text: `Use the “${name}” skill for this request.${arg ? "\n\n" + arg : ""}` };
+  message(`Unknown command /${name}. Type / to see the commands.`, true);
+  return false;
+}
+function needsSharing(what: string): void {
+  if (!selected) throw new Error(`Open a conversation first; ${what} works from its history.`);
+  if (!input("external").checked) throw new Error(`Turn on “Share code with model” to ${what}.`);
+}
+async function askSide(question: string): Promise<void> {
+  needsSharing("ask a side question");
+  const task = selected!;
+  el("side-answer").hidden = false;
+  el("side-question").textContent = question;
+  el("side-body").replaceChildren(make("p", "hint", "Thinking…"));
+  try {
+    const reply = await api<{ answer: string }>(`/api/tasks/${encodeURIComponent(task)}/ask`, { question, approve_external: true });
+    if (task === selected) el("side-body").replaceChildren(richText(reply.answer));
+  } catch (error) { el("side-answer").hidden = true; throw error; }
+}
+async function condenseNow(): Promise<void> {
+  needsSharing("condense the conversation");
+  const task = selected!;
+  message("Condensing older turns…");
+  await api(`/api/tasks/${encodeURIComponent(task)}/condense`, { approve_external: true });
+  message("Condensed. Older turns now travel as a summary.");
+  if (task === selected) await observe(true);
+}
+async function forkTask(task: string, upto?: number): Promise<void> {
+  const reply = await api<{ id: string }>(`/api/tasks/${encodeURIComponent(task)}/fork`, upto === undefined ? {} : { upto_seq: upto });
+  await loadHistory();
+  selectTask(reply.id);
+  await observe();
+  message("Forked into a new conversation. The original is unchanged.");
+}
+async function resumeTask(): Promise<void> {
+  if (!selected || !taskRequest) return;
+  const r = taskRequest, task = selected;
+  const chosen = modelOverride?.id ?? r.model_profile;
+  const body = {
+    verification: r.verification, approve_external: r.approve_external === true, approve_execution: r.approve_execution === true,
+    ...(r.approve_browser ? { approve_browser: true } : {}), ...(r.agent_profile ? { agent_profile: r.agent_profile } : {}),
+    ...(r.confirmation ? { confirmation: r.confirmation } : {}), ...(chosen ? { model_profile: chosen } : {}),
+  };
+  try {
+    await api(`/api/tasks/${encodeURIComponent(task)}/resume`, body);
+    watching = true;
+    await observe(true);
+  } catch (error) {
+    const text = error instanceof Error ? error.message : "Resume failed";
+    if (/no saved agent state/i.test(text)) { await sendMessage("Continue where you left off. Finish the original request."); return; }
+    message(text, true);
+  }
+}
+const GOAL_LABELS: Record<string, string> = { achieved: "Goal achieved", capped: "Goal stopped at its turn limit", stopped: "Goal stopped", error: "Goal check failed" };
+function renderRunState(): void {
+  const usage = selected ? contextUsage(liveEvents) : null;
+  const meter = el("context-meter");
+  meter.hidden = !usage;
+  if (usage) {
+    const pct = Math.round(usage.ratio * 100);
+    el("context-label").textContent = `${pct}%`;
+    el("context-fill").style?.setProperty?.("--fill", `${pct}%`);
+    setClass(meter, "context-high", usage.ratio >= 0.8);
+    meter.title = `${pct}% of the context window at the last model call (${Math.round(usage.bytes / 1024)} of ${Math.round(usage.limit / 1024)} KB). Click to condense older turns.`;
+  }
+  const goal = selected ? goalState(liveEvents) : null;
+  el("goal-banner").hidden = !goal;
+  if (goal) {
+    const label = goal.status === "active" ? `Goal · turn ${Math.min(goal.turns + 1, goal.maxTurns)} of ${goal.maxTurns}` : `${GOAL_LABELS[goal.status] ?? "Goal"} · ${goal.turns}/${goal.maxTurns}`;
+    el("goal-text").textContent = `${label}: ${goal.objective}`;
+    el("goal-text").title = goal.reason;
+    el("goal-stop").hidden = goal.status !== "active";
+    el("goal-resume").hidden = goal.status === "active" || goal.status === "achieved";
+  }
+  el("pause").hidden = !selected || !selectedState || isTerminal(selectedState) || taskRequest?.mode !== "agent";
+}
+async function readBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+const TEXT_TYPES: Record<string, string> = { md: "text/markdown", py: "text/x-python", ts: "text/plain", tsx: "text/plain", rs: "text/plain", toml: "text/plain", yml: "text/plain", yaml: "text/plain", log: "text/plain", sh: "text/plain", sql: "text/plain", go: "text/plain" };
+async function uploadFiles(files: File[]): Promise<void> {
+  for (const file of files) {
+    if (attached.length >= 10) { message("Attach up to 10 files per message.", true); break; }
+    if (file.size > 3 * 1024 * 1024) { message(`${file.name} is larger than 3 MB.`, true); continue; }
+    const extension = (file.name.split(".").pop() ?? "").toLowerCase();
+    const type = file.type || TEXT_TYPES[extension] || "text/plain";
+    try {
+      const data = await readBase64(file);
+      const meta = await api<AttachmentMeta>("/api/attachments", { name: file.name || "pasted.png", type, data });
+      attached.push({ ...meta, preview: meta.type.startsWith("image/") ? `data:${meta.type};base64,${data}` : "" });
+    } catch (error) { message(error instanceof Error ? `${file.name}: ${error.message}` : "Upload failed", true); }
+  }
+  renderTray(); syncSend(); autosize();
+}
+function renderTray(): void {
+  const tray = el("attachment-tray");
+  tray.hidden = !attached.length;
+  tray.replaceChildren(...attached.map(file => {
+    const chip = make("span", file.preview ? "tray-item tray-image" : "tray-item");
+    if (file.preview) { const image = make("img"); image.src = file.preview; image.alt = ""; chip.append(image); }
+    else chip.append(icon("file"));
+    chip.append(make("span", "tray-name", file.name));
+    const remove = make("button", "ghost icon tray-remove"); remove.type = "button";
+    remove.setAttribute("aria-label", `Remove ${file.name}`); remove.title = "Remove";
+    remove.append(icon("x"));
+    remove.onclick = () => { attached = attached.filter(item => item.id !== file.id); renderTray(); syncSend(); autosize(); };
+    chip.append(remove);
+    return chip;
+  }));
+}
+function clearAttachments(): void { attached = []; renderTray(); syncSend(); }
+el("attach").addEventListener("click", () => input("attach-input").click());
+input("attach-input").addEventListener("change", () => {
+  const files = [...(input("attach-input").files ?? [])];
+  input("attach-input").value = "";
+  void uploadFiles(files);
+});
+textarea("objective").addEventListener("paste", (event: ClipboardEvent) => {
+  const files = [...(event.clipboardData?.files ?? [])];
+  if (!files.length) return;
+  event.preventDefault();
+  void uploadFiles(files);
+});
+textarea("objective").addEventListener("blur", () => setTimeout(hideSlash, 120));
+el("task-form").addEventListener("dragover", (event: DragEvent) => {
+  if (!event.dataTransfer?.types?.includes("Files")) return;
+  event.preventDefault();
+  setClass(el("task-form"), "dropping", true);
+});
+el("task-form").addEventListener("dragleave", () => setClass(el("task-form"), "dropping", false));
+el("task-form").addEventListener("drop", (event: DragEvent) => {
+  setClass(el("task-form"), "dropping", false);
+  const files = [...(event.dataTransfer?.files ?? [])];
+  if (!files.length) return;
+  event.preventDefault();
+  void uploadFiles(files);
+});
+el("context-meter").addEventListener("click", () => { void condenseNow().catch(error => message(error instanceof Error ? error.message : "Condense failed", true)); });
+el("side-close").addEventListener("click", () => { el("side-answer").hidden = true; });
+button("pause").onclick = async () => {
+  if (!selected) return;
+  try {
+    const data = await api<{ requested: boolean }>(`/api/tasks/${encodeURIComponent(selected)}/pause`, {});
+    message(data.requested ? "Pausing after the current step…" : "This run has already stopped.");
+  } catch (error) { message(error instanceof Error ? error.message : "Pause failed", true); }
+};
+for (const [id, action] of [["goal-stop", "stop"], ["goal-resume", "resume"]] as const) {
+  el(id).addEventListener("click", async () => {
+    if (!selected) return;
+    try { await api(`/api/tasks/${encodeURIComponent(selected)}/goal/${action}`, {}); await observe(true); }
+    catch (error) { message(error instanceof Error ? error.message : "Goal update failed", true); }
+  });
+}
+// General settings: when to ask before tools run, and the automatic condenser.
+async function loadAppSettings(): Promise<void> {
+  const settings = await api<{ confirmation: string; condenser: boolean }>("/api/settings/app");
+  select("confirmation-policy").value = settings.confirmation;
+  input("condenser").checked = settings.condenser;
+}
+async function saveAppSetting(change: Record<string, unknown>): Promise<void> {
+  try { await request("/api/settings/app", "PATCH", change); message("Saved."); }
+  catch (error) { message(error instanceof Error ? error.message : "Could not save", true); void loadAppSettings().catch(() => undefined); }
+}
+select("confirmation-policy").addEventListener("change", () => { void saveAppSetting({ confirmation: select("confirmation-policy").value }); });
+input("condenser").addEventListener("change", () => { void saveAppSetting({ condenser: input("condenser").checked }); });
 
 button("cancel").onclick = async () => {
   if (!selected) return;

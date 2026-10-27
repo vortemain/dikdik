@@ -40,6 +40,13 @@ autonomous engineering platform.
   and reload. Conflicting tabs offer an explicit choice; failed sends retain text.
   Drafts stay in your private server data. See [drafts](docs/COMPOSER.md).
   Drag the composer's top edge to resize; keyboard arrows resize and Home resets.
+- **Run control.** Pause a run and Resume it from the exact step; ask before
+  actions (never, risky only, or every action) with Allow/Reject cards; block
+  tools with `.dikdik/hooks.json`; let the agent delegate to read-only subagents
+  (`.dikdik/agents/*.md`). Attach images and text files (+, paste or drop). Type
+  `/` for commands: `/goal` (judged multi-turn loop), `/btw` (side question),
+  `/model`, `/condense`, `/fork`, `/plan`, `/code` and your skills. Fork any
+  conversation or branch from an earlier turn; a meter shows context use.
 - **Tests for several stacks** in network-less Docker containers: Python
   `unittest`, `bun test`, `npm test` and `cargo test --offline`, picked from the
   project's files. Without Docker, tasks are syntax-checked and labelled so.
@@ -59,8 +66,8 @@ autonomous engineering platform.
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
 
-**Not yet:** the full slash-command menu, attachments, model
-routing, plugins and extension apps, folders/tags, per-action confirmations,
+**Not yet:** a command menu, model
+routing, plugins and extension apps, folders/tags,
 WebSocket and TypeScript clients, a desktop app, and any recorded run against a
 live model provider or Docker engine. See [the parity audit](docs/PARITY.md).
 

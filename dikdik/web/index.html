@@ -47,6 +47,11 @@
     <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="4.5" rx="1.5"/><path d="M5.5 9v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V9M10 13h4"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M10 11v6m4-6v6M6.5 7l1 12a2 2 0 0 0 2 1.8h5a2 2 0 0 0 2-1.8l1-12M9.5 7V4.5h5V7"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19.5h14"/></symbol>
+    <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="M20 11.5 12.2 19.3a5 5 0 0 1-7.1-7.1l8-8a3.4 3.4 0 0 1 4.8 4.8l-8 8a1.7 1.7 0 0 1-2.4-2.4l7.3-7.3"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6.5v11M15 6.5v11"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 6.2v11.6a.6.6 0 0 0 .9.5l9.2-5.8a.6.6 0 0 0 0-1L8.9 5.7a.6.6 0 0 0-.9.5Z"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2"/><circle cx="7" cy="18.5" r="2"/><circle cx="17" cy="8" r="2"/><path d="M7 7.5v9M17 10c0 4-10 3-10 6.5"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".6" fill="currentColor"/></symbol>
   </svg>
 
   <div id="boot" class="boot" aria-hidden="true"><img src="/icon.svg" alt=""></div>
@@ -73,6 +78,7 @@
     <button type="button" role="menuitem" data-action="pin"><svg class="i"><use href="#i-pin"/></svg><span>Pin</span></button>
     <button type="button" role="menuitem" data-action="archive"><svg class="i"><use href="#i-archive"/></svg><span>Archive</span></button>
     <button type="button" role="menuitem" data-action="export"><svg class="i"><use href="#i-download"/></svg><span>Export transcript</span></button>
+    <button type="button" role="menuitem" data-action="fork"><svg class="i"><use href="#i-branch"/></svg><span>Fork conversation</span></button>
     <button type="button" role="menuitem" data-action="delete" class="danger-item"><svg class="i"><use href="#i-trash"/></svg><span>Delete</span></button>
   </div>
 
@@ -107,6 +113,7 @@
         <div class="topbar-title"><h1 id="chat-title">New task</h1><span id="task-state" class="state-pill" role="status" aria-live="polite"></span></div>
         <div class="topbar-actions">
           <button id="task-actions" class="ghost icon" type="button" aria-label="Task actions" title="Task actions" hidden><svg class="i"><use href="#i-more"/></svg></button>
+          <button id="pause" class="ghost small" type="button" hidden title="Pause after the current step; resume later from exactly here"><svg class="i"><use href="#i-pause"/></svg>Pause</button>
           <button id="cancel" class="secondary small" type="button" disabled><svg class="i"><use href="#i-stop"/></svg>Stop</button>
           <button id="open-files" class="ghost icon" type="button" aria-label="Files and Git" title="Files and Git"><svg class="i"><use href="#i-folder"/></svg></button>
           <button id="toggle-canvas" class="ghost small changes-button" type="button" aria-pressed="false" aria-controls="canvas" hidden><svg class="i"><use href="#i-diff"/></svg><span class="label">Changes</span><span id="changes-count" class="count"></span></button>
@@ -131,10 +138,15 @@
 
       <section class="composer" aria-label="Send a message">
         <div class="composer-inner">
+          <div id="goal-banner" class="goal-banner" role="status" hidden><svg class="i"><use href="#i-target"/></svg><span id="goal-text" class="goal-text"></span><button id="goal-stop" class="ghost small" type="button">Stop goal</button><button id="goal-resume" class="ghost small" type="button" hidden>Resume goal</button></div>
+          <div id="side-answer" class="side-answer" role="status" hidden><div class="side-head"><span id="side-question" class="side-question"></span><button id="side-close" class="ghost icon" type="button" aria-label="Dismiss side answer" title="Dismiss"><svg class="i"><use href="#i-x"/></svg></button></div><div id="side-body"></div></div>
+          <ul id="slash-menu" class="slash-menu" role="listbox" aria-label="Commands" hidden></ul>
           <form id="task-form">
             <div id="composer-resize" class="composer-resize" role="separator" aria-label="Resize message field; arrow keys resize, Home resets" aria-orientation="horizontal" aria-controls="objective" aria-valuemin="52" aria-valuemax="520" aria-valuenow="52" tabindex="0" title="Drag to resize · Arrow keys resize · Home resets"></div>
             <label for="objective" class="sr-only">Objective</label>
-            <textarea id="objective" rows="1" maxlength="4000" placeholder="Ask Dikdik to build, fix or change something…" required></textarea>
+            <div id="attachment-tray" class="attachment-tray" aria-label="Attached files" hidden></div>
+            <textarea id="objective" rows="1" maxlength="4000" placeholder="Ask Dikdik to build, fix or change something…" required aria-autocomplete="list" aria-controls="slash-menu"></textarea>
+            <input id="attach-input" type="file" multiple hidden accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.py,.ts,.tsx,.js,.jsx,.json,.toml,.yaml,.yml,.rs,.go,.java,.c,.cpp,.h,.css,.html,.csv,.log,.sh,.sql,.xml">
             <div id="draft-status-row" class="draft-status" role="status" hidden><span id="draft-status"></span><button id="draft-use-saved" class="ghost small" type="button" hidden>Use saved draft</button><button id="draft-keep-local" class="ghost small" type="button" hidden>Keep my draft</button><button id="draft-retry" class="ghost small" type="button" hidden>Retry save</button></div>
             <details id="draft-conflict" class="draft-conflict" hidden><summary>Saved draft from another tab</summary><pre id="draft-remote"></pre></details>
             <div id="options-panel" class="options-panel" hidden>
@@ -148,12 +160,14 @@
               <label id="browser-field" class="toggle" title="Allows public web GET requests for this task. Pages run in Docker and may be sent to the model as untrusted text."><input id="browser-approval" type="checkbox">Browse public web</label>
             </div>
             <div class="composer-controls">
+              <button id="attach" class="ghost icon" type="button" aria-label="Attach files" title="Attach images or text files (or paste / drop them)"><svg class="i"><use href="#i-paperclip"/></svg></button>
               <label class="pill" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="plan">Plan</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
               <label class="pill" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="docker">Docker tests</option></select></label>
               <label id="agent-profile-pill" class="pill" title="Agent profile"><span class="sr-only">Agent profile</span><svg class="i"><use href="#i-book"/></svg><select id="agent-profile"><option value="">Default agent</option></select></label>
               <button id="model-pill" class="ghost small model-pill" type="button" title="Model used by model and agent tasks"><svg class="i"><use href="#i-cpu"/></svg><span id="model-label">Model</span></button>
               <button id="options-toggle" class="ghost icon options-toggle" type="button" aria-expanded="false" aria-controls="options-panel" aria-label="Mode options" title="Mode options"><svg class="i"><use href="#i-sliders"/></svg></button>
               <span class="composer-spacer"></span>
+              <button id="context-meter" class="ghost small context-meter" type="button" hidden title="Context used at the last model call. Click to condense older turns."><span class="meter-ring" aria-hidden="true"><span id="context-fill"></span></span><span id="context-label">0%</span></button>
               <button id="start" type="submit" class="primary" aria-label="Start task" title="Start task (Enter)" disabled><svg class="i"><use href="#i-arrow-up"/></svg></button>
             </div>
           </form>
@@ -251,6 +265,8 @@
       <div class="settings-head"><h3 id="settings-pane-title">General</h3><button id="close-settings" class="ghost icon" type="button" aria-label="Close settings"><svg class="i"><use href="#i-x"/></svg></button></div>
       <section class="settings-pane" data-pane="general" role="tabpanel">
         <div class="setting-row"><div><h4>Appearance</h4><p>Match your system, or pick light or dark.</p></div><select id="theme" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+        <div class="setting-row"><div><h4>Confirm actions</h4><p>Ask before the agent runs a tool. “Risky only” asks for commands that delete, install, use the network or rewrite history.</p></div><select id="confirmation-policy" aria-label="Confirm actions"><option value="never">Never ask</option><option value="risky">Risky only</option><option value="always">Every action</option></select></div>
+        <div class="setting-row"><div><h4>Condense long conversations</h4><p>When a conversation outgrows the history budget, older turns are replaced with a summary written by your model.</p></div><label class="check"><input id="condenser" type="checkbox" checked>On</label></div>
         <div class="setting-row"><div><h4>Browser tools</h4><p>Enable public web captures. Each task or manual capture still needs your approval.</p><p id="browser-availability" class="hint"></p></div><label class="check"><input id="browser-enabled" type="checkbox">Enabled</label></div>
         <div class="setting-row"><div><h4>Workspace</h4><p>The only folder Dikdik may read. Candidates are written to the private data directory.</p></div></div>
         <dl class="kv"><dt>Project</dt><dd id="settings-project">—</dd><dt>Inventory</dt><dd id="settings-inventory">—</dd><dt>Indexer</dt><dd id="settings-indexer">—</dd><dt>Network</dt><dd>Loopback only (127.0.0.1)</dd><dt>Sign-in</dt><dd>Remembered in this browser for 30 days. Restart with <code>--rotate-token</code> to sign out everywhere.</dd></dl>

@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .engine import ApplyConflict, Engine, TERMINAL
+from .control import IMAGE_TYPES
 from . import gitops
 from .repository import INDEXER, approved_root, inventory, metadata
 from .server_routes import ROUTE_PREFIXES, build_routes
@@ -165,6 +166,13 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(*planning)
                     return
                 parts = path.split("/")
+                if len(parts) == 4 and parts[:3] == ["", "api", "attachments"]:
+                    meta, raw = engine.attachments.get(parts[3])
+                    self.reply(200, raw, meta["type"] if meta["type"] in IMAGE_TYPES else "application/octet-stream")
+                    return
+                if path == "/api/settings/app":
+                    self.reply(200, engine.app_settings())
+                    return
                 if len(parts) == 7 and parts[:3] == ["", "api", "tasks"] and parts[4:6] == ["browser", "screenshots"]:
                     self.reply(200, engine.browser.screenshot(parts[3], parts[6]), "image/png")
                     return
@@ -213,8 +221,9 @@ def make_server(engine: Engine, port: int, token: str):
                 if self.headers.get("Transfer-Encoding"):
                     raise ValueError("Chunked requests unsupported")
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= 262144:
-                    raise ValueError("Request must contain 1–262144 bytes")
+                limit = 4_400_000 if path == "/api/attachments" else 262144  # 3 MB of files, base64-encoded
+                if not 0 < length <= limit:
+                    raise ValueError(f"Request must contain 1–{limit} bytes")
                 body = json.loads(self.rfile.read(length))
                 if path.startswith(M4_PREFIXES):
                     if length > 65536:
@@ -248,6 +257,26 @@ def make_server(engine: Engine, port: int, token: str):
                 elif path.startswith("/api/tasks/") and path.endswith("/messages") and path.count("/") == 4:
                     task = path.split("/")[3]
                     self.reply(202, {"id": task, "queued": engine.send(task, body)})
+                elif path == "/api/attachments":
+                    self.reply(201, engine.attachments.add(body))
+                elif path.startswith("/api/tasks/") and path.count("/") in (4, 5):
+                    task, action = path.split("/")[3], "/".join(path.split("/")[4:])
+                    if action == "pause":
+                        self.reply(200, {"requested": engine.pause(task)})
+                    elif action == "resume":
+                        self.reply(202, {"resumed": engine.resume(task, body)})
+                    elif action == "confirm":
+                        self.reply(200, {"decided": engine.confirm(task, body)})
+                    elif action == "ask":
+                        self.reply(200, engine.ask(task, body))
+                    elif action == "condense":
+                        self.reply(200, engine.condense(task, body.get("approve_external")))
+                    elif action == "fork":
+                        self.reply(201, engine.fork(task, body))
+                    elif action in {"goal/stop", "goal/resume"}:
+                        self.reply(200, engine.goal_control(task, action.split("/")[1]))
+                    else:
+                        self.reply(404, {"error": "Not found"})
                 else:
                     self.reply(404, {"error": "Not found"})
             except KeyError:
@@ -291,6 +320,9 @@ def make_server(engine: Engine, port: int, token: str):
                 bash = engine.bash.route(method, self.path, body)
                 if bash is not None:
                     self.reply(*bash)
+                    return
+                if path == "/api/settings/app" and method == "PATCH":
+                    self.reply(200, engine.update_app_settings(body))
                     return
                 if path.startswith("/api/tasks/") and path.count("/") == 3:
                     task = path.split("/")[3]
