@@ -188,6 +188,47 @@ class ServerApiTests(unittest.TestCase):
         self.assertIn("defaults", data)
         self.assertIn("event_retention_seconds", data["properties"])
 
+    def test_file_delete(self):
+        (self.root / "to-delete.txt").write_text("delete me", encoding="utf-8")
+        status, body = self.call("POST", "/api/files/delete", {"path": "to-delete.txt"})
+        self.assertEqual(status, 200)
+        self.assertFalse((self.root / "to-delete.txt").exists())
+
+    def test_file_delete_missing(self):
+        status, body = self.call("POST", "/api/files/delete", {"path": "absent.txt"})
+        self.assertEqual(status, 404)
+
+    def test_file_delete_refuses_escape(self):
+        status, body = self.call("POST", "/api/files/delete", {"path": "../../escape"})
+        self.assertEqual(status, 400)
+
+    def test_batch_archive_and_delete(self):
+        task1 = self.make_task()
+        task2 = self.make_task()
+        # Archive both
+        status, body = self.call("POST", "/api/tasks/batch", {"action": "archive", "ids": [task1, task2]})
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["updated"], 2)
+        # Verify archived
+        t1 = json.loads(self.call("GET", f"/api/tasks/{task1}")[1])
+        self.assertTrue(t1["archived"])
+        # Delete both
+        status, body = self.call("POST", "/api/tasks/batch", {"action": "delete", "ids": [task1, task2]})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["updated"], 2)
+        # Verify deleted
+        self.assertEqual(self.call("GET", f"/api/tasks/{task1}")[0], 404)
+
+    def test_batch_invalid_action(self):
+        status, body = self.call("POST", "/api/tasks/batch", {"action": "bad", "ids": ["x"]})
+        self.assertEqual(status, 400)
+
+    def test_batch_unknown_ids_skipped(self):
+        status, body = self.call("POST", "/api/tasks/batch", {"action": "pin", "ids": ["nonexistent"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["updated"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

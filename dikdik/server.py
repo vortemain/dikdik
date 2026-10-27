@@ -447,6 +447,32 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(*bash)
                 elif path == "/api/tasks":
                     self.reply(202, {"id": engine.submit(body)})
+                elif path == "/api/tasks/batch" and isinstance(body, dict):
+                    action = body.get("action")
+                    ids = body.get("ids")
+                    if action not in {"archive", "unarchive", "pin", "unpin", "delete"}:
+                        raise ValueError("action must be archive, unarchive, pin, unpin or delete")
+                    if not isinstance(ids, list) or not ids or len(ids) > 100:
+                        raise ValueError("ids must be a list of 1-100 task ids")
+                    count = 0
+                    for task_id in ids:
+                        if not isinstance(task_id, str):
+                            raise ValueError("ids must be strings")
+                        try:
+                            if action == "archive":
+                                engine.store.update_meta(task_id, {"archived": True})
+                            elif action == "unarchive":
+                                engine.store.update_meta(task_id, {"archived": False})
+                            elif action == "pin":
+                                engine.store.update_meta(task_id, {"pinned": True})
+                            elif action == "unpin":
+                                engine.store.update_meta(task_id, {"pinned": False})
+                            elif action == "delete":
+                                engine.delete(task_id)
+                            count += 1
+                        except KeyError:
+                            pass  # skip unknown tasks
+                    self.reply(200, {"action": action, "updated": count})
                 elif path.startswith("/api/tasks/") and path.endswith("/cancel"):
                     self.reply(200, {"requested": engine.cancel(path.split("/")[3])})
                 elif path.startswith("/api/tasks/") and path.endswith("/interrupt"):
@@ -474,6 +500,22 @@ def make_server(engine: Engine, port: int, token: str):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(content, encoding="utf-8")
                     self.reply(201, {"path": rel, "bytes": len(content.encode("utf-8"))})
+                elif path == "/api/files/delete" and isinstance(body, dict):
+                    activity["last"] = time.monotonic()
+                    rel = body.get("path")
+                    if not isinstance(rel, str) or not rel.strip() or len(rel) > 500 or rel.startswith("-"):
+                        raise ValueError("path must be a safe relative path")
+                    target = (engine.root / rel).resolve()
+                    if engine.root.resolve() not in target.parents and target != engine.root.resolve():
+                        raise ValueError("path must stay inside the workspace")
+                    if not target.exists():
+                        raise KeyError(rel)
+                    if target.is_dir():
+                        import shutil as _shutil
+                        _shutil.rmtree(target)
+                    else:
+                        target.unlink()
+                    self.reply(200, {"deleted": rel})
                 elif path.startswith("/api/tasks/") and path.endswith("/messages") and path.count("/") == 4:
                     task = path.split("/")[3]
                     self.reply(202, {"id": task, "queued": engine.send(task, body)})

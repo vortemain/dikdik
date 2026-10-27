@@ -107,6 +107,15 @@ OPENAPI = {
             "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
                 "path": {"type": "string"}, "content": {"type": "string"}}}}}},
             "responses": {"201": {"description": "Uploaded"}, "400": {"description": "Validation error"}}}},
+        "/api/files/delete": {"post": {"summary": "Delete a file or directory",
+            "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
+                "path": {"type": "string"}}}}}},
+            "responses": {"200": {"description": "Deleted"}, "404": {"description": "Not found"}, "400": {"description": "Validation error"}}}},
+        "/api/tasks/batch": {"post": {"summary": "Batch archive/pin/delete tasks",
+            "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
+                "action": {"type": "string", "enum": ["archive", "unarchive", "pin", "unpin", "delete"]},
+                "ids": {"type": "array", "items": {"type": "string"}, "maxItems": 100}}}}}},
+            "responses": {"200": {"description": "Batch result"}, "400": {"description": "Validation error"}}}},
         "/api/events/batch": {"get": {"summary": "Latest events across all tasks",
             "parameters": [{"name": "limit", "in": "query", "schema": {"type": "integer", "default": 100}}],
             "responses": {"200": {"description": "Event list"}}}},
