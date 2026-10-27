@@ -124,11 +124,12 @@ def make_server(engine: Engine, port: int, token: str):
         def same_origin(self):
             host = f"127.0.0.1:{self.server.server_port}"
             origin = self.headers.get("Origin", "http://" + host)
-            # Loopback always passes; configured CORS origins pass too.
-            if origin == "http://" + host or not origin or origin in CORS_ORIGINS:
-                if self.headers.get("Host") != host and not CORS_ORIGINS:
-                    self.refuse(403, {"error": "Invalid host or origin"})
-                    return False
+            if self.headers.get("Host") != host:
+                self.refuse(403, {"error": "Invalid host or origin"})
+                return False
+            if origin == "http://" + host:
+                return True
+            if CORS_ORIGINS and origin in CORS_ORIGINS:
                 return True
             self.refuse(403, {"error": "Invalid host or origin"})
             return False

@@ -1160,12 +1160,12 @@ Agent server / SDK (1.58),F14-files,F14.trajectory,N,,"`GET /api/file/download-t
 Agent server / SDK (1.58),F14-files,F14.trajectory-errors,N,,"an unknown conversation id is 404 `Conversation not found`, a malformed id 422."
 Agent server / SDK (1.58),F14-files,F14.trajectory-concurrent,N,,"concurrent downloads of the same trajectory each return 200 and a valid zip (five rounds of six parallel downloads, 30 in"
 Agent server / SDK (1.58),F14-files,F14.trajectory-init-path,N,,"after `POST /api/init` sets `conversations_path` on a deferred-init server, trajectories stored there are downloadable."
-Agent server / SDK (1.58),F14-files,F14.scoped-transfer,N,,"conversation-scoped upload, download and `create_directory` work inside the conversation's workspace, and the scoped download re"
+Agent server / SDK (1.58),F14-files,F14.scoped-transfer,P,file download (GET /api/files/download) and list (GET /api/files/list) work for workspace files with path-escape validation; scoped conversation routes not implemented yet,"conversation-scoped upload, download and `create_directory` work inside the conversation's workspace, and the scoped download re"
 Agent server / SDK (1.58),F14-files,F14.scoped-path-guard,N,,"scoped routes reject paths outside the workspace (another conversation's workspace, `..` traversal, a symlink escape, a siblin"
 Agent server / SDK (1.58),F14-files,F14.scoped-conversation-errors,N,,a scoped route for an unknown conversation is 404 and does nothing; a malformed conversation id is 422.
 Agent server / SDK (1.58),F14-files,F14.scoped-trajectory-archive,N,,"the scoped trajectory route serves only its own conversation (another or malformed id is 422), and the scoped archive"
 Agent server / SDK (1.58),F14-files,F14.sdk-workspace,N,,"the SDK's `RemoteWorkspace.file_upload`/`file_download` round-trip bytes through the global routes and, with `runtime_conversation"
-Agent server / SDK (1.58),F14-files,F14.restart,N,,"after a restart, uploaded files, the scoped download and the trajectory are still served."
+Agent server / SDK (1.58),F14-files,F14.restart,P,"file download and upload survive a restart because they read and write the workspace directly, not a separate store","after a restart, uploaded files, the scoped download and the trajectory are still served."
 Agent server / SDK (1.58),F15-git,F15.auth,N,,every global and conversation-scoped git route answers 401 without a valid session key.
 Agent server / SDK (1.58),F15-git,F15.changes,Y,GET /api/git and POST /api/git/commit (hooks disabled),"`changes` on the fixture repository lists the modified tracked file as `UPDATED` and the untracked file as `ADDED`, sorted by path, as r"
 Agent server / SDK (1.58),F15-git,F15.changes-statuses,Y,GET /api/git and POST /api/git/commit (hooks disabled),"a staged deletion is `DELETED`, a staged new file `ADDED`, and a staged rename a `DELETED` old path plus an `ADDED` new path."

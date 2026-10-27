@@ -24,7 +24,7 @@ and model management (connections, routing, a model picker, sandbox secrets);
 an OpenAI-compatible gateway (/v1/models, /v1/chat/completions,
 /v1/responses) that runs one ordinary Dikdik agent task per request, always
 keyed and with consent explicit per request.
-The parity audit (docs/PARITY.md) moved from 89 to 423 fully matched OpenHands sub-features
+The parity audit (docs/PARITY.md) moved from 89 to 425 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
 Test status (2026-10-27): Python **359 passed, 2 live-runtime tests skipped** (361 run); Bun
