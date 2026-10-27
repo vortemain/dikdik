@@ -69,6 +69,18 @@ class ApiKeyStore:
             raise KeyError(key_id)
         self._write(new)
 
+    def rotate(self, key_id: str) -> str:
+        """Issue a new token for an existing key, replacing the old hash."""
+        entries = self._read()
+        for entry in entries:
+            if entry["id"] == key_id:
+                token = "dikdik-" + secrets.token_hex(24)
+                entry["hash"] = self._hash(token)
+                entry["last_used"] = None
+                self._write(entries)
+                return token
+        raise KeyError(key_id)
+
     def verify(self, token: str) -> dict | None:
         """Verify a token, returning the key entry with scopes or None."""
         if not isinstance(token, str) or not token:

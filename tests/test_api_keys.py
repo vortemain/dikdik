@@ -82,6 +82,30 @@ class ApiKeyTests(unittest.TestCase):
         status, body = self.call("DELETE", "/api/keys/nonexistent")
         self.assertEqual(status, 404)
 
+    def test_rotate_key(self):
+        status, body = self.call("POST", "/api/keys", {"name": "CI", "scopes": ["read"]})
+        old_token = json.loads(body)["token"]
+        key_id = json.loads(self.call("GET", "/api/keys")[1])["keys"][0]["id"]
+
+        # Rotate
+        status, body = self.call("POST", f"/api/keys/{key_id}/rotate")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        new_token = data["token"]
+        self.assertNotEqual(new_token, old_token)
+
+        # Old token no longer works
+        status, body = self.call("GET", "/api/tasks", token=old_token)
+        self.assertEqual(status, 401)
+
+        # New token works
+        status, body = self.call("GET", "/api/tasks", token=new_token)
+        self.assertEqual(status, 200)
+
+    def test_rotate_unknown_key_404(self):
+        status, body = self.call("POST", "/api/keys/nonexistent/rotate")
+        self.assertEqual(status, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

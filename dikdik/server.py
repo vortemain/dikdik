@@ -453,9 +453,9 @@ def make_server(engine: Engine, port: int, token: str):
                     raise ValueError("Chunked requests unsupported")
                 length = int(self.headers.get("Content-Length", "0"))
                 limit = 4_400_000 if path == "/api/attachments" else 262144  # 3 MB of files, base64-encoded
-                if not 0 < length <= limit:
-                    raise ValueError(f"Request must contain 1â€“{limit} bytes")
-                body = json.loads(self.rfile.read(length))
+                if length > limit:
+                    raise ValueError(f"Request must contain at most {limit} bytes")
+                body = json.loads(self.rfile.read(length)) if length else {}
                 answer = gateway.route(self.command, path, body)
                 if answer is not None:
                     self.reply(*answer)
@@ -517,6 +517,12 @@ def make_server(engine: Engine, port: int, token: str):
                         self.reply(201, {"token": token, "scopes": scopes})
                     except ValueError as exc:
                         self.reply(400, {"error": str(exc)})
+                elif path.startswith("/api/keys/") and path.endswith("/rotate"):
+                    try:
+                        token = api_keys.rotate(path.split("/")[3])
+                        self.reply(200, {"token": token})
+                    except KeyError:
+                        self.reply(404, {"error": "Key not found"})
                 elif path.startswith("/api/tasks/") and path.endswith("/cancel"):
                     self.reply(200, {"requested": engine.cancel(path.split("/")[3])})
                 elif path.startswith("/api/tasks/") and path.endswith("/interrupt"):
