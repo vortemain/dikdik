@@ -93,6 +93,25 @@ def diff(root: Path, commit: str) -> dict:
     return {"commit": commit, "subject": subject, "diff": patch[:200000]}
 
 
+def search(root: Path, query: str, limit: int = 50) -> list[dict]:
+    """Search commit messages for a query string (case-insensitive)."""
+    if not is_repo(root):
+        raise GitError("This workspace is not a Git repository")
+    if not isinstance(query, str) or not query.strip() or len(query) > 200:
+        raise GitError("Search query must contain 1-200 characters")
+    if not isinstance(limit, int) or limit < 1 or limit > 200:
+        limit = 50
+    log = _git(root, "log", f"-{limit}", "--grep=" + query.strip(), "-i",
+               "--format=%H%x1f%h%x1f%an%x1f%at%x1f%s%x1e", check=False)
+    results = []
+    for record in log.split("\x1e"):
+        parts = record.strip().split("\x1f")
+        if len(parts) == 5:
+            results.append({"hash": parts[0], "short": parts[1], "author": parts[2],
+                             "time": int(parts[3]), "subject": parts[4]})
+    return results
+
+
 def commit(root: Path, message: str, paths: list[str], identity: tuple[str, str] | None = None) -> dict:
     if not isinstance(message, str) or not message.strip() or len(message) > 2000:
         raise GitError("Commit message must contain 1–2000 characters")

@@ -155,6 +155,39 @@ class ServerApiTests(unittest.TestCase):
         names = [e["name"] for e in data["entries"]]
         self.assertIn("app.py", names)
 
+    def test_git_search(self):
+        import subprocess
+        subprocess.run(["git", "init"], cwd=self.root, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=self.root, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=self.root, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.root, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "initial commit"], cwd=self.root, capture_output=True)
+        (self.root / "app.py").write_text("value = 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "bump value"], cwd=self.root, capture_output=True)
+        status, body = self.call("GET", "/api/git/search?q=bump")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["results"]), 1)
+        self.assertIn("bump", data["results"][0]["subject"])
+
+    def test_conversation_export(self):
+        task = self.make_task()
+        status, body = self.call("GET", f"/api/tasks/{task}/export")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["id"], task)
+        self.assertIn("events", data)
+
+    def test_settings_schema(self):
+        status, body = self.call("GET", "/api/settings/schema")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertIn("properties", data)
+        self.assertIn("confirmation", data["properties"])
+        self.assertIn("defaults", data)
+        self.assertIn("event_retention_seconds", data["properties"])
+
 
 if __name__ == "__main__":
     unittest.main()

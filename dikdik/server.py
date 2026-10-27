@@ -299,6 +299,21 @@ def make_server(engine: Engine, port: int, token: str):
                 if path == "/api/settings/app":
                     self.reply(200, engine.app_settings())
                     return
+                if path == "/api/settings/schema":
+                    self.reply(200, {
+                        "properties": {
+                            "confirmation": {"type": "string", "enum": ["never", "risky", "always"]},
+                            "condenser": {"type": "boolean"},
+                            "git_name": {"type": "string", "maxLength": 100},
+                            "git_email": {"type": "string", "maxLength": 200},
+                            "sounds": {"type": "boolean"},
+                            "router": {"type": "string"},
+                            "title_model": {"type": "string"},
+                            "event_retention_seconds": {"type": "integer", "minimum": 0, "maximum": 86400 * 30},
+                        },
+                        "defaults": {k: v for k, v in engine.app_settings().items()},
+                    })
+                    return
                 if len(parts) == 7 and parts[:3] == ["", "api", "tasks"] and parts[4:6] == ["browser", "screenshots"]:
                     self.reply(200, engine.browser.screenshot(parts[3], parts[6]), "image/png")
                     return
@@ -370,10 +385,17 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(200, gitops.info(engine.root))
                 elif path.startswith("/api/git/") and path.endswith("/diff") and path.count("/") == 4:
                     self.reply(200, gitops.diff(engine.root, path.split("/")[3]))
+                elif path == "/api/git/search":
+                    query = parse_qs(urlsplit(self.path).query)
+                    q = query.get("q", [""])[0]
+                    lim = int(query.get("limit", ["50"])[0]) if query.get("limit", ["50"])[0].isdigit() else 50
+                    self.reply(200, {"query": q, "results": gitops.search(engine.root, q, lim)})
                 elif path == "/api/agent-info":
                     self.reply(200, engine.agent_info())
                 elif path.startswith("/api/tasks/") and path.endswith("/download") and path.count("/") == 4:
                     self.reply(200, engine.archive(path.split("/")[3]), "application/zip")
+                elif path.startswith("/api/tasks/") and path.endswith("/export") and path.count("/") == 4:
+                    self.reply(200, engine.store.get(path.split("/")[3]))
                 elif path.startswith("/api/tasks/"):
                     self.reply(200, engine.store.get(path.removeprefix("/api/tasks/")))
                 else:

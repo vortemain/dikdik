@@ -80,4 +80,11 @@ export class DikdikClient {
   async health(): Promise<{ status: string }> { return this.call("GET", "/health"); }
   async serverInfo(): Promise<Record<string, unknown>> { return this.call("GET", "/server_info"); }
   async openapi(): Promise<Record<string, unknown>> { return this.call("GET", "/openapi.json"); }
+  async gitSearch(query: string, limit?: number): Promise<{ query: string; results: Array<Record<string, unknown>> }> {
+    const params = new URLSearchParams({ q: query });
+    if (limit) params.set("limit", String(limit));
+    return this.call("GET", `/api/git/search?${params}`);
+  }
+  async exportConversation(id: string): Promise<Task> { return this.call("GET", `/api/tasks/${id}/export`); }
+  async settingsSchema(): Promise<Record<string, unknown>> { return this.call("GET", "/api/settings/schema"); }
 }

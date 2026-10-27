@@ -119,6 +119,15 @@ class DikdikClient:
     def agent_info(self) -> dict:
         return self._call("GET", "/api/agent-info")
 
+    def git_search(self, query: str, limit: int = 50) -> list[dict]:
+        return self._call("GET", f"/api/git/search?q={quote(query)}&limit={limit}")["results"]
+
+    def export_conversation(self, task: str) -> dict:
+        return self._call("GET", f"/api/tasks/{quote(task)}/export")
+
+    def settings_schema(self) -> dict:
+        return self._call("GET", "/api/settings/schema")
+
     def rename(self, task: str, title: str) -> None:
         self._call("PATCH", f"/api/tasks/{quote(task)}", {"title": title})
 
