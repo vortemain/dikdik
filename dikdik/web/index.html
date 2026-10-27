@@ -449,17 +449,21 @@
         <div class="setting-row"><div><h4>VS Code</h4><p id="plat-vscode">Checking…</p></div></div>
       </section>
       <section class="settings-pane" data-pane="acp" role="tabpanel" hidden>
-        <p class="lead">External coding agents: Claude Code, Codex, Gemini CLI and OpenCode.</p>
+        <p class="lead">External coding agents that speak ACP: Claude Code, Codex, Gemini CLI and OpenCode. They run on this computer, outside Docker, in a throwaway copy; their changes come back as a diff you apply.</p>
         <div class="row"><button id="acp-add" class="secondary small" type="button">Add ACP agent</button></div>
         <div id="acp-list" class="m4-list"></div>
         <div class="setting-row"><div><h4>ChatGPT login</h4><p id="acp-chatgpt">Checking…</p></div><button id="acp-chatgpt-login" class="secondary small" type="button">Start login</button></div>
       </section>
       <section class="settings-pane" data-pane="apps" role="tabpanel" hidden>
-        <p class="lead">Installable app pages served in a sandboxed iframe.</p>
+        <p class="lead">Single-page apps from a local folder. They open in a sandboxed frame that cannot reach Dikdik, your files or the network.</p>
         <div class="row"><button id="app-add" class="secondary small" type="button">Add app</button></div>
         <div id="app-list" class="m4-list"></div>
       </section>
     </div>
+  </dialog>
+  <dialog id="app-viewer" class="lightbox" aria-labelledby="app-viewer-name">
+    <div class="lightbox-head"><span id="app-viewer-name" class="lightbox-name"></span><button id="app-viewer-close" class="ghost icon" type="button" aria-label="Close app"><svg class="i"><use href="#i-x"/></svg></button></div>
+    <iframe id="app-viewer-frame" class="app-frame" sandbox="allow-scripts" referrerpolicy="no-referrer" title="App"></iframe>
   </dialog>
   <dialog id="lightbox" class="lightbox" aria-labelledby="lightbox-name">
     <div class="lightbox-head"><span id="lightbox-name" class="lightbox-name"></span><button id="lightbox-close" class="ghost icon" type="button" aria-label="Close image"><svg class="i"><use href="#i-x"/></svg></button></div>

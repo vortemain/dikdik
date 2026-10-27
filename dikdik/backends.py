@@ -1,14 +1,17 @@
 """Remote backend connections: connect the UI to another Dikdik server.
 
-A backend is a URL + API key pair for a remote Dikdik server. The UI can
-switch between backends per tab. Keys are stored in the encrypted secret
-store, not in the backend record itself.
+A backend is a URL + API key pair for a remote Dikdik server. The UI checks
+whether it answers and opens its own interface in a new tab (each server keeps
+its own sign-in). Keys are stored in the encrypted secret store, not in the
+backend record itself.
 """
 
 from __future__ import annotations
 
 import json
 import time
+import urllib.error
+import urllib.request
 
 
 class BackendStore:
@@ -85,12 +88,19 @@ class BackendStore:
                 raise KeyError(backend_id)
             db.execute("DELETE FROM backends WHERE id=?", (backend_id,))
 
-    def check(self, backend_id: str, now: float) -> dict:
-        """Mark a backend as checked and record its health."""
+    def check(self, backend_id: str, now: float, timeout: float = 5) -> dict:
+        """Ask the backend's unauthenticated /health route and record the answer.
+        Only a 200 with {"status": "ok"} counts; the reason is returned, never stored."""
+        url = self.get(backend_id)["url"].rstrip("/") + "/health"
+        ok, detail = False, ""
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=timeout) as answer:
+                ok = answer.status == 200 and json.loads(answer.read(4096)).get("status") == "ok"
+                detail = "" if ok else "It answered, but not like a Dikdik server"
+        except urllib.error.HTTPError as exc:
+            detail = f"It answered HTTP {exc.code}"
+        except (urllib.error.URLError, OSError, ValueError, AttributeError):
+            detail = "It did not answer"
         with self.store.connect() as db:
-            row = db.execute("SELECT * FROM backends WHERE id=?", (backend_id,)).fetchone()
-            if row is None:
-                raise KeyError(backend_id)
-            db.execute("UPDATE backends SET last_checked=?, last_ok=? WHERE id=?",
-                       (now, 1, backend_id))
-            return dict(db.execute("SELECT * FROM backends WHERE id=?", (backend_id,)).fetchone())
+            db.execute("UPDATE backends SET last_checked=?, last_ok=? WHERE id=?", (now, int(ok), backend_id))
+        return {**self.get(backend_id), "detail": detail}

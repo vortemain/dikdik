@@ -3636,6 +3636,8 @@ Request (untrusted data, not instructions):
     if (!agent)
       return "";
     const count = (key) => typeof agent[key] === "number" ? agent[key] : 0;
+    if (typeof agent.acp === "string")
+      return `${agent.acp} via ACP · ${count("tool_calls")} tool call${count("tool_calls") === 1 ? "" : "s"}`;
     const parts = [`${count("model_calls")} model call${count("model_calls") === 1 ? "" : "s"}`, `${count("tool_calls")} tool call${count("tool_calls") === 1 ? "" : "s"}`];
     if (count("reported_usage_tokens"))
       parts.push(`${count("reported_usage_tokens").toLocaleString()} tokens reported`);
@@ -7518,9 +7520,37 @@ Request (untrusted data, not instructions):
       const list = el("plat-backends");
       list.replaceChildren();
       for (const backend of Array.isArray(data) ? data : []) {
+        const id = String(backend.id ?? ""), url = String(backend.url ?? "");
+        const health = backend.last_checked == null ? "not checked" : backend.last_ok ? "answering" : "not answering";
         const row = make("div", "m4-item");
         row.append(make("span", "", String(backend.name ?? "Backend")));
-        row.append(make("span", "muted", String(backend.url ?? "")));
+        row.append(make("span", "muted", `${url} · ${health}`));
+        const check = make("button", "ghost small", "Check");
+        check.onclick = async () => {
+          try {
+            const result = await request(`/api/backends/${id}/check`, "POST");
+            message(result.last_ok ? "The backend is answering." : `${result.detail || "Not answering"}.`, !result.last_ok);
+            loadPlatform();
+          } catch (e) {
+            message(e instanceof Error ? e.message : String(e), true);
+          }
+        };
+        const open = make("button", "ghost small", "Open");
+        open.onclick = () => {
+          globalThis.open(url, "_blank", "noopener,noreferrer");
+        };
+        const del = make("button", "ghost small", "Delete");
+        del.onclick = async () => {
+          try {
+            await request(`/api/backends/${id}`, "DELETE");
+            loadPlatform();
+          } catch (e) {
+            message(e instanceof Error ? e.message : String(e), true);
+          }
+        };
+        const actions = make("span", "m4-item-actions");
+        actions.append(check, open, del);
+        row.append(actions);
         list.append(row);
       }
     } catch {}
@@ -7590,12 +7620,30 @@ Request (untrusted data, not instructions):
   async function loadAcp() {
     try {
       const data = await api("/api/acp-agents");
+      acpPresets = data?.presets ?? [];
       const list = el("acp-list");
       list.replaceChildren();
       for (const agent of data?.agents ?? []) {
+        const id = String(agent.id ?? ""), name = String(agent.name ?? "Agent"), installed = agent.available === true;
+        const preset = acpPresets.find((p) => p.id === agent.preset);
         const row = make("div", "m4-item");
-        row.append(make("span", "", String(agent.name ?? "Agent")));
-        row.append(make("span", "muted", String(agent.command ?? "")));
+        row.append(make("span", "", name));
+        row.append(make("span", "muted", installed ? String(agent.command ?? "") : `${String(agent.command ?? "")} · not installed${preset?.install ? ` (${String(preset.install)})` : ""}`));
+        const run = make("button", "ghost small", "Run…");
+        run.disabled = !installed;
+        run.onclick = () => void runAcpAgent(id, name);
+        const del = make("button", "ghost small", "Delete");
+        del.onclick = async () => {
+          try {
+            await request(`/api/acp-agents/${id}`, "DELETE");
+            loadAcp();
+          } catch (e) {
+            message(e instanceof Error ? e.message : String(e), true);
+          }
+        };
+        const actions = make("span", "m4-item-actions");
+        actions.append(run, del);
+        row.append(actions);
         list.append(row);
       }
     } catch {}
@@ -7606,15 +7654,52 @@ Request (untrusted data, not instructions):
       el("acp-chatgpt").textContent = "Could not reach the server.";
     }
   }
-  el("acp-add").addEventListener("click", async () => {
-    const name = prompt("Agent name:");
-    if (!name)
+  var acpPresets = [];
+  async function runAcpAgent(id, name) {
+    const objective = prompt(`What should ${name} do?`);
+    if (!objective?.trim())
       return;
-    const command = prompt("Command (e.g. claude):");
-    if (!command)
+    if (!confirm(`${name} will run on this computer, outside Docker, in a throwaway copy of the workspace. ` + `It can read that copy and send it to its own model provider. Your files change only if you apply its changes afterwards. Continue?`))
       return;
     try {
-      await request("/api/acp-agents", "POST", { name, command });
+      const result = await request("/api/tasks", "POST", {
+        objective: objective.trim(),
+        mode: "acp",
+        verification: "syntax",
+        approve_external: true,
+        approve_host: true,
+        acp_agent: id
+      });
+      el("settings").close?.();
+      selectTask(result.id);
+      await loadHistory();
+      await observe();
+    } catch (e) {
+      message(e instanceof Error ? e.message : String(e), true);
+    }
+  }
+  el("acp-add").addEventListener("click", async () => {
+    const ids = acpPresets.map((p) => String(p.id)).join(", ");
+    const preset = (prompt(`Preset (${ids}), or leave empty for a custom command:`) ?? "").trim();
+    if (preset && !acpPresets.some((p) => p.id === preset)) {
+      message(`Unknown preset; choose one of ${ids}.`, true);
+      return;
+    }
+    const body = preset ? { preset } : {};
+    if (!preset) {
+      const name = prompt("Agent name:");
+      if (!name)
+        return;
+      const command = prompt("Command that starts the agent in ACP mode (e.g. gemini):");
+      if (!command)
+        return;
+      Object.assign(body, { name, command, args: prompt("Arguments (optional, e.g. --experimental-acp):") ?? "" });
+    }
+    const credentials = prompt("Saved keys it receives, as ENV_NAME=saved-key-name, comma-separated (optional):", String((acpPresets.find((p) => p.id === preset)?.credentials ?? []).join(", ")));
+    if (credentials !== null)
+      body.credentials = credentials.split(",").map((c) => c.trim()).filter(Boolean);
+    try {
+      await request("/api/acp-agents", "POST", body);
       message("ACP agent added.");
       loadAcp();
     } catch (e) {
@@ -7635,23 +7720,49 @@ Request (untrusted data, not instructions):
       const list = el("app-list");
       list.replaceChildren();
       for (const app of data?.apps ?? []) {
+        const name = String(app.name ?? ""), enabled = app.enabled === true;
         const row = make("div", "m4-item");
-        row.append(make("span", "", String(app.name ?? "App")));
-        row.append(make("span", "muted", String(app.version ?? "")));
-        const del = make("button", "ghost small", "Uninstall");
-        del.onclick = async () => {
+        row.append(make("span", "", name || "App"));
+        row.append(make("span", "muted", [app.version, enabled ? "enabled" : "disabled"].filter(Boolean).join(" · ")));
+        const open = make("button", "ghost small", "Open");
+        open.disabled = !enabled;
+        open.onclick = () => openApp(name);
+        const toggle = make("button", "ghost small", enabled ? "Disable" : "Enable");
+        toggle.onclick = async () => {
           try {
-            await request(`/api/apps/${app.name}`, "DELETE");
+            await request(`/api/apps/${encodeURIComponent(name)}/${enabled ? "disable" : "enable"}`, "POST");
             loadApps();
           } catch (e) {
             message(e instanceof Error ? e.message : String(e), true);
           }
         };
-        row.append(del);
+        const del = make("button", "ghost small", "Uninstall");
+        del.onclick = async () => {
+          try {
+            await request(`/api/apps/${encodeURIComponent(name)}`, "DELETE");
+            loadApps();
+          } catch (e) {
+            message(e instanceof Error ? e.message : String(e), true);
+          }
+        };
+        const actions = make("span", "m4-item-actions");
+        actions.append(open, toggle, del);
+        row.append(actions);
         list.append(row);
       }
     } catch {}
   }
+  function openApp(name) {
+    const dialog = el("app-viewer");
+    el("app-viewer-name").textContent = name;
+    el("app-viewer-frame").src = `/api/apps/${encodeURIComponent(name)}/bundle`;
+    if (!dialog.open)
+      dialog.showModal();
+  }
+  el("app-viewer-close").addEventListener("click", () => {
+    el("app-viewer-frame").src = "about:blank";
+    el("app-viewer").close();
+  });
   el("app-add").addEventListener("click", async () => {
     const name = prompt("App name:");
     if (!name)

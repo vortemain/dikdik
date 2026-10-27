@@ -69,6 +69,25 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(data["name"], "New")
         self.assertEqual(data["enabled"], 0)
 
+    def test_check_contacts_the_backend(self):
+        """A health check must really ask the server: a live Dikdik is ok, a dead port is not."""
+        live = json.loads(self.call("POST", "/api/backends", {"name": "self", "url": f"http://127.0.0.1:{self.server.server_port}"})[1])
+        status, body = self.call("POST", f"/api/backends/{live['id']}/check")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["last_ok"], 1)
+        import socket
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            dead_port = probe.getsockname()[1]
+        dead = json.loads(self.call("POST", "/api/backends", {"name": "dead", "url": f"http://127.0.0.1:{dead_port}"})[1])
+        data = json.loads(self.call("POST", f"/api/backends/{dead['id']}/check")[1])
+        self.assertEqual(data["last_ok"], 0)
+        self.assertEqual(data["detail"], "It did not answer")
+        self.assertIsNotNone(data["last_checked"])
+
+    def test_check_unknown_404(self):
+        self.assertEqual(self.call("POST", "/api/backends/nope/check")[0], 404)
+
     def test_delete_unknown_404(self):
         status, body = self.call("DELETE", "/api/backends/nonexistent")
         self.assertEqual(status, 404)

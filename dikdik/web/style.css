@@ -600,7 +600,9 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
 .m4-row { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow-wrap: anywhere; display: grid; gap: 4px; }
 .m4-item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow-wrap: anywhere; font-size: 14px; }
 .m4-item .muted { color: var(--muted); font-size: 12.5px; }
-.m4-item button { margin-left: auto; padding: 4px 10px; font-size: 12.5px; }
+.m4-item > button, .m4-item-actions { margin-left: auto; }
+.m4-item button { padding: 4px 10px; font-size: 12.5px; }
+.m4-item-actions { display: flex; gap: 4px; flex-wrap: wrap; }
 .m4-title { font-size: 14px; font-weight: 500; color: var(--ink); }
 .m4-strong { font-weight: 600; }
 .m4-meta, .m4-status { display: block; color: var(--muted); font-size: 12.5px; }
@@ -822,6 +824,7 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
 .lightbox { width: min(1100px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; background: var(--surface); }
 .lightbox[open] { display: flex; flex-direction: column; }
 .lightbox-head { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--line); }
+.app-frame { flex: 1 1 auto; width: 100%; height: min(760px, calc(100dvh - 120px)); border: 0; background: #fff; }
 .lightbox-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--muted); }
 .lightbox-image { display: block; max-width: 100%; max-height: calc(100dvh - 120px); margin: 0 auto; object-fit: contain; background: var(--surface-2); }
 

@@ -27,7 +27,7 @@ keyed and with consent explicit per request.
 The parity audit (docs/PARITY.md) moved from 89 to 425 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **511 passed, 3 skipped** (514 run); Bun
+Test status (2026-10-27): Python **521 passed, 3 skipped** (524 run); Bun
 **105 passed / 490 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
@@ -122,7 +122,8 @@ Test status (2026-10-27): Python **511 passed, 3 skipped** (514 run); Bun
 
 ## Test status
 
-- Python: **511 passed, 3 skipped** (514 run). A full review of the Phase D–F
+- Python: **521 passed, 3 skipped** (524 run). ACP agents now run in a throwaway
+  copy (stand-in agent only), apps open sandboxed, backend checks are real. A full review of the Phase D–F
   commits found and fixed ten defects, two of them data-losing; see `docs/VERIFICATION.md`.
 - Bun: **105 passed / 490 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.

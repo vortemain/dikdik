@@ -25,10 +25,12 @@ OPENAPI = {
             "Error": {"type": "object", "properties": {"error": {"type": "string"}}, "required": ["error"]},
             "SubmitRequest": {"type": "object", "properties": {
                 "objective": {"type": "string", "minLength": 1, "maxLength": 4000},
-                "mode": {"type": "string", "enum": ["offline", "model", "agent", "plan"]},
+                "mode": {"type": "string", "enum": ["offline", "model", "agent", "plan", "acp"]},
                 "verification": {"type": "string", "enum": ["syntax", "docker"]},
                 "approve_external": {"type": "boolean"}, "approve_execution": {"type": "boolean"},
                 "approve_browser": {"type": "boolean"}, "approve_secrets": {"type": "boolean"},
+                "approve_host": {"type": "boolean", "description": "acp mode: the agent runs on this machine, outside Docker"},
+                "acp_agent": {"type": "string", "description": "acp mode: the ACP agent profile id"},
                 "edits": {"type": "array", "items": {"type": "object"}},
                 "model_profile": {"type": "string"}, "agent_profile": {"type": "string"},
             }, "required": ["objective", "mode", "verification", "approve_external"]},
@@ -165,6 +167,9 @@ OPENAPI = {
                 "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
                     "name": {"type": "string"}, "url": {"type": "string"}, "key_ref": {"type": "string"}}}}}},
                 "responses": {"201": {"description": "Created"}, "400": {"description": "Validation error"}}}},
+        "/api/backends/{id}/check": {"post": {"summary": "Ask the backend's /health now and record whether it answered",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "Backend with last_ok and a plain detail"}, "404": {"description": "Not found"}}}},
         "/api/backends/{id}": {
             "get": {"summary": "Get a backend", "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
                     "responses": {"200": {"description": "Backend"}, "404": {"description": "Not found"}}},

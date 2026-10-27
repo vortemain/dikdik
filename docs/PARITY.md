@@ -28,14 +28,14 @@ OpenHands app map (799 sub-features) and the agent-server/SDK map
 (`upstream/software-agent-sdk/.agents/skills/verify-agent-server/references/feature-map`,
 950 sub-features). The full list is in [`parity-audit.csv`](parity-audit.csv).
 
-| Status | First audit | After the first build phases | After the parity fix | Run control | Interface | Models | Current |
-|---|---|---|---|---|---|---|---|
-| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 425 |
-| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 261 |
-| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 978 |
-| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 | 61 | 61 |
-| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 | 24 |
-| **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
+| Status | First audit | After the first build phases | After the parity fix | Run control | Interface | Models | Phases D–F | Current |
+|---|---|---|---|---|---|---|---|---|
+| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 425 | 425 |
+| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 261 | 279 |
+| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 978 | 965 |
+| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 | 61 | 61 | 56 |
+| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 | 24 | 24 |
+| **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
 
 Correction (2026-10-27): earlier versions of this table counted 1,801 rows. 51 of
 them were usage notes from the reference maps' "Gotchas" sections that the first
@@ -119,9 +119,14 @@ model profiles and keys, unused skills, the unloaded Rust indexer, automations
 granting consent on their own, real agent tool events missing from the chat,
 and automation runs never listing (`task_id`/`id` mismatch).
 
-Largest remaining gaps: live browser execution, extension apps, automation
-templates, WebSocket and TypeScript clients, VS Code serving, onboarding, and any
-recorded run against a live model provider or Docker engine.
+Since Phases D–F (2026-10-27): ACP agents run in a throwaway copy and return a
+diff to apply; extension apps open in a sandboxed frame; backend checks really
+contact the server. These 18 rows moved to Partly (5 of them from "needs an
+outside service": the ACP rows are now built, though no real agent CLI has run).
+
+Largest remaining gaps: live browser execution, VS Code serving, a sidebar rail
+for apps and in-tab backend switching, ChatGPT sign-in, and any recorded run
+against a live model provider, real ACP agent or Docker engine.
 
 ## Capability groups and acceptance gates
 

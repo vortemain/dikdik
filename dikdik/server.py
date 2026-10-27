@@ -46,6 +46,13 @@ STATIC = {
     **{f"/fonts/{name}.woff2": (f"fonts/{name}.woff2", "font/woff2") for name in FONTS},
 }
 SESSION_AGE = 30 * 24 * 3600
+PAGE_CSP = ("default-src 'self'; style-src 'self'; script-src 'self'; font-src 'self'; img-src 'self' data:; "
+            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+# An extension app is untrusted page content. `sandbox` gives it an opaque origin even
+# when opened directly, so it never shares Dikdik's origin, cookie or API; it may run its
+# own inline script but cannot load or send anything, and only Dikdik may frame it.
+APP_CSP = ("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+           "img-src data:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'")
 CORS_ORIGINS = [o.strip() for o in os.environ.get("DIKDIK_CORS_ORIGINS", "").split(",") if o.strip()]
 
 
@@ -98,7 +105,7 @@ def make_server(engine: Engine, port: int, token: str):
         def log_message(self, format, *args):
             pass  # Never log authorization, objectives or repository contents.
 
-        def reply(self, status, data, mime="application/json", cookie=None):
+        def reply(self, status, data, mime="application/json", cookie=None, csp=PAGE_CSP):
             body = json.dumps(data).encode() if mime == "application/json" else data
             self.send_response(status)
             if cookie:
@@ -107,7 +114,7 @@ def make_server(engine: Engine, port: int, token: str):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+            self.send_header("Content-Security-Policy", csp)
             self.end_headers()
             self.wfile.write(body)
 
@@ -449,9 +456,12 @@ def make_server(engine: Engine, port: int, token: str):
                                      "workspace": str(engine.root)})
                     return
                 if path.startswith("/api/apps/") and path.endswith("/bundle") and path.count("/") == 4:
-                    app_name = path.split("/")[3]
-                    raw, mime = engine.apps.bundle(app_name, "index.html")
-                    self.reply(200, raw, mime)
+                    app = engine.apps.get(path.split("/")[3])
+                    if not app["enabled"]:
+                        self.reply(403, {"error": "Enable this app before opening it"})
+                        return
+                    raw, mime = engine.apps.bundle(app["name"], app["entrypoint"])
+                    self.reply(200, raw, mime, csp=APP_CSP)
                     return
                 if path == "/api/keys":
                     self.reply(200, {"keys": api_keys.list()})

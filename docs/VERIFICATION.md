@@ -1,6 +1,39 @@
 # Verification record — updated 2026-10-27
 
-## Full verification of the Phase D–F work (latest)
+## ACP agent runs, extension apps and backend checks (latest)
+
+- **ACP agents** now run: `mode: "acp"` needs `approve_external` and a new
+  `approve_host` (the agent is a program on this machine, outside Docker). The
+  agent gets a throwaway copy of the files, a minimal environment (no server
+  variables) plus only the saved keys mapped to it, and file reads and writes
+  confined to the copy. Permission requests get a one-time allow, never "always".
+  What the copy holds at the end becomes an ordinary candidate diff; the
+  workspace changes only on Apply. The old `launch()`, which ran the CLI in the
+  real workspace with the server's whole environment, was removed.
+- `tests/test_acp_run.py` drives a real subprocess speaking ACP (a stand-in agent,
+  `tests/fixtures/fake_acp_agent.py`): candidate from the copy with the workspace
+  untouched, an escape read refused, no server variables passed, the mapped key
+  delivered but masked in every event, cancel, crash with its stderr, a missing
+  program with its install hint, and a missing key. **No real agent CLI ran**:
+  Codex is installed here but its ACP adapter (`codex-acp`) is not.
+- **Extension apps** are served only when enabled, with `sandbox allow-scripts`,
+  `connect-src 'none'` and `frame-ancestors 'self'`. In a real browser the probe
+  app's script ran with origin `null`; reading the cookie threw SecurityError and
+  `fetch('/api/tasks')` was blocked. The in-app browser pane blocks iframes
+  (`ERR_BLOCKED_BY_CLIENT`), so the dialog frame itself was not seen rendering.
+- **Backends**: Check really requests `<url>/health`; against the live server it
+  recorded answering, against a closed port "It did not answer".
+- Real browser: the ACP page listed the stand-in (installed) and the Codex preset
+  (not installed, with its npm install command, Run disabled); Run asked for the
+  task and a plain host/provider confirmation, then the conversation showed
+  thinking, the plan, the tool call, the one-time permission, the agent's reply,
+  a passing syntax check and a 2-file candidate (app.py modified, extra.py added)
+  in Review & apply.
+- Audit: 18 rows regraded to Partly (Y 425, P 279, N 965, E 56, X 24).
+- Full checks: Python **521 passed, 3 skipped** (524 run); Bun **105 / 490**;
+  Rust **15**; strict TypeScript check and build passed.
+
+## Full verification of the Phase D–F work
 
 A review of the 37 commits from `85c13e4` to `77c9335` against the rules in
 `docs/NEXT_PHASES_PROMPT.md` §3, with each suspected defect reproduced against a
@@ -54,11 +87,8 @@ listed their rows; ChatGPT login showed the not-available message; Apps installe
 and uninstalled a local app. 1440-wide light and 375-wide dark layouts had no
 horizontal overflow; the only console error was the deliberate ChatGPT 400.
 
-Still not built or not verified (unchanged by this pass): ACP agents can be saved
-but not launched or used as the conversation agent; a backend's health check
-records success without contacting it and the UI cannot switch to a backend;
-installed apps cannot be enabled or opened from the UI and their bundle is served
-under the main page's CSP rather than an isolated origin; VS Code only reports
+Left open by that pass (ACP runs, app opening and isolation, and real backend
+checks were built afterwards; see the section above): VS Code only reports
 whether `code-server` is on PATH; ChatGPT tokens, once a real flow exists, must
 move from plain JSON into the encrypted key store. No live provider, Docker
 engine or OpenAI account was used.

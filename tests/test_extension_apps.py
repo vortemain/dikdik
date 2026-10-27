@@ -79,9 +79,30 @@ class ExtensionAppTests(unittest.TestCase):
 
     def test_bundle_served(self):
         self.call("POST", "/api/apps", {"name": "test-app", "source": str(self.src)})
+        self.assertEqual(self.call("GET", "/api/apps/test-app/bundle")[0], 403)  # installed apps start disabled
+        self.call("POST", "/api/apps/test-app/enable")
         status, body = self.call("GET", "/api/apps/test-app/bundle")
         self.assertEqual(status, 200)
         self.assertIn(b"Test app", body)
+
+    def test_bundle_is_sandboxed(self):
+        """The app page gets its own opaque origin and no network, whatever it contains."""
+        self.call("POST", "/api/apps", {"name": "test-app", "source": str(self.src)})
+        self.call("POST", "/api/apps/test-app/enable")
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
+        conn.request("GET", "/api/apps/test-app/bundle", headers={"Authorization": "Bearer test-token"})
+        csp = conn.getresponse().getheader("Content-Security-Policy")
+        conn.close()
+        for part in ("sandbox allow-scripts", "connect-src 'none'", "default-src 'none'", "frame-ancestors 'self'"):
+            self.assertIn(part, csp)
+        self.assertNotIn("allow-same-origin", csp)
+
+    def test_entrypoint_must_stay_inside_the_app(self):
+        manifest = self.src / "app.json"
+        manifest.write_text(json.dumps({"name": "test-app", "entrypoint": "../outside.html"}), encoding="utf-8")
+        self.assertEqual(self.call("POST", "/api/apps", {"name": "test-app", "source": str(self.src)})[0], 400)
+        self.assertEqual(self.call("GET", "/api/apps")[0], 200)
+        self.assertEqual(json.loads(self.call("GET", "/api/apps")[1])["apps"], [])
 
     def test_install_duplicate_refused(self):
         self.call("POST", "/api/apps", {"name": "test-app", "source": str(self.src)})

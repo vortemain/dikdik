@@ -1,9 +1,10 @@
-"""Canvas extension apps: installable app pages served in a sandboxed iframe.
+"""Canvas extension apps: installable app pages shown in a sandboxed frame.
 
 An extension app is a directory with an `app.json` manifest (name, version,
-description, entrypoint) and static files. The app is served from a separate
-path under /api/apps/<name>/bundle/ with a strict CSP that blocks scripts.
-No app code runs on the host; the app is served as static files only.
+description, entrypoint). Its entrypoint is one self-contained HTML page (inline
+style, script and data: images) served at /api/apps/<name>/bundle once the user
+enables it. The response's CSP `sandbox` gives the page an opaque origin, so its
+script can never reach Dikdik's cookie, API or the network. Nothing runs on the host.
 """
 
 from __future__ import annotations
@@ -89,12 +90,16 @@ class ExtensionAppStore:
             # Copy the app directory
             if app_dir.exists():
                 shutil.rmtree(app_dir)
-            shutil.copytree(src, app_dir)
+            shutil.copytree(src, app_dir, symlinks=True)  # a link stays a link; bundle() refuses one that leaves the app
         else:
             raise ValueError("Only local directory sources are supported in this build")
         # Update the manifest with install metadata
         manifest_path = app_dir / MANIFEST_NAME
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        entry = data.get("entrypoint", "index.html")
+        if not isinstance(entry, str) or not entry.endswith((".html", ".htm")) or ".." in Path(entry).parts or Path(entry).is_absolute():
+            shutil.rmtree(app_dir)
+            raise ValueError("entrypoint must be a relative .html file inside the app")
         data["enabled"] = False
         data["source"] = "local"
         if ref:

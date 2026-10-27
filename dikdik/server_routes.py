@@ -381,6 +381,8 @@ def build_routes(engine_or_stores):
         return None
 
     def backend_routes(method, parts, body, query):
+        if method == "POST" and len(parts) == 4 and parts[3] == "check":
+            return 200, backends.check(parts[2], time.time())
         if method == "GET" and len(parts) == 2:
             return 200, backends.list()
         if method == "POST" and len(parts) == 2:

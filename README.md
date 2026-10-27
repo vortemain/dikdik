@@ -95,10 +95,14 @@ autonomous engineering platform.
   with the session bearer, consent explicit per request, no streaming yet.
 
 **Partly built:** API keys with read/write/admin scopes, webhooks signed with
-HMAC-SHA256, a WebSocket task socket, a TypeScript client, Git worktrees per task,
-and local extension apps (install and uninstall; not yet opened from the UI).
-Remote backends and ACP agents (Claude Code, Codex, Gemini CLI, OpenCode) can be
-saved but not yet used. ChatGPT sign-in is not available yet.
+HMAC-SHA256, a WebSocket task socket, a TypeScript client and Git worktrees per
+task. **ACP agents** (Claude Code, Codex, Gemini CLI, OpenCode) run from
+Settings → ACP agents after two explicit approvals: on this computer, outside
+Docker, in a throwaway copy, with only the keys you map to them; their changes
+come back as a diff you apply. **Extension apps** install from a local folder and
+open in a sandboxed frame with no access to Dikdik, your files or the network.
+**Remote backends** can be checked (a real request to their `/health`) and opened
+in a new tab. ChatGPT sign-in is not available yet.
 
 **Not yet:** a desktop app, and any recorded run against a live model provider or
 Docker engine. See [the parity audit](docs/PARITY.md) and

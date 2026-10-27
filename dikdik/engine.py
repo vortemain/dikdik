@@ -42,6 +42,7 @@ from .webhooks import WebhookStore
 from .workspace_registry import WorkspaceRegistry
 from .backends import BackendStore
 from .acp_agents import AcpAgentStore
+from .acp_client import AcpError, AcpSession, host_env
 from .chatgpt_login import ChatGptLogin
 from .extension_apps import ExtensionAppStore
 from .worktrees import WorktreeManager
@@ -746,7 +747,7 @@ class Engine:
         # Publish the new turn before returning to a caller.  Otherwise a client
         # can observe the previous terminal state and mistake it for this turn's
         # result while the worker is still waiting for a thread.
-        self.store.state(task, "running", details={'approvals': {key: clean.get(key) is True for key in ('approve_external', 'approve_execution', 'approve_browser')}})
+        self.store.state(task, "running", details={'approvals': {key: clean.get(key) is True for key in ('approve_external', 'approve_execution', 'approve_browser', 'approve_host')}})
         self.active[task] = cancel
         self.pausing[task] = threading.Event()
         self.pool.submit(self._run, task, clean, cancel, follow_up)
@@ -757,8 +758,8 @@ class Engine:
         objective = request.get("objective")
         if not isinstance(objective, str) or not objective.strip() or len(objective) > 4000:
             raise ValueError("Objective must contain 1–4000 characters")
-        if request.get("mode") not in {"offline", "model", "agent", "plan"}:
-            raise ValueError("Choose offline, model or agent mode")
+        if request.get("mode") not in {"offline", "model", "agent", "plan", "acp"}:
+            raise ValueError("Choose offline, model, agent or acp mode")
         if request.get("verification") not in {"syntax", "docker"}:
             raise ValueError("Choose syntax or docker verification")
         if request["verification"] == "docker" and request.get("approve_execution") is not True:
@@ -769,8 +770,24 @@ class Engine:
             raise ValueError("Browser tools require agent mode and explicit Docker execution approval")
         if request['mode'] == 'plan' and (request['verification'] != 'syntax' or request.get('approve_execution') is True):
             raise ValueError('Planning is read-only and cannot approve execution')
-        if request["mode"] in {"model", "agent", "plan"} and request.get("approve_external") is not True:
+        if request["mode"] in {"model", "agent", "plan", "acp"} and request.get("approve_external") is not True:
             raise ValueError("Explicit external-code disclosure approval required")
+        if "approve_host" in request and type(request["approve_host"]) is not bool:
+            raise ValueError("Host approval must be a Boolean")
+        if request["mode"] == "acp":
+            # The agent is a program on this machine, outside Docker: a separate, explicit yes.
+            if request.get("approve_host") is not True:
+                raise ValueError("Explicit approval to run the agent on this machine (outside Docker) is required")
+            if request["verification"] != "syntax" or request.get("approve_execution") is True or request.get("approve_browser") is True:
+                raise ValueError("ACP agents use syntax verification; Docker and browser tools do not apply")
+            if not isinstance(request.get("acp_agent"), str):
+                raise ValueError("Choose an ACP agent")
+            try:
+                self.acp_agents.get(request["acp_agent"])
+            except KeyError:
+                raise ValueError("That ACP agent no longer exists; pick another") from None
+        elif request.get("approve_host") is True:
+            raise ValueError("Host approval only applies to ACP agents")
         if request["mode"] == "offline":
             edits = request.get("edits")
             if not isinstance(edits, list) or not 1 <= len(edits) <= 20:
@@ -802,7 +819,7 @@ class Engine:
         if request.get("attachments") not in (None, []):
             self.attachments.resolve(request["attachments"])  # validates ids and the size limit
         # Persist only the public contract, never arbitrary caller fields.
-        clean = {k: request[k] for k in ("objective", "mode", "verification", "edits", "approve_execution", "approve_external", "approve_browser", "confirmation", "attachments", "goal_max_turns", "model_profile", "approve_secrets") if request.get(k) not in (None, "", [], 0) or k in ("approve_execution", "approve_external", "approve_browser") and k in request}
+        clean = {k: request[k] for k in ("objective", "mode", "verification", "edits", "approve_execution", "approve_external", "approve_browser", "approve_host", "acp_agent", "confirmation", "attachments", "goal_max_turns", "model_profile", "approve_secrets") if request.get(k) not in (None, "", [], 0) or k in ("approve_execution", "approve_external", "approve_browser", "approve_host") and k in request}
         if profile not in (None, ""):
             clean["agent_profile"] = profile
         return clean
@@ -929,6 +946,9 @@ class Engine:
                 return
             if request['mode'] == 'plan':
                 self._planning_workflow(task, request, original, cancel, started)
+                return
+            if request["mode"] == "acp":
+                self._acp_workflow(task, request, original, cancel, started, files)
                 return
             profile = self._profile(request)
             guidance = self._skills(task) if profile is None or profile["use_skills"] else ""
@@ -1133,6 +1153,137 @@ class Engine:
         if profile and profile.get("critic") and outcome.state == "completed" and not cancel.is_set():
             self._critic(task, request, model_id)
         self._after_goal_turn(task, request, "cancelled" if cancel.is_set() else outcome.state)
+
+    def _acp_workflow(self, task, request, original, cancel, started, files):
+        """Run an external ACP agent on a throwaway copy of the files, then offer what it
+        left there as an ordinary candidate. It never sees or writes the workspace."""
+        agent, argv, credentials = self.acp_agents.launch_command(request["acp_agent"])
+        env, hidden = {}, []
+        for name, ref in credentials:
+            try:
+                env[name] = self.models.secrets.reveal(ref).decode("utf-8")
+            except KeyError:
+                raise ValueError(f"Save the key {ref} under Settings, API keys before running {agent['name']}") from None
+            hidden.append(env[name])
+
+        def redact(text):
+            for value in hidden:
+                if value:
+                    text = text.replace(value, "[secret]")
+            return text
+
+        def clean(value):
+            """Tool input as shown in the chat: JSON-safe, bounded, with saved keys masked."""
+            text = redact(json.dumps(value, default=str))
+            return json.loads(text) if len(text) <= 4000 else {"input": text[:4000]}
+
+        work = self.data / "acp-work" / task
+        shutil.rmtree(work, ignore_errors=True)
+        for path, text in files.items():
+            dest = work / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(text.encode())
+        self.store.event(task, "agent_started", {"agent": agent["name"], "protocol": "ACP", "runs_on": "this machine, outside Docker",
+                                                 "works_in": "a throwaway copy; the workspace changes only when you apply"})
+        message, thought, titles, budget = [], [], {}, {"events": 0}
+
+        def flush():
+            if thought:
+                self.store.event(task, "agent_thinking", {"content": redact("".join(thought))[-16000:]})
+                thought.clear()
+            if message:
+                self.store.event(task, "agent_message", {"content": redact("".join(message))[-64000:]})
+                message.clear()
+            self._live(task, "")
+
+        def on_update(update):
+            kind = update.get("sessionUpdate")
+            content = update.get("content") if isinstance(update.get("content"), dict) else {}
+            if kind == "agent_message_chunk" and isinstance(content.get("text"), str):
+                message.append(content["text"])
+                self._live(task, redact("".join(message)))
+                return
+            if kind == "agent_thought_chunk" and isinstance(content.get("text"), str):
+                thought.append(content["text"])
+                return
+            if budget["events"] >= 500 or kind not in {"tool_call", "tool_call_update", "plan"}:
+                return
+            budget["events"] += 1
+            flush()
+            if kind == "plan":
+                steps = [redact(str(e.get("content", ""))[:300]) for e in update.get("entries") or [] if isinstance(e, dict)]
+                self.store.event(task, "plan", {"steps": steps[:50]})
+            elif kind == "tool_call":
+                title = redact(str(update.get("title") or update.get("kind") or "tool"))[:200]
+                titles[update.get("toolCallId")] = title
+                raw = update.get("rawInput")
+                self.store.event(task, "agent_tool_call", {"name": title, "arguments": clean(raw) if isinstance(raw, dict) else {"kind": str(update.get("kind"))}})
+            elif update.get("status") in {"completed", "failed"}:
+                parts = [c["content"].get("text", "") for c in update.get("content") or []
+                         if isinstance(c, dict) and isinstance(c.get("content"), dict)]
+                summary = redact("\n".join(p for p in parts if isinstance(p, str)))[:2000]
+                self.store.event(task, "agent_tool_result", {"tool": titles.get(update.get("toolCallId"), "tool"),
+                                                             "result": update["status"] + (f": {summary}" if summary else "")})
+
+        def on_permission(tool_call, chosen):
+            flush()
+            title = redact(str(tool_call.get("title") or "an action"))[:200]
+            allowed = bool(chosen) and chosen.get("kind") == "allow_once"
+            self.store.event(task, "agent_tool_result", {"tool": "permission", "result":
+                             f"Allowed once, in the throwaway copy: {title}" if allowed else f"Declined: {title}"})
+
+        session = AcpSession(argv, work, host_env(env), on_update, on_permission)
+        stop_reason, error = None, None
+        try:
+            session.start()
+            session.request("initialize", {"protocolVersion": 1, "clientInfo": {"name": "dikdik", "version": "0.1.0"},
+                                           "clientCapabilities": {"fs": {"readTextFile": True, "writeTextFile": True}, "terminal": False}}, timeout=60)
+            sid = session.request("session/new", {"cwd": str(work.resolve()), "mcpServers": []}, timeout=120)["sessionId"]
+            if agent.get("model"):
+                try:
+                    session.request("session/set_model", {"sessionId": sid, "modelId": agent["model"]}, timeout=30)
+                except AcpError:
+                    self.store.event(task, "agent_tool_result", {"tool": "model", "result": f"The agent kept its own model; it did not accept {agent['model']}"})
+            reply = session.request("session/prompt", {"sessionId": sid, "prompt": [{"type": "text", "text": request["objective"]}]},
+                                    timeout=1800, cancel=cancel)
+            stop_reason = (reply or {}).get("stopReason")
+        except AcpError as exc:
+            error = redact(str(exc))
+        except (KeyError, TypeError):
+            error = "The agent answered in a form Dikdik does not understand"
+        finally:
+            session.close()
+            flush()
+        try:
+            left = inventory(work)
+        except (OSError, ValueError):
+            left = files
+        # Deletions are not offered: Apply only writes files, so a vanished file keeps its content.
+        changed = {**files, **left}
+        shutil.rmtree(work, ignore_errors=True)
+        diff = candidate_diff(original, changed)
+        if len(diff.encode()) > 1_000_000:
+            raise ValueError("Diff exceeds 1MB")
+        candidate = self.data / "artifacts" / task
+        for path in _changed_paths(original, changed):
+            dest = candidate / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(changed[path].encode())
+        checks = [syntax_check(changed)]
+        self.store.event(task, "syntax", checks[0])
+        state = ("cancelled" if cancel.is_set() else "failed" if error or stop_reason == "refusal" or checks[0]["status"] == "failed"
+                 else "completed")
+        result = {"turn_changed": changed != files, "base": base_hashes(original, _changed_paths(original, changed)),
+                  "diff": diff, "changed_files": _changed_paths(original, changed),
+                  "file_changes": change_summary(original, changed, diff), "checks": checks, "tests_verified": False,
+                  "source_modified": False, "artifact": task, "seconds": round(time.monotonic() - started, 3),
+                  "agent": {"acp": agent["name"], "stop_reason": stop_reason, "tool_calls": len(titles)},
+                  "limitations": "Candidate from an external ACP agent that ran on this machine in a throwaway copy. "
+                                 "Syntax checked only; files it deleted are not proposed for deletion."}
+        if error:
+            result["error"] = error
+        self.store.event(task, "agent_finished", {"state": state})
+        self._finish(task, state, result, cancel)
 
     def _planning_workflow(self, task, request, original, cancel, started):
         profile = self._profile(request)
