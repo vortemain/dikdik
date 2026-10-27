@@ -43,6 +43,7 @@ STATIC = {
     **{f"/fonts/{name}.woff2": (f"fonts/{name}.woff2", "font/woff2") for name in FONTS},
 }
 SESSION_AGE = 30 * 24 * 3600
+CORS_ORIGINS = [o.strip() for o in os.environ.get("DIKDIK_CORS_ORIGINS", "").split(",") if o.strip()]
 
 
 def session_token(path: Path, rotate: bool = False) -> str:
@@ -109,12 +110,28 @@ def make_server(engine: Engine, port: int, token: str):
                 self.close_connection = True
             self.reply(status, data)
 
+        def cors_origin(self):
+            """Return the configured CORS origin if the request matches one."""
+            if not CORS_ORIGINS:
+                return None
+            origin = self.headers.get("Origin", "")
+            return origin if origin in CORS_ORIGINS else None
+
+        def cors_headers(self):
+            origin = self.cors_origin()
+            return {"Access-Control-Allow-Origin": origin} if origin else {}
+
         def same_origin(self):
             host = f"127.0.0.1:{self.server.server_port}"
-            if self.headers.get("Host") != host or self.headers.get("Origin", "http://" + host) != "http://" + host:
-                self.refuse(403, {"error": "Invalid host or origin"})
-                return False
-            return True
+            origin = self.headers.get("Origin", "http://" + host)
+            # Loopback always passes; configured CORS origins pass too.
+            if origin == "http://" + host or not origin or origin in CORS_ORIGINS:
+                if self.headers.get("Host") != host and not CORS_ORIGINS:
+                    self.refuse(403, {"error": "Invalid host or origin"})
+                    return False
+                return True
+            self.refuse(403, {"error": "Invalid host or origin"})
+            return False
 
         def session_cookie(self):
             try:
@@ -197,11 +214,46 @@ def make_server(engine: Engine, port: int, token: str):
                     f'<p style="font:16px system-ui;margin:3em auto;max-width:32em">{html.escape(text)}</p>').encode()
             self.reply(200 if status in (200, 409) else status, page, "text/html; charset=utf-8")
 
+        def do_OPTIONS(self):
+            origin = self.cors_origin()
+            if not origin:
+                self.send_response(403)
+                self.end_headers()
+                return
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+            self.send_header("Access-Control-Max-Age", "86400")
+            self.end_headers()
+
         def do_GET(self):
             path = urlsplit(self.path).path
             if path in STATIC:
                 filename, mime = STATIC[path]
-                self.reply(200, (WEB / filename).read_bytes(), mime)
+                raw = (WEB / filename).read_bytes()
+                range_header = self.headers.get("Range")
+                if range_header and range_header.startswith("bytes="):
+                    try:
+                        spec = range_header[6:].split("-")
+                        start = int(spec[0]) if spec[0] else 0
+                        end = int(spec[1]) if len(spec) > 1 and spec[1] else len(raw) - 1
+                        end = min(end, len(raw) - 1)
+                        if start > end or start >= len(raw):
+                            raise ValueError
+                        self.send_response(206)
+                        self.send_header("Content-Type", mime)
+                        self.send_header("Content-Length", str(end - start + 1))
+                        self.send_header("Content-Range", f"bytes {start}-{end}/{len(raw)}")
+                        self.send_header("Accept-Ranges", "bytes")
+                        self.send_header("Cache-Control", "no-store")
+                        self.end_headers()
+                        self.wfile.write(raw[start:end + 1])
+                    except (ValueError, IndexError):
+                        self.send_response(416)
+                        self.end_headers()
+                else:
+                    self.reply(200, raw, mime)
                 return
             if path == "/api/mcp/oauth/callback":
                 if self.same_origin():
