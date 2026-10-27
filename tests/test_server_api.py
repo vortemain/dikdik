@@ -155,6 +155,35 @@ class ServerApiTests(unittest.TestCase):
         names = [e["name"] for e in data["entries"]]
         self.assertIn("app.py", names)
 
+    def test_files_mkdir(self):
+        status, body = self.call("GET", "/api/files/mkdir?path=new-dir/sub")
+        data = json.loads(body)
+        self.assertEqual(status, 201)
+        self.assertTrue((self.root / "new-dir" / "sub").is_dir())
+
+    def test_files_mkdir_escape_refused(self):
+        status, body = self.call("GET", "/api/files/mkdir?path=../../escape")
+        self.assertEqual(status, 400)
+
+    def test_files_home(self):
+        status, body = self.call("GET", "/api/files/home")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertIn("home", data)
+        self.assertIn("workspace", data)
+
+    def test_files_archive(self):
+        status, body = self.call("GET", "/api/files/archive?path=.")
+        self.assertEqual(status, 200)
+        self.assertGreater(len(body), 0)
+
+    def test_vscode(self):
+        status, body = self.call("GET", "/api/vscode")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertIn("available", data)
+        self.assertIn("command", data)
+
     def test_git_search(self):
         import subprocess
         subprocess.run(["git", "init"], cwd=self.root, capture_output=True, check=True)

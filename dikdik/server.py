@@ -466,6 +466,12 @@ def make_server(engine: Engine, port: int, token: str):
                 if path == "/api/worktrees":
                     self.reply(200, {"worktrees": engine.worktrees.list()})
                     return
+                if path == "/api/vscode":
+                    import shutil as _sh
+                    available = _sh.which("code-server") is not None
+                    self.reply(200, {"available": available, "command": "code-server",
+                                     "workspace": str(engine.root)})
+                    return
                 if path.startswith("/api/apps/") and path.endswith("/bundle") and path.count("/") == 4:
                     app_name = path.split("/")[3]
                     raw, mime = engine.apps.bundle(app_name, "index.html")
@@ -551,6 +557,38 @@ def make_server(engine: Engine, port: int, token: str):
                         entries.append({"name": child.name, "type": "dir" if child.is_dir() else "file",
                                          "size": child.stat().st_size if child.is_file() else None})
                     self.reply(200, {"path": rel, "entries": entries})
+                elif path == "/api/files/mkdir":
+                    query = parse_qs(urlsplit(self.path).query)
+                    rel = query.get("path", [""])[0]
+                    if not isinstance(rel, str) or not rel.strip() or len(rel) > 500 or rel.startswith("-"):
+                        raise ValueError("path must be a safe relative path")
+                    target = (engine.root / rel).resolve()
+                    if engine.root.resolve() not in target.parents:
+                        raise ValueError("path must stay inside the workspace")
+                    target.mkdir(parents=True, exist_ok=True)
+                    self.reply(201, {"path": rel, "created": True})
+                elif path == "/api/files/home":
+                    import os as _os
+                    self.reply(200, {"home": str(Path(_os.path.expanduser("~"))),
+                                     "workspace": str(engine.root)})
+                elif path == "/api/files/archive":
+                    import io as _io, tarfile, gzip
+                    query = parse_qs(urlsplit(self.path).query)
+                    rel = query.get("path", [""])[0] or "."
+                    if not isinstance(rel, str) or len(rel) > 500 or rel.startswith("-"):
+                        raise ValueError("path must be a safe relative path")
+                    target = (engine.root / rel).resolve()
+                    if engine.root.resolve() not in target.parents and target != engine.root.resolve():
+                        raise ValueError("path must stay inside the workspace")
+                    if not target.is_dir():
+                        raise KeyError(rel)
+                    buffer = _io.BytesIO()
+                    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+                        for item in sorted(target.rglob("*"), key=lambda p: str(p.relative_to(target))):
+                            if item.is_file() and not any(part.startswith(".") for part in item.relative_to(target).parts):
+                                tar.add(str(item), arcname=str(item.relative_to(engine.root)))
+                    raw = buffer.getvalue()
+                    self.reply(200, raw, "application/gzip")
                 elif path == "/api/git":
                     self.reply(200, gitops.info(engine.root))
                 elif path.startswith("/api/git/") and path.endswith("/diff") and path.count("/") == 4:

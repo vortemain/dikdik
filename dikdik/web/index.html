@@ -58,6 +58,8 @@
     <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V11m7 9V4m7 16v-6M3 20h18"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/></symbol>
     <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".6" fill="currentColor"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="6" rx="2"/><rect x="3.5" y="13.5" width="17" height="6" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
   </svg>
 
   <div id="boot" class="boot" aria-hidden="true"><img src="/icon.svg" alt=""></div>
@@ -312,6 +314,9 @@
       <button class="settings-tab" type="button" role="tab" data-pane="plugins" aria-selected="false"><svg class="i"><use href="#i-puzzle"/></svg>Plugins</button>
       <button class="settings-tab" type="button" role="tab" data-pane="mcp" aria-selected="false"><svg class="i"><use href="#i-plug"/></svg>MCP servers</button>
       <button class="settings-tab" type="button" role="tab" data-pane="automations" aria-selected="false"><svg class="i"><use href="#i-clock"/></svg>Automations</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="platform" aria-selected="false"><svg class="i"><use href="#i-server"/></svg>Platform</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="acp" aria-selected="false"><svg class="i"><use href="#i-terminal"/></svg>ACP agents</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="apps" aria-selected="false"><svg class="i"><use href="#i-grid"/></svg>Apps</button>
     </nav>
     <div class="settings-main">
       <div class="settings-head"><button id="settings-back" class="ghost small settings-back" type="button" aria-label="Back to settings"><svg class="i"><use href="#i-chevron"/></svg>Settings</button><h3 id="settings-pane-title">General</h3><button id="close-settings" class="ghost icon" type="button" aria-label="Close settings"><svg class="i"><use href="#i-x"/></svg></button></div>
@@ -431,6 +436,28 @@
           <div class="row"><button id="auto-save" type="submit" class="primary small">Add automation</button><button id="auto-draft" type="button" class="secondary small">Save draft</button><button id="auto-cancel" type="button" class="ghost small" hidden>Cancel edit</button></div>
         </form>
         <ol id="auto-list" class="m4-list"></ol>
+      </section>
+      <section class="settings-pane" data-pane="platform" role="tabpanel" hidden>
+        <p class="lead">Server health, API keys, remote backends, webhooks and VS Code.</p>
+        <div class="setting-row"><div><h4>Server status</h4><p id="plat-status">Checking…</p></div></div>
+        <div class="setting-row"><div><h4>API keys</h4><p>Scoped keys for programmatic access.</p></div><button id="plat-key-add" class="secondary small" type="button">Create key</button></div>
+        <div id="plat-keys" class="m4-list"></div>
+        <div class="setting-row"><div><h4>Remote backends</h4><p>Connect to another Dikdik server.</p></div><button id="plat-backend-add" class="secondary small" type="button">Add backend</button></div>
+        <div id="plat-backends" class="m4-list"></div>
+        <div class="setting-row"><div><h4>Webhooks</h4><p>Opt-in HTTP callbacks on task completion.</p></div><button id="plat-webhook-add" class="secondary small" type="button">Add webhook</button></div>
+        <div id="plat-webhooks" class="m4-list"></div>
+        <div class="setting-row"><div><h4>VS Code</h4><p id="plat-vscode">Checking…</p></div></div>
+      </section>
+      <section class="settings-pane" data-pane="acp" role="tabpanel" hidden>
+        <p class="lead">External coding agents: Claude Code, Codex, Gemini CLI and OpenCode.</p>
+        <div class="row"><button id="acp-add" class="secondary small" type="button">Add ACP agent</button></div>
+        <div id="acp-list" class="m4-list"></div>
+        <div class="setting-row"><div><h4>ChatGPT login</h4><p id="acp-chatgpt">Checking…</p></div><button id="acp-chatgpt-login" class="secondary small" type="button">Start login</button></div>
+      </section>
+      <section class="settings-pane" data-pane="apps" role="tabpanel" hidden>
+        <p class="lead">Installable app pages served in a sandboxed iframe.</p>
+        <div class="row"><button id="app-add" class="secondary small" type="button">Add app</button></div>
+        <div id="app-list" class="m4-list"></div>
       </section>
     </div>
   </dialog>

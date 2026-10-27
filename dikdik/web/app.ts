@@ -3278,3 +3278,109 @@ setInterval(() => { void observe(); }, 1000);
 // Pasting the sign-in link into an already-open tab only changes the hash.
 globalThis.addEventListener?.("hashchange", () => { if (!connected) void boot(); else routeSettings(); });
 void boot();
+
+// --- Platform pane: health, API keys, backends, webhooks, VS Code ----------
+async function loadPlatform(): Promise<void> {
+  try {
+    const [health, vscode] = await Promise.all([
+      api<{ status: string } | null>("/health"),
+      api<{ available: boolean } | null>("/api/vscode"),
+    ]);
+    el("plat-status").textContent = health?.status === "ok" ? "Server is healthy." : "Server status unknown.";
+    el("plat-vscode").textContent = vscode?.available ? "code-server is available." : "code-server is not installed.";
+  } catch { el("plat-status").textContent = "Could not reach the server."; }
+  try {
+    const data = await api<{ keys: Array<Record<string, unknown>> } | null>("/api/keys");
+    const list = el("plat-keys"); list.replaceChildren();
+    for (const key of data?.keys ?? []) {
+      const row = make("div", "m4-item"); row.append(make("span", "", String(key.name ?? "Unnamed")));
+      const del = make("button", "ghost small", "Delete"); del.onclick = async () => {
+        try { await request(`/api/keys/${key.id}`, "DELETE"); void loadPlatform(); }
+        catch (e) { message(String(e), true); } };
+      row.append(del); list.append(row);
+    }
+  } catch { void 0; }
+  try {
+    const data = await api<{ workspaces: Array<Record<string, unknown>> } | null>("/api/backends");
+    const list = el("plat-backends"); list.replaceChildren();
+    for (const backend of data?.workspaces ?? []) {
+      const row = make("div", "m4-item"); row.append(make("span", "", String(backend.name ?? "Backend")));
+      row.append(make("span", "muted", String(backend.url ?? ""))); list.append(row);
+    }
+  } catch { void 0; }
+  try {
+    const data = await api<Array<Record<string, unknown>> | null>("/api/webhooks");
+    const list = el("plat-webhooks"); list.replaceChildren();
+    for (const hook of Array.isArray(data) ? data : []) {
+      const row = make("div", "m4-item"); row.append(make("span", "", String(hook.url ?? "")));
+      const del = make("button", "ghost small", "Delete"); del.onclick = async () => {
+        try { await request(`/api/webhooks/${hook.id}`, "DELETE"); void loadPlatform(); }
+        catch (e) { message(String(e), true); } };
+      row.append(del); list.append(row);
+    }
+  } catch { void 0; }
+}
+el("plat-key-add").addEventListener("click", async () => {
+  const name = prompt("Key name:");
+  if (!name) return;
+  try { const result = await request<{ token: string }>("/api/keys", "POST", { name, scopes: ["read"] });
+    message(`Key created: ${result.token.slice(0, 16)}…`); void loadPlatform(); }
+  catch (e) { message(String(e), true); } });
+el("plat-webhook-add").addEventListener("click", async () => {
+  const url = prompt("Webhook URL:");
+  if (!url) return;
+  try { await request("/api/webhooks", "POST", { url }); message("Webhook added."); void loadPlatform(); }
+  catch (e) { message(String(e), true); } });
+
+// --- ACP agents pane -------------------------------------------------------
+async function loadAcp(): Promise<void> {
+  try {
+    const data = await api<{ agents: Array<Record<string, unknown>> } | null>("/api/acp-agents");
+    const list = el("acp-list"); list.replaceChildren();
+    for (const agent of data?.agents ?? []) {
+      const row = make("div", "m4-item"); row.append(make("span", "", String(agent.name ?? "Agent")));
+      row.append(make("span", "muted", String(agent.command ?? ""))); list.append(row);
+    }
+  } catch { void 0; }
+  try {
+    const status = await api<{ connected: boolean } | null>("/api/chatgpt/status");
+    el("acp-chatgpt").textContent = status?.connected ? "Signed in." : "Not signed in.";
+  } catch { el("acp-chatgpt").textContent = "Could not reach the server."; }
+}
+el("acp-add").addEventListener("click", async () => {
+  const name = prompt("Agent name:");
+  if (!name) return;
+  const command = prompt("Command (e.g. claude):");
+  if (!command) return;
+  try { await request("/api/acp-agents", "POST", { name, command }); message("ACP agent added."); void loadAcp(); }
+  catch (e) { message(String(e), true); } });
+el("acp-chatgpt-login").addEventListener("click", async () => {
+  try { const result = await request<{ user_code: string; verification_uri: string }>("/api/chatgpt/device/start", "POST");
+    message(`Go to ${result.verification_uri} and enter ${result.user_code}.`); }
+  catch (e) { message(String(e), true); } });
+
+// --- Apps pane -------------------------------------------------------------
+async function loadApps(): Promise<void> {
+  try {
+    const data = await api<{ apps: Array<Record<string, unknown>> } | null>("/api/apps");
+    const list = el("app-list"); list.replaceChildren();
+    for (const app of data?.apps ?? []) {
+      const row = make("div", "m4-item"); row.append(make("span", "", String(app.name ?? "App")));
+      row.append(make("span", "muted", String(app.version ?? "")));
+      const del = make("button", "ghost small", "Uninstall"); del.onclick = async () => {
+        try { await request(`/api/apps/${app.name}`, "DELETE"); void loadApps(); }
+        catch (e) { message(String(e), true); } };
+      row.append(del); list.append(row);
+    }
+  } catch { void 0; }
+}
+el("app-add").addEventListener("click", async () => {
+  const name = prompt("App name:");
+  if (!name) return;
+  const source = prompt("Local directory path:");
+  if (!source) return;
+  try { await request("/api/apps", "POST", { name, source }); message("App installed."); void loadApps(); }
+  catch (e) { message(String(e), true); } });
+
+// Register the panes for lazy loading on first open.
+Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps });
