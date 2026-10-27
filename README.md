@@ -106,6 +106,9 @@ From this project directory:
 python -m dikdik.server --workspace examples/repair --data "$HOME/.dikdik-demo" --port 8787
 ```
 
+`--version` and `--info` answer stand-alone before startup; a missing workspace, an
+occupied port or a data directory already in use each stop with one plain line.
+
 Your browser opens Dikdik and signs in automatically; there is no token to
 copy. The terminal also prints a one-time sign-in link (`http://127.0.0.1:8787/#token=…`)
 in case the browser didn't open, or for a second browser. After that the browser

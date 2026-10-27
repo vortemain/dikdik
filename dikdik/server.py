@@ -1,11 +1,18 @@
-"""Loopback-only authenticated HTTP interface. No repository code runs on host."""
+﻿"""Loopback-only authenticated HTTP interface. No repository code runs on host."""
 
 import argparse
+import errno as errno_module
 import hmac
 import html
+import importlib.util
 import json
 import os
+import platform
 import secrets
+import shutil
+import socket
+import subprocess
+import sys
 import time
 import webbrowser
 from http.cookies import CookieError, SimpleCookie
@@ -14,6 +21,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .engine import ApplyConflict, Engine, TERMINAL
+from . import gitops
+from . import __version__ as DIKDIK_VERSION
 from .control import IMAGE_TYPES, workspace_image, workspace_images
 from . import gitops
 from .repository import INDEXER, approved_root, inventory, metadata
@@ -267,7 +276,7 @@ def make_server(engine: Engine, port: int, token: str):
                 length = int(self.headers.get("Content-Length", "0"))
                 limit = 4_400_000 if path == "/api/attachments" else 262144  # 3 MB of files, base64-encoded
                 if not 0 < length <= limit:
-                    raise ValueError(f"Request must contain 1–{limit} bytes")
+                    raise ValueError(f"Request must contain 1â€“{limit} bytes")
                 body = json.loads(self.rfile.read(length))
                 if path.startswith(M4_PREFIXES):
                     if length > 65536:
@@ -340,7 +349,7 @@ def make_server(engine: Engine, port: int, token: str):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 0 < length <= 1024:
-                    raise ValueError("Request must contain 1–1024 bytes")
+                    raise ValueError("Request must contain 1â€“1024 bytes")
                 self.start_session(json.loads(self.rfile.read(length)))
             except (ValueError, TypeError, TimeoutError) as exc:
                 self.reply(400, {"error": str(exc)})
@@ -395,21 +404,66 @@ def make_server(engine: Engine, port: int, token: str):
     return server
 
 
+def early_exits(parser: argparse.ArgumentParser) -> None:
+    """Answer --version / --info and refuse flag conflicts before anything starts."""
+    argv = sys.argv[1:]
+    flags = [flag for flag in argv if flag in {"-v", "--version", "--info"}]
+    if not flags:
+        return
+    if len(flags) != 1 or set(argv) - set(flags):
+        parser.error("--version and --info are standalone; no other flags may be given")
+    if "--info" in argv:
+        print(json.dumps({
+            "version": DIKDIK_VERSION, "python": platform.python_version(),
+            "platform": platform.platform(), "docker": shutil.which("docker") is not None,
+            "rust_indexer": importlib.util.find_spec("dikdik.dikdik_index") is not None
+                            or importlib.util.find_spec("dikdik_index") is not None,
+        }, indent=2))
+    else:
+        print(f"Dikdik {DIKDIK_VERSION}")
+    raise SystemExit(0)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Dikdik — Small name. Serious intelligence.")
-    parser.add_argument("--workspace", required=True, help="Explicitly approved repository directory")
+    parser = argparse.ArgumentParser(description="Dikdik â€” Small name. Serious intelligence.",
+                                     prog="python -m dikdik.server")
+    parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
+    parser.add_argument("--info", action="store_true", help="Print runtime information as JSON and exit")
+    parser.add_argument("--workspace", help="Explicitly approved repository directory")
     parser.add_argument("--data", default=str(Path.home() / ".dikdik"), help="Private durable state directory outside workspace")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--no-browser", action="store_true", help="Do not open the browser automatically")
     parser.add_argument("--rotate-token", action="store_true", help="Issue a new session secret, signing out every browser")
     args = parser.parse_args()
-    root = approved_root(args.workspace)
+    early_exits(parser)
+    if not args.workspace:
+        parser.error("--workspace is required: pass an explicitly approved repository directory")
+    probe = socket.socket()
+    probe.settimeout(0.5)
+    if probe.connect_ex(("127.0.0.1", args.port)) == 0:
+        probe.close()
+        parser.error(f"Port {args.port} is already in use. Stop whatever is listening on it or choose another port.")
+    probe.close()
+    try:
+        root = approved_root(args.workspace)
+    except (OSError, ValueError) as exc:
+        parser.error(f"Workspace {str(exc)}")
+        raise SystemExit(2)
     data = Path(args.data).resolve()
     if data == root or root in data.parents or data in root.parents:
         parser.error("Data and workspace directories must be separate, not ancestors")
-    engine = Engine(root, data)
+    try:
+        engine = Engine(root, data)
+    except ValueError as exc:
+        parser.error(str(exc))
     token = session_token(data / "web.token", args.rotate_token)
-    server = make_server(engine, args.port, token)
+    try:
+        server = make_server(engine, args.port, token)
+    except OSError as exc:
+        engine.close()
+        if getattr(exc, "errno", None) in (errno_module.EADDRINUSE, errno_module.EACCES):
+            parser.error(f"Port {args.port} is not available. Stop whatever is using it or pick another port.")
+        raise
     url = f"http://127.0.0.1:{server.server_port}"
     # The token rides in the URL fragment, which browsers never send to a server.
     link = f"{url}/#token={token}"

@@ -269,6 +269,9 @@ fair autonomous-capability comparison or proof of superiority.
   pending preview and a hook-free commit all answer 200 with the documented
   shapes; commit author is a fixed `Dikdik Automations` identity and hooks are
   disabled by `core.hooksPath` plus `--no-verify`.
+- A failing push after a successful commit persists the recorded manifest and
+  revision, so a retry answers "already matched" and only the approved push is
+  attempted again.
 - Strict TypeScript check, the production browser bundle (`bun run build:web`)
   and the web suite (100 tests, 474 assertions) pass.
 - A real Chrome check against disposable local data: the panel opened in
@@ -282,6 +285,18 @@ fair autonomous-capability comparison or proof of superiority.
   390 px dark layout shows no horizontal overflow and no page or console errors.
 - Not checked against a hosted remote with stored credentials; pushes to a bare
   local remote were verified by the test suite only.
+
+## Runtime variants verification
+
+- `tests/test_runtime_variants.py` passes 7 tests against real subprocesses:
+  `--version`/`-v` print `Dikdik <version>` and exit 0; `--info` prints runtime
+  JSON (version, Python, platform, Docker presence, Rust-indexer presence);
+  `--version --info`, `--version --port 1` and `--info -v` each exit nonzero
+  with a one-line standalone warning; a missing `--workspace`, a workspace path
+  that does not exist, a port already listening, and a data directory locked by
+  another Dikdik service all stop with one plain line and no traceback.
+- The port check uses a connection probe before startup because Windows
+  `SO_REUSEADDR` otherwise lets a second server bind the same port.
 
 ## Packaging evidence
 

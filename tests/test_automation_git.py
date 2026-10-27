@@ -72,6 +72,18 @@ class AutomationGitTests(unittest.TestCase):
         refs = subprocess.run(["git", "for-each-ref", "--format=%(refname)", "refs/heads"], cwd=remote, check=True, capture_output=True, text=True).stdout
         self.assertIn(self.branch(), refs)
 
+    def test_failing_push_keeps_the_commit_and_manifest(self):
+        self.make()
+        self.configure(remote="absent-origin")
+        first = self.sync.sync({"approve_push": False}, self.h.clock())[1]
+        self.assertTrue(first["committed"])
+        with self.assertRaises(ValueError):
+            self.sync.sync({"approve_push": True}, self.h.clock())
+        again = self.sync.sync({"approve_push": False}, self.h.clock())[1]
+        self.assertFalse(again["committed"])  # nothing new staged on the second attempt
+        self.assertFalse(again["pushed"])
+        self.assertEqual(self.sync.status()[1]["pending"], 0)
+
     def test_validation_refuses_outside_and_unmanaged_directories(self):
         with self.assertRaises(ValueError):
             self.sync.save({"repository": "..", "directory": "sync", "branch": self.branch(), "remote": "origin"}, 0)
