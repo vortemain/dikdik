@@ -60,7 +60,7 @@ do browser checks.
 Status: `Y` has it, `P` partly (note says what is missing), `N` missing, `E` needs
 an outside service, `X` not applicable by design.
 
-**Totals now:** Y 325, P 212, N 1,131, E 61, X 20. `docs/PARITY.md` has the table
+**Totals now:** Y 397, P 224, N 1,047, E 61, X 20. `docs/PARITY.md` has the table
 with one column per phase; add a column for each phase you finish.
 
 Each row's behaviour is described in the read-only reference maps:
@@ -303,7 +303,9 @@ Build in this order; one commit per numbered item (or per sub-feature if large).
    matter, size limits), refresh, self-heal of broken installs, uninstall. Any
    network fetch needs explicit approval at the moment of install; clone into the
    data directory, never execute anything from it.
-2. **Plugins** (app F19, srv F26): a plugin manifest bundling skills, MCP servers,
+2. **Plugins** (app F19, srv F26) — done (`dikdik/plugins.py`,
+   `dikdik/web/plugins-pane.ts`); open: deep links, a /launch route.
+   Original brief: a plugin manifest bundling skills, MCP servers,
    hooks and agent profiles; install from local/Git, a trust review screen listing
    everything the plugin adds before first enable, enable/disable, launch
    parameters. Plugins can never widen approvals or add host processes without the

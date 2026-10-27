@@ -5,6 +5,7 @@ import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage
 import { ComposerDrafts } from './drafts';
 import { keysPane, modelsPane } from "./models-pane";
 import { skillsPane } from "./skills-pane";
+import { pluginsPane } from "./plugins-pane";
 import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, workspacePath } from "./organise";
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
@@ -1648,6 +1649,7 @@ async function connect(): Promise<void> {
       models: modelsPane(el("panel-profiles"), paneDeps),
       secrets: keysPane(el("panel-secrets"), paneDeps),
       skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
+      plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
     };
   }
   textarea("objective").focus?.();
@@ -1758,7 +1760,7 @@ themeSelect.addEventListener("change", () => {
   applyTheme(themeSelect.value);
 });
 
-const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", mcp: "MCP servers", automations: "Automations" };
+const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations" };
 
 // --- automations ----------------------------------------------------------
 let automations: Automation[] = [];
@@ -2937,6 +2939,12 @@ const paneDeps = {
   make, message,
   changed: () => { void loadModel().catch(() => undefined); void loadExposedSecrets(); void ensureLists(true); },
 };
+/** A plugin's starting message, ready in the composer of a new task (sent only when the user presses Send). */
+function startWithPrompt(prompt: string): void {
+  (el("settings") as HTMLDialogElement).close();
+  newTask();
+  fillComposer(prompt);
+}
 /** "Use skill": a new task with the skill's slash command ready in the composer. */
 function useSkill(name: string): void {
   (el("settings") as HTMLDialogElement).close();

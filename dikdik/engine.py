@@ -29,6 +29,7 @@ from .control import (SIDE_PROMPT, SUMMARY_PROMPT, Attachments, Confirmations, a
 from .locking import DataLock
 from .mcp import McpSession, McpStore
 from .model_config import ModelResolver
+from .plugins import PluginStore
 from .planning import Planning, READ_PLAN, TASK_TRACKER, WRITE_PLAN
 from .routing import RouterStore, choose as choose_route
 from .repository import approved_root, apply_edits, can_create_file, inventory, metadata, syntax_check
@@ -140,7 +141,9 @@ class Engine:
         # Same files as the /api/secrets routes; the default profile decides the model.
         self.models = ModelResolver(self.store, SecretsStore(data / "secrets.bin", data / "secrets.key"))
         self.routers = RouterStore(self.store)
-        self.skills = SkillIndex(self.store, data / "skills", root / ".dikdik" / "skills", data / "skills-installed")
+        self.plugins = None  # set below, once the MCP store exists
+        self.skills = SkillIndex(self.store, data / "skills", root / ".dikdik" / "skills", data / "skills-installed",
+                                 lambda: self.plugins.skill_dirs() if self.plugins else [])
         self.mcp = McpStore(self.store)
         self.agents = AgentProfiles(self.store)
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dikdik")
@@ -155,6 +158,7 @@ class Engine:
         self.attachments = Attachments(self.store, data / "attachments")
         with self.store.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS goals (task_id TEXT PRIMARY KEY, objective TEXT NOT NULL, max_turns INTEGER NOT NULL, turns INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created REAL NOT NULL)")
+        self.plugins = PluginStore(data, root, self.store, self.mcp)
         self.bash = BashService(self)
         self.browser = BrowserService(self)
         self.planning = Planning(self)
@@ -371,8 +375,9 @@ class Engine:
             skills = []
         return {"tools": [{"name": t["function"]["name"], "description": t["function"]["description"]} for t in tools],
                 "skills": skills,
-                "subagents": [{k: a.get(k, "") for k in ("name", "description", "source")} for a in load_subagents(self.root, self.data / "agents")],
-                "hooks": load_hooks(self.root)}
+                "subagents": [{k: a.get(k, "") for k in ("name", "description", "source")} for a in load_subagents(self.root, self.data / "agents", self.plugins.agent_dirs())],
+                "hooks": [{k: rule.get(k, "") for k in ("tool", "pattern", "message", "source")} for rule in load_hooks(self.root, self.plugins.hook_documents())],
+                "plugins": [{"name": p["name"], "enabled": p["enabled"]} for p in self.plugins.list()]}
 
     def archive(self, task):
         """A zip of the conversation: its events, the result and the candidate files it changed."""
@@ -1011,7 +1016,7 @@ class Engine:
         budget = AgentBudget(**{key: profile[key] for key in PROFILE_LIMITS if profile and profile.get(key)})
         model = self.models.describe(model_id)
         self.store.event(task, "agent_started", {"implementation": "original_dikdik", "profile": profile["name"] if profile else "Default", "max_model_calls": budget.max_model_calls, "max_tool_calls": budget.max_tool_calls, "max_repair_attempts": budget.max_repair_attempts, "deadline_seconds": budget.deadline_seconds, "model": {k: v for k, v in model.items() if k != "problem"}})
-        hooks = load_hooks(self.root)
+        hooks = load_hooks(self.root, self.plugins.hook_documents())
         policy = request.get("confirmation") or self.app_settings()["confirmation"]
         pause = self.pausing.get(task) or threading.Event()
 
@@ -1037,7 +1042,7 @@ class Engine:
             temporary.write_text(json.dumps(state), encoding="utf-8")
             os.replace(temporary, path)
 
-        subagents = load_subagents(self.root, self.data / "agents")
+        subagents = load_subagents(self.root, self.data / "agents", self.plugins.agent_dirs())
 
         def delegate(name, objective, snapshot_files):
             agent = next(a for a in subagents if a["name"] == name)

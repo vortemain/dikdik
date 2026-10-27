@@ -137,15 +137,22 @@ class Confirmations:
 
 
 # --- project hooks ------------------------------------------------------------------
-def load_hooks(root: Path) -> list[dict]:
-    """`.dikdik/hooks.json`: {"block": [{"tool": "run_command" | "*", "pattern": "regex", "message": "..."}]}."""
+def load_hooks(root: Path, extra: list[tuple[str, dict]] = ()) -> list[dict]:
+    """`.dikdik/hooks.json`: {"block": [{"tool": "run_command" | "*", "pattern": "regex", "message": "..."}]},
+    plus block rules from trusted, enabled plugins (`extra`: (plugin name, document) pairs)."""
     path = root / ".dikdik" / "hooks.json"
-    if not path.is_file():
-        return []
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return [{"tool": "*", "pattern": "", "message": "Project hooks file is invalid JSON; every tool call is blocked until it is fixed", "broken": True}]
+    rules: list[dict] = []
+    if path.is_file():
+        try:
+            rules += parse_hooks(json.loads(path.read_text(encoding="utf-8")), "project")
+        except (OSError, ValueError):
+            return [{"tool": "*", "pattern": "", "message": "Project hooks file is invalid JSON; every tool call is blocked until it is fixed", "broken": True}]
+    for name, document in extra:
+        rules += parse_hooks(document, f"plugin {name}")
+    return rules[:100]
+
+
+def parse_hooks(document, source: str) -> list[dict]:
     rules = []
     for rule in document.get("block", []) if isinstance(document, dict) else []:
         if not isinstance(rule, dict) or not isinstance(rule.get("tool", "*"), str):
@@ -155,7 +162,8 @@ def load_hooks(root: Path) -> list[dict]:
         except re.error:
             rules.append({"tool": "*", "pattern": "", "message": f"Hook pattern is not a valid regular expression: {rule.get('pattern')!r}", "broken": True})
             continue
-        rules.append({"tool": rule.get("tool", "*"), "regex": pattern, "pattern": pattern.pattern, "message": str(rule.get("message") or "Blocked by a project hook")[:300]})
+        rules.append({"tool": rule.get("tool", "*"), "regex": pattern, "pattern": pattern.pattern, "source": source,
+                      "message": str(rule.get("message") or f"Blocked by a {source} hook")[:300]})
     return rules[:100]
 
 
@@ -174,10 +182,11 @@ EXPLORER = {"name": "explorer", "description": "Finds where things are and how t
             "instructions": "Investigate the repository to answer the question. Be specific: name files, functions and line numbers. Do not propose edits.", "source": "built-in"}
 
 
-def load_subagents(root: Path, personal: Path) -> list[dict]:
-    """Built-in explorer plus `<scope>/.dikdik/agents/<name>.md` (front matter: name, description)."""
+def load_subagents(root: Path, personal: Path, extra: list[tuple[str, Path]] = ()) -> list[dict]:
+    """Built-in explorer plus `<scope>/.dikdik/agents/<name>.md` (front matter: name, description),
+    then agents from trusted, enabled plugins (`extra`: (source label, folder) pairs)."""
     agents, names = [EXPLORER], {"explorer"}
-    for source, directory in (("project", root / ".dikdik" / "agents"), ("personal", personal)):
+    for source, directory in (("project", root / ".dikdik" / "agents"), ("personal", personal), *extra):
         if not directory.is_dir():
             continue
         for path in sorted(directory.glob("*.md"))[:20]:

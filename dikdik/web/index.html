@@ -53,6 +53,7 @@
     <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2"/><circle cx="7" cy="18.5" r="2"/><circle cx="17" cy="8" r="2"/><path d="M7 7.5v9M17 10c0 4-10 3-10 6.5"/></symbol>
     <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 9h6v6H9zM9 9V6.5A2.5 2.5 0 1 0 6.5 9H9Zm6 0V6.5A2.5 2.5 0 1 1 17.5 9H15Zm0 6v2.5a2.5 2.5 0 1 0 2.5-2.5H15Zm-6 0v2.5A2.5 2.5 0 1 1 6.5 15H9Z"/></symbol>
     <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1.4 1.4 0 0 1 0 2L13.8 20.5a1.4 1.4 0 0 1-2 0Z"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></symbol>
+    <symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M9 4.5a2 2 0 1 1 4 0V6h4v4h1.5a2 2 0 1 1 0 4H17v4h-4v-1.5a2 2 0 1 0-4 0V18H5v-4h1.5a2 2 0 1 0 0-4H5V6h4Z"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.4"/></symbol>
     <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V11m7 9V4m7 16v-6M3 20h18"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/></symbol>
@@ -308,6 +309,7 @@
       <button class="settings-tab" type="button" role="tab" data-pane="agents" aria-selected="false"><svg class="i"><use href="#i-sparkle"/></svg>Agents</button>
       <button class="settings-tab" type="button" role="tab" data-pane="secrets" aria-selected="false"><svg class="i"><use href="#i-key"/></svg>API keys</button>
       <button class="settings-tab" type="button" role="tab" data-pane="skills" aria-selected="false"><svg class="i"><use href="#i-book"/></svg>Skills</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="plugins" aria-selected="false"><svg class="i"><use href="#i-puzzle"/></svg>Plugins</button>
       <button class="settings-tab" type="button" role="tab" data-pane="mcp" aria-selected="false"><svg class="i"><use href="#i-plug"/></svg>MCP servers</button>
       <button class="settings-tab" type="button" role="tab" data-pane="automations" aria-selected="false"><svg class="i"><use href="#i-clock"/></svg>Automations</button>
     </nav>
@@ -364,6 +366,10 @@
           <button type="submit" class="primary small">Add skill</button>
         </form>
         <div id="panel-skills" class="m4-panel-mount"></div>
+      </section>
+      <section class="settings-pane" data-pane="plugins" role="tabpanel" hidden>
+        <p class="lead">A plugin bundles skills, subagents, block rules and MCP server definitions. Nothing in a plugin runs or loads until you review what it adds and trust it; its MCP servers then appear under MCP servers, switched off.</p>
+        <div id="panel-plugins"></div>
       </section>
       <section class="settings-pane" data-pane="mcp" role="tabpanel" hidden>
         <p class="lead">Give the agent tools from Model Context Protocol servers: issue trackers, databases, docs search. Servers start disabled; agent tasks connect to the ones you enable. A command server runs on this machine with only the key you give it.</p>

@@ -76,13 +76,16 @@ autonomous engineering platform.
   agent as marked, untrusted context; install them from a folder, a Git source
   or a marketplace you add, and browse, filter and switch them on the Skills page. MCP servers (HTTP or local command) add
   tools. Agent profiles bundle instructions, a model, limits and tool access.
+- **Plugins** bundle skills, block rules, subagents and MCP server definitions.
+  Install from a folder, Git or a marketplace; nothing loads until you review
+  what a plugin adds and trust it, and its MCP servers arrive switched off.
 - **Automations** on a daily or interval schedule, each run an ordinary task,
   using exactly the mode and approvals you set. Run now, edit, open any run.
 - **Python client and CLI** (`python -m dikdik.client`) and a native Rust
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
 
-**Not yet:** plugins and extension apps,
+**Not yet:** extension apps,
 WebSocket and TypeScript clients, a desktop app, and any recorded run against a
 live model provider or Docker engine. See [the parity audit](docs/PARITY.md).
 

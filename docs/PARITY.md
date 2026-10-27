@@ -30,9 +30,9 @@ OpenHands app map (799 sub-features) and the agent-server/SDK map
 
 | Status | First audit | After the first build phases | After the parity fix | Run control | Interface | Models | Current |
 |---|---|---|---|---|---|---|---|
-| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 373 |
-| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 215 |
-| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 1,080 |
+| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 397 |
+| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 224 |
+| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 1,047 |
 | Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 | 61 | 61 |
 | Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 | 20 |
 | **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
@@ -108,7 +108,7 @@ model profiles and keys, unused skills, the unloaded Rust indexer, automations
 granting consent on their own, real agent tool events missing from the chat,
 and automation runs never listing (`task_id`/`id` mismatch).
 
-Largest remaining gaps: live browser execution, plugins and extension apps, automation Git sync and templates,
+Largest remaining gaps: live browser execution, extension apps, MCP OAuth and catalog, automation Git sync and templates,
 WebSocket and TypeScript clients, VS Code serving, onboarding, and any recorded run
 against a live model provider or Docker engine.
 
@@ -134,7 +134,7 @@ against a live model provider or Docker engine.
 | F16 App preferences | Missing configurable themes/languages/voice/identity/preferences. Implement actual persisted settings; test contrast, localization and keyboard access. | P2 |
 | F17 MCP | Missing server catalog/configuration/testing/scoping. No arbitrary host launch: integration processes need explicit permissions and an actual execution boundary. | P1 |
 | F18 Skills | Missing catalogs and personal/project skill enablement. Treat skill text as untrusted context, never permission overrides. | P1 |
-| F19 Plugins | Missing lifecycle/deep-link/install/update support. Define extension trust and distribution/license boundaries before enabling code loading. | P2 |
+| F19 Plugins | Partial: install from a folder, Git or a marketplace; a trust review before first enable; enable/disable, update, uninstall, files and launch parameters. Plugins add skills, block rules, subagents and switched-off MCP servers only; nothing in them runs on the host. Missing deep links and a /launch route. | P2 |
 | F20 Extension apps | Missing app/page embedding and lifecycle. Isolate untrusted content and scope bridge permissions; no arbitrary same-origin script privileges. | P2 |
 | F21 Automation dashboard | Missing. Reference requires a separate Automation service. Original scheduling/run/list/filter/import/export operations need durable state and real execution evidence. | P2 |
 | F22 Automation creation | Missing templates/custom/import setup. Configure real triggers and permissions; do not ship nonfunctional template cards. | P2 |

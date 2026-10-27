@@ -38,8 +38,9 @@ def _front_matter(text: str) -> tuple[dict, str]:
 
 
 class SkillIndex:
-    def __init__(self, store, personal_dir: Path, project_dir: Path, installed_dir: Path | None = None):
+    def __init__(self, store, personal_dir: Path, project_dir: Path, installed_dir: Path | None = None, plugin_dirs=None):
         self.store = store
+        self.plugin_dirs = plugin_dirs or (lambda: [])  # (plugin name, skills folder) for trusted, enabled plugins
         self.personal_dir = Path(personal_dir)
         self.project_dir = Path(project_dir)
         self.installed_dir = Path(installed_dir) if installed_dir else self.personal_dir.parent / "skills-installed"
@@ -64,6 +65,13 @@ class SkillIndex:
                     continue  # the project copy overrides personal and installed ones
                 seen.add(skill_id)
                 yield scope, skill_id, path
+        for plugin, directory in self.plugin_dirs():
+            found = [(p.parent.name, p) for p in directory.glob("*/SKILL.md") if p.is_file()] + [(p.stem, p) for p in directory.glob("*.md") if p.is_file()]
+            for skill, path in sorted(found):
+                skill_id = f"{plugin}.{skill}"
+                if skill_id not in seen and not skill.startswith("."):
+                    seen.add(skill_id)
+                    yield "plugin", skill_id, path
 
     def enumerate_skills(self):
         rows = []

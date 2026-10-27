@@ -23,10 +23,11 @@ from .providers import chat_completion
 from .routing import STRATEGIES, RouterStore
 from .secrets_store import SecretsError, SecretsStore
 from .skills import SkillIndex
+from .plugins import fill_prompt
 from .skills_market import InstallConflict, SkillStore
 
 ROUTE_PREFIXES = ("/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts",
-                  "/api/connections", "/api/routers", "/api/model-catalog")
+                  "/api/connections", "/api/routers", "/api/model-catalog", "/api/plugins")
 MANAGED_PREFIX = "conn."  # keys owned by provider connections; managed there, hidden from API keys
 
 
@@ -34,7 +35,9 @@ def build_routes(engine_or_stores):
     stores = engine_or_stores
     profiles = ProfileStore(stores.store)
     secrets = SecretsStore(stores.data / "secrets.bin", stores.data / "secrets.key")
-    skills = SkillIndex(stores.store, stores.data / "skills", stores.root / ".dikdik" / "skills", stores.data / "skills-installed")
+    plugins = getattr(stores, "plugins", None)
+    skills = SkillIndex(stores.store, stores.data / "skills", stores.root / ".dikdik" / "skills", stores.data / "skills-installed",
+                        (lambda: plugins.skill_dirs()) if plugins else None)
     market = SkillStore(stores.data, stores.store)
     automations = stores.automation
     drafts = Drafts(stores.store)
@@ -123,6 +126,36 @@ def build_routes(engine_or_stores):
             return 200, routers.update(parts[2], body)
         if method == "DELETE" and len(parts) == 3:
             return 200, routers.delete(parts[2])
+        return None
+
+    def plugin_routes(method, parts, body, query):
+        if plugins is None:
+            return None
+        if len(parts) >= 3 and parts[2] == "catalog":
+            if method == "GET" and len(parts) == 3:
+                return 200, plugins.catalog(market.marketplaces())
+            if method == "POST" and len(parts) == 4 and parts[3] == "install":
+                return 201, plugins.install_from_catalog(body.get("marketplace"), body.get("repo_path"))
+            return None
+        if method == "GET" and len(parts) == 2:
+            return 200, plugins.list()
+        if method == "POST" and len(parts) == 3 and parts[2] == "install":
+            return 201, plugins.install(body)
+        if method == "GET" and len(parts) == 3:
+            return 200, plugins.get(parts[2])
+        if method == "GET" and len(parts) == 4 and parts[3] == "files":
+            return 200, plugins.read_file(parts[2], query.get("path", ""))
+        if method == "PATCH" and len(parts) == 3:
+            return 200, plugins.set_enabled(parts[2], body)
+        if method == "POST" and len(parts) == 4 and parts[3] == "refresh":
+            return 200, plugins.refresh(parts[2], body.get("approve_network") is True)
+        if method == "POST" and len(parts) == 4 and parts[3] == "launch":
+            plugin = plugins.get(parts[2])
+            if not (plugin["enabled"] and plugin["trusted"]):
+                raise ValueError("Trust and enable the plugin before starting a conversation with it")
+            return 200, {"prompt": fill_prompt(plugin["prompt"], plugin["parameters"], body.get("parameters") or {})}
+        if method == "DELETE" and len(parts) == 3:
+            return 200, plugins.uninstall(parts[2])
         return None
 
     def catalog_routes(method, parts, body, query):
@@ -269,6 +302,7 @@ def build_routes(engine_or_stores):
         "/api/connections": connection_routes,
         "/api/routers": router_routes,
         "/api/model-catalog": catalog_routes,
+        "/api/plugins": plugin_routes,
         '/api/drafts': draft_routes,
         "/api/profiles": profiles_routes,
         "/api/secrets": secrets_routes,
