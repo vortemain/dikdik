@@ -4,8 +4,8 @@ import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries,
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, SlashCommand, TaskRequest, DiffReview, M4Factory, M4Node, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
 import { keysPane, modelsPane } from "./models-pane";
-import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, workspacePath } from "./organise";
-import type { TaskSort } from "./organise";
+import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, workspacePath } from "./organise";
+import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
@@ -36,14 +36,19 @@ let slashItems: SlashCommand[] = [], slashIndex = 0, slashModels = false;
 let taskRequest: TaskRequest | null = null;
 const confirmCards = new Map<string, HTMLElement>();
 const confirmDecisions = new Map<string, (accept: boolean) => void>();  // open approvals, newest last
+const secretCards = new Map<string, HTMLElement>();  // open secret requests
 // Organisation, onboarding and files: read by functions that run at load time.
 let modelReady = true, activeTag = "", listLimit = 40, folderOptions: string[] = [];
-let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean } | null = null;
+let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean; title_model?: string } | null = null;
+const titled = new Set<string>();  // conversations we already asked to be titled this session
 let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsElement; summary: HTMLElement; count: number } | null = null;
 let showAllMessages = false, projectFileSet = new Set<string>();
 const expandedDirs = new Set<string>();
 let openTabs: string[] = [], fileText = "", filePreview = false;
-let exposedSecrets = 0;  // keys the user exposed to the sandbox; the composer offers them only then
+let projectImages: string[] = [], pinnedTabs = new Set<string>(), tabsRestored = false;
+let diffMode = "diff", diffNewKey = "";
+let exposedSecrets = 0;
+let pendingFolder: string | null = null;  // a new task started from a folder's "+" goes there  // keys the user exposed to the sandbox; the composer offers them only then
 const composerSize = new ComposerSize();
 
 // --- small DOM helpers ----------------------------------------------------
@@ -296,6 +301,7 @@ function stepLabel(msg: ChatMessage): StepLabel {
     case "hook_blocked": return { icon: "shield", title: "Blocked by a project hook", arg: msg.body ?? "" };
     case "agent_thinking": return { icon: "sparkle", title: "Thinking", arg: "" };
     case "model_routed": return { icon: "cpu", title: msg.title ?? "Routed", arg: msg.body ?? "" };
+    case "secret_answered": return { icon: "key", title: msg.title ?? "Secret", arg: "" };
     case "critic": return { icon: msg.title === "Critic: looks done" ? "check" : "alert", title: msg.title ?? "Critic", arg: (msg.body ?? "").split("\n")[0] ?? "" };
     case "sandbox_secrets": return { icon: "key", title: "Sandbox secrets available", arg: msg.body ?? "" };
     case "confirmation_resolved": return { icon: msg.title === "Approved" ? "check" : "x", title: `${msg.title} · ${detailField(details, "id") ? "action" : ""}`.replace(/ · $/, ""), arg: detailField(details, "reason") };
@@ -516,6 +522,38 @@ function attachmentCard(msg: ChatMessage): HTMLLIElement {
   li.append(grid);
   return li;
 }
+/** The agent asked for a secret: typed here, sealed on the server, never shown to the model or kept in the chat. */
+function secretCard(msg: ChatMessage): HTMLLIElement {
+  const id = detailField(msg.details, "id"), name = detailField(msg.details, "name");
+  const li = make("li", "msg msg-system msg-confirm"); li.id = msg.id;
+  const card = make("form", "confirm-card secret-card");
+  const head = make("div", "result-head");
+  const badge = make("span", "result-icon"); badge.append(icon("key"));
+  head.append(badge, make("span", "result-title", `The agent needs ${name || "a secret"}`));
+  card.append(head);
+  if (msg.body) card.append(make("p", "result-text", msg.body));
+  const field = make("input"); field.type = "password"; field.autocomplete = "off"; field.placeholder = `Value for ${name}`;
+  field.setAttribute("aria-label", `Value for ${name}`);
+  card.append(field, make("p", "hint", "Saved encrypted under API keys as " + name + ". Sandbox commands in this run can read it; it is never sent to the model, and command output is redacted."));
+  const actions = make("div", "result-actions");
+  const save = make("button", "small primary", "Provide"); save.type = "submit";
+  const decline = make("button", "small", "Decline"); decline.type = "button";
+  actions.append(save, decline);
+  card.append(actions);
+  li.append(card);
+  const answer = async (body: Record<string, unknown>) => {
+    if (!selected) return;
+    save.disabled = decline.disabled = field.disabled = true;
+    try { await api(`/api/tasks/${encodeURIComponent(selected)}/secret`, { id, ...body }); field.value = ""; }
+    catch (error) { save.disabled = decline.disabled = field.disabled = false; message(error instanceof Error ? error.message : "Could not send it", true); }
+  };
+  card.onsubmit = event => { event.preventDefault(); if (field.value.trim()) void answer({ value: field.value }); };
+  decline.onclick = () => { void answer({ decline: true }); };
+  const answered = liveEvents.some(event => event.kind === "secret_answered" && event.data?.id === id) || liveEvents.some(event => isTerminal(event.kind) && event.seq > (Number(msg.id.split("-").pop()) || 0));
+  if (answered) { save.disabled = decline.disabled = field.disabled = true; field.placeholder = "Answered"; }
+  else { secretCards.set(id, li); setTimeout(() => field.focus?.(), 0); }
+  return li;
+}
 function confirmationCard(msg: ChatMessage): HTMLLIElement {
   const d = (msg.details ?? {}) as { id?: string; tool?: string; risk?: string; reason?: string; arguments?: unknown };
   const li = make("li", "msg msg-system msg-confirm"); li.id = msg.id;
@@ -568,6 +606,11 @@ let lastRole = "";
 function renderMessage(msg: ChatMessage): HTMLLIElement | null {
   if (msg.kind === "attachments") { lastRole = "user"; return attachmentCard(msg); }
   if (msg.kind === "confirmation_requested") { lastRole = "system"; return confirmationCard(msg); }
+  if (msg.kind === "secret_requested") { lastRole = "system"; return secretCard(msg); }
+  if (msg.kind === "secret_answered") {
+    const card = secretCards.get(detailField(msg.details, "id"));
+    if (card) { for (const control of card.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button")) control.disabled = true; secretCards.delete(detailField(msg.details, "id")); }
+  }
   if (msg.kind === "confirmation_resolved") {
     const id = detailField(msg.details, "id"), card = confirmCards.get(id);
     if (card) {
@@ -686,7 +729,7 @@ function closeStepGroup(): void {
   stepGroup = null;
 }
 function rerenderConversation(): void {
-  rendered = new Set(); pendingCalls = []; lastRole = ""; stepGroup = null; confirmCards.clear(); confirmDecisions.clear();
+  rendered = new Set(); pendingCalls = []; lastRole = ""; stepGroup = null; confirmCards.clear(); confirmDecisions.clear(); secretCards.clear();
   el("message-stream").replaceChildren();
   renderMessageStream(eventsToChat(liveEvents, liveObjective));
 }
@@ -703,8 +746,16 @@ function showReviewSelection(): void {
     const code = diffLines(content);
     diff.replaceChildren(...(content ? code : []));
     renderedDiff = content;
+    el("diff-split").replaceChildren();
+    diffNewKey = "";
   }
-  diff.hidden = !content;
+  el("diff-mode").hidden = !content;
+  for (const node of el("diff-mode").querySelectorAll<HTMLElement>("button")) node.setAttribute("aria-pressed", String(node.dataset.mode === diffMode));
+  diff.hidden = !content || diffMode !== "diff";
+  el("diff-split").hidden = !content || diffMode !== "split";
+  el("diff-new").hidden = !content || diffMode !== "new";
+  if (content && diffMode === "split" && !el("diff-split").childNodes.length) el("diff-split").replaceChildren(splitTable(content));
+  if (content && diffMode === "new") void showNewVersion(file?.path ?? null, file?.status ?? "");
   sel.hidden = !content;
   el("copy-diff").hidden = !content;
   for (const control of el("review-controls").querySelectorAll("button")) {
@@ -957,7 +1008,7 @@ el("browser-enabled").addEventListener("change", async () => {
 function renderFileList(): void {
   const query = ((el("file-search") as HTMLInputElement).value ?? "").trim().toLowerCase();
   const changed = changedPaths();
-  const all = [...new Set([...review.files.filter(f => f.status === "added").map(f => f.path), ...projectFiles])].sort();
+  const all = [...new Set([...review.files.filter(f => f.status === "added").map(f => f.path), ...projectFiles, ...projectImages])].sort();
   const matches = all.filter(path => !query || path.toLowerCase().includes(query));
   if (!query) {
     el("file-list").replaceChildren(...treeRows(all, changed));
@@ -979,11 +1030,12 @@ function renderFileList(): void {
   el("file-list").replaceChildren(...nodes);
 }
 async function showFile(path: string, version: string): Promise<void> {
+  if (projectImages.includes(path) && !changedPaths().has(path)) { showImage(path); return; }
   try {
     const query = `/api/files/content?path=${encodeURIComponent(path)}${version === "candidate" && selected ? `&task=${encodeURIComponent(selected)}` : ""}`;
     const data = await api<{ path: string; version: string; text: string }>(query);
     openFile = path; fileVersion = data.version; fileText = data.text;
-    openTabs = [...openTabs.filter(tab => tab !== path), path].slice(-8);
+    rememberTab(path);
     for (const folder of parentFolders(path)) expandedDirs.add(folder);
     el("file-name").textContent = path;
     const markdown = /\.(md|markdown)$/i.test(path);
@@ -1105,7 +1157,7 @@ async function applyChanges(): Promise<void> {
 // --- task lifecycle / polling ---------------------------------------------
 function resetConversation(): void {
   rendered = new Set(); pendingCalls = []; lastRole = ""; renderedDiff = ""; applyStep = "idle"; lastApplied = [];
-  confirmCards.clear(); confirmDecisions.clear(); taskRequest = null; stepGroup = null; showAllMessages = false;
+  confirmCards.clear(); confirmDecisions.clear(); secretCards.clear(); taskRequest = null; stepGroup = null; showAllMessages = false;
   el("goal-banner").hidden = true; el("context-meter").hidden = true; el("pause").hidden = true; el("side-answer").hidden = true;
   el("message-stream").replaceChildren();
   el("review-controls").replaceChildren();
@@ -1140,6 +1192,7 @@ function syncSend(): void {
 }
 function selectTask(id: string): void {
   composerSize.reset();
+  pendingFolder = null;
   stopStream();
   viewEpoch++;
   selected = id; watching = true; selectedState = "";
@@ -1175,6 +1228,7 @@ function setState(state: string): void {
   const pill = el("task-state");
   pill.textContent = state;
   pill.className = state ? `state-pill state-${state}` : "state-pill";
+  el("state-button").hidden = !state;
 }
 
 let messageTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1239,6 +1293,8 @@ async function project(): Promise<void> {
   projectName = data.name;
   projectFiles = data.files.map(file => file.path);
   projectFileSet = new Set(projectFiles);
+  projectImages = Array.isArray((data as Project & { images?: unknown }).images) ? ((data as Project & { images: unknown[] }).images).filter((p): p is string => typeof p === "string") : [];
+  if (!tabsRestored) { tabsRestored = true; restoreTabs(); }
   const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
   const summary = `${plural(data.files.length, "file")} · ${plural(data.python_tests.length, "test")}`;
   el("project-name").textContent = data.name;
@@ -1298,7 +1354,7 @@ function renderHistory(): void {
   const query = ((el("task-search") as HTMLInputElement).value ?? "").trim();
   const view = organiseTasks(lastTasks, {
     query, tag: activeTag, sort: (select("task-sort").value || "recent") as TaskSort, sinceDays: Number(select("task-since").value) || 0,
-    showArchived, selected, now: Date.now() / 1000,
+    showArchived, selected, now: Date.now() / 1000, scope: (select("task-scope").value || "all") as TaskScope,
   });
   if (activeTag && !view.tags.includes(activeTag)) activeTag = "";
   folderOptions = view.folderNames;
@@ -1316,7 +1372,13 @@ function renderHistory(): void {
       storageSet("dikdik.folders.collapsed", JSON.stringify([...next]));
       renderHistory();
     };
-    nodes.push(head);
+    const add = make("button", "ghost icon folder-new"); add.type = "button";
+    add.setAttribute("aria-label", `New task in ${folder.name}`); add.title = `New task in ${folder.name}`;
+    add.append(icon("plus"));
+    add.onclick = () => { newTask(); pendingFolder = folder.name; message(`Your next task goes in “${folder.name}”.`); };
+    const row = make("div", "folder-row");
+    row.append(head, add);
+    nodes.push(row);
     if (!shut) nodes.push(...folder.tasks.map(taskRow));
   }
   const rest = view.recent.slice(0, listLimit);
@@ -1563,7 +1625,7 @@ async function observe(force = false): Promise<void> {
     const known = lastTasks.find(item => item.id === id);
     if (isTerminal(task.state) || (known && known.state !== task.state)) await loadHistory();
     if (id !== selected || epoch !== viewEpoch) return;
-    if (isTerminal(task.state)) watching = false;
+    if (isTerminal(task.state)) { watching = false; maybeTitle(id, task.state); }
     else startStream(id);
   } catch (error) {
     if (error instanceof Error) message(error.message, true);
@@ -1642,7 +1704,7 @@ el("connect-form").addEventListener("submit", async event => {
 // --- layout: sidebar, canvas, settings ------------------------------------
 function setSidebarCollapsed(collapsed: boolean): void {
   setClass(el("workspace"), "sidebar-collapsed", collapsed);
-  el("show-sidebar").hidden = !collapsed;
+  el("show-sidebar").hidden = true;  // the rail has its own Show sidebar button
   storageSet("dikdik.sidebar", collapsed ? "collapsed" : "open");
 }
 function closeSidebarDrawer(): void { setClass(el("workspace"), "sidebar-open", false); }
@@ -1903,14 +1965,15 @@ function showPane(name: string): void {
   if (name === "agents") { void loadAgents().catch(() => undefined); void loadAgentModels().catch(() => undefined); }
   void refreshPanels[name]?.();
 }
-function openSettings(pane: string): void {
+function openSettings(pane: string, hub = false): void {
   const dialog = el("settings") as HTMLDialogElement;
+  settingsHub(hub && wide("(max-width: 760px)"));
   if (typeof dialog.showModal === "function" && !dialog.open) dialog.showModal();
   showPane(pane);
   closeSidebarDrawer();
   void loadAppSettings().catch(() => undefined);
 }
-el("open-settings").addEventListener("click", () => openSettings("general"));
+el("open-settings").addEventListener("click", () => openSettings("general", true));
 el("model-pill").addEventListener("click", event => { event.stopPropagation(); void openModelMenu(); });
 // Profiles or keys may have changed while settings were open.
 el("settings").addEventListener("close", () => { settingsHash(null); });
@@ -1929,7 +1992,7 @@ el("skill-form").addEventListener("submit", async event => {
 });
 el("close-settings").addEventListener("click", () => (el("settings") as HTMLDialogElement).close());
 if (typeof el("settings").querySelectorAll === "function") {
-  for (const tab of el("settings").querySelectorAll<HTMLElement>(".settings-tab")) tab.addEventListener("click", () => showPane(tab.dataset.pane ?? "general"));
+  for (const tab of el("settings").querySelectorAll<HTMLElement>(".settings-tab")) tab.addEventListener("click", () => { settingsHub(false); showPane(tab.dataset.pane ?? "general"); });
 }
 
 if (typeof document.addEventListener === "function") {
@@ -2198,6 +2261,7 @@ el("task-form").addEventListener("submit", async event => {
     }
     const task = await api<TaskSummary>("/api/tasks", composerRequest(text, goalTurns));
     clearAttachments();
+    if (pendingFolder) { const folder = pendingFolder; pendingFolder = null; await patchTask(task.id, { folder }).catch(() => undefined); }
     await composerDrafts.sent(originalScope, originalText);
     selectTask(task.id);
     await loadHistory(); await observe();
@@ -2483,6 +2547,19 @@ async function loadAppSettings(): Promise<void> {
   input("sounds").checked = settings.sounds === true;
   input("git-name").value = settings.git_name ?? "";
   input("git-email").value = settings.git_email ?? "";
+  syncGitSave();
+  const picker = select("title-model");
+  const profiles = await api<{ id: string; name: string; model: string }[]>("/api/profiles").catch(() => []);
+  picker.replaceChildren(...[["auto", "The conversation’s model"], ["off", "Off — use my first message"], ...profiles.map(p => [p.id, `${p.name} (${p.model})`])].map(([value, label]) => {
+    const option = make("option", "", label); option.value = value ?? ""; return option;
+  }));
+  picker.value = settings.title_model ?? "auto";
+  if (picker.value !== (settings.title_model ?? "auto")) picker.value = "auto";  // its profile was deleted
+}
+/** Save is enabled only while the fields differ from what is stored. */
+function syncGitSave(): void {
+  const changed = input("git-name").value.trim() !== (appSettings?.git_name ?? "") || input("git-email").value.trim() !== (appSettings?.git_email ?? "");
+  button("git-save").disabled = !changed;
 }
 async function saveAppSetting(change: Record<string, unknown>): Promise<void> {
   try { appSettings = await request<NonNullable<typeof appSettings>>("/api/settings/app", "PATCH", change); message("Saved."); }
@@ -2516,9 +2593,16 @@ function treeRows(paths: string[], changed: Set<string>): HTMLElement[] {
 function renderFileTabs(): void {
   const strip = el("file-tabs");
   strip.hidden = !openTabs.length;
-  strip.replaceChildren(...openTabs.map(path => {
-    const tab = make("span", "file-tab");
+  const ordered = [...openTabs.filter(tab => pinnedTabs.has(tab)), ...openTabs.filter(tab => !pinnedTabs.has(tab))];
+  strip.replaceChildren(...ordered.map(path => {
+    const tab = make("span", pinnedTabs.has(path) ? "file-tab pinned" : "file-tab");
     tab.setAttribute("aria-selected", String(path === openFile));
+    const pin = make("button", "ghost icon file-tab-pin"); pin.type = "button";
+    pin.setAttribute("aria-label", pinnedTabs.has(path) ? `Unpin ${path}` : `Pin ${path}`);
+    pin.setAttribute("aria-pressed", String(pinnedTabs.has(path)));
+    pin.title = pinnedTabs.has(path) ? "Unpin" : "Pin (kept open)";
+    pin.append(icon("pin"));
+    pin.onclick = () => { if (pinnedTabs.has(path)) pinnedTabs.delete(path); else pinnedTabs.add(path); saveTabs(); renderFileTabs(); };
     const open = make("button", "file-tab-name", path.split("/").pop() ?? path); open.type = "button"; open.title = path;
     open.setAttribute("role", "tab");
     open.onclick = () => { void showFile(path, changedPaths().has(path) && selected ? "candidate" : "workspace"); };
@@ -2526,6 +2610,8 @@ function renderFileTabs(): void {
     close.setAttribute("aria-label", `Close ${path}`); close.append(icon("x"));
     close.onclick = () => {
       openTabs = openTabs.filter(item => item !== path);
+      pinnedTabs.delete(path);
+      saveTabs();
       if (path === openFile) {
         const next = openTabs[openTabs.length - 1];
         if (next) void showFile(next, changedPaths().has(next) && selected ? "candidate" : "workspace");
@@ -2533,7 +2619,7 @@ function renderFileTabs(): void {
       }
       renderFileTabs();
     };
-    tab.append(open, close);
+    tab.append(pin, open, close);
     return tab;
   }));
 }
@@ -2804,8 +2890,29 @@ function routeSettings(): void {
 }
 el("git-identity").addEventListener("submit", event => {
   event.preventDefault();
-  void saveAppSetting({ git_name: input("git-name").value.trim(), git_email: input("git-email").value.trim() });
+  button("git-save").disabled = true;
+  button("git-save").textContent = "Saving…";
+  void saveAppSetting({ git_name: input("git-name").value.trim(), git_email: input("git-email").value.trim() })
+    .finally(() => { button("git-save").textContent = "Save"; syncGitSave(); });
 });
+input("git-name").addEventListener("input", syncGitSave);
+input("git-email").addEventListener("input", syncGitSave);
+select("title-model").addEventListener("change", () => { void saveAppSetting({ title_model: select("title-model").value }); });
+/** After the first finished turn of an untitled conversation, ask the server for a short title once. */
+function maybeTitle(task: string, state: string): void {
+  if (state !== "completed" || titled.has(task)) return;
+  const info = lastTasks.find(item => item.id === task);
+  if (!info || info.title) return;
+  titled.add(task);
+  void api<{ title: string }>(`/api/tasks/${encodeURIComponent(task)}/title`, {}).then(async reply => {
+    if (!reply.title) return;
+    await loadHistory();
+    if (task === selected) { el("chat-title").textContent = reply.title; setTitle(reply.title); }
+  }).catch(() => undefined);
+}
+// Phone-width settings: a hub of sections first, then the section with a Back button.
+function settingsHub(on: boolean): void { setClass(el("settings"), "hub", on); }
+el("settings-back").addEventListener("click", () => settingsHub(true));
 input("sounds").addEventListener("change", () => { void saveAppSetting({ sounds: input("sounds").checked }); });
 function chime(): void {
   if (!appSettings?.sounds || (globalThis.document?.hasFocus?.() && !document.hidden)) return;
@@ -2919,6 +3026,152 @@ function approvalShortcut(event: KeyboardEvent): boolean {
   return true;
 }
 if (typeof document.addEventListener === "function") document.addEventListener("keydown", approvalShortcut, true);
+
+// --- changes view modes, workspace images, tabs that stay -----------------------------
+function splitTable(diff: string): HTMLElement {
+  const table = make("table", "split-table");
+  const body = make("tbody");
+  for (const row of splitDiff(diff)) {
+    const tr = make("tr");
+    if (row.kind !== "pair") {
+      const cell = make("td", `split-${row.kind}`, row.text); cell.colSpan = 4;
+      tr.append(cell);
+    } else {
+      for (const side of [row.left, row.right]) {
+        tr.append(make("td", "split-n", side ? String(side.n) : ""), make("td", side ? `split-code split-${side.kind}` : "split-code split-empty", side?.text ?? ""));
+      }
+    }
+    body.append(tr);
+  }
+  table.append(body);
+  return table;
+}
+async function showNewVersion(path: string | null, status: string): Promise<void> {
+  const box = el("diff-new");
+  const key = `${selected}:${path}:${renderedDiff.length}`;
+  if (diffNewKey === key) return;
+  diffNewKey = key;
+  if (!path) { box.replaceChildren(make("p", "canvas-empty", "Pick a file above to see its new version.")); return; }
+  if (status === "deleted") { box.replaceChildren(make("p", "canvas-empty", "This file was deleted. Its previous contents are in the Diff view.")); return; }
+  try {
+    const data = await api<{ text: string }>(`/api/files/content?path=${encodeURIComponent(path)}${selected ? `&task=${encodeURIComponent(selected)}` : ""}`);
+    if (diffNewKey !== key) return;
+    box.replaceChildren(/\.(md|markdown)$/i.test(path) ? richText(data.text) : codeBlock(data.text, languageFor(path)));
+  } catch (error) { box.replaceChildren(make("p", "canvas-empty", error instanceof Error ? error.message : "Could not load the new version")); }
+}
+if (typeof document.querySelectorAll === "function") {
+  for (const node of el("diff-mode").querySelectorAll<HTMLElement>("button")) node.addEventListener("click", () => {
+    diffMode = node.dataset.mode ?? "diff";
+    storageSet("dikdik.diffMode", diffMode);
+    showReviewSelection();
+  });
+}
+diffMode = ["diff", "split", "new"].includes(storageGet("dikdik.diffMode") ?? "") ? storageGet("dikdik.diffMode")! : "diff";
+function showImage(path: string): void {
+  openFile = path; fileText = ""; filePreview = false;
+  rememberTab(path);
+  for (const folder of parentFolders(path)) expandedDirs.add(folder);
+  el("file-name").textContent = path;
+  el("file-preview").hidden = true; el("copy-file").hidden = true; el("file-version").hidden = true;
+  el("file-view").hidden = true;
+  const image = make("img", "file-image"); image.src = `/api/files/image?path=${encodeURIComponent(path)}`; image.alt = path;
+  el("file-rendered").replaceChildren(image);
+  el("file-rendered").hidden = false;
+  renderFileTabs(); renderFileList();
+}
+/** Open files survive reloads (per project); pinned ones are never pushed out by newer tabs. */
+function rememberTab(path: string): void {
+  openTabs = [...openTabs.filter(tab => tab !== path), path];
+  while (openTabs.filter(tab => !pinnedTabs.has(tab)).length > 8) {
+    const oldest = openTabs.find(tab => !pinnedTabs.has(tab));
+    openTabs = openTabs.filter(tab => tab !== oldest);
+  }
+  saveTabs();
+}
+function saveTabs(): void {
+  storageSet(`dikdik.tabs.${projectName}`, JSON.stringify({ tabs: openTabs, pinned: [...pinnedTabs] }));
+}
+function restoreTabs(): void {
+  try {
+    const saved = JSON.parse(storageGet(`dikdik.tabs.${projectName}`) ?? "{}") as { tabs?: unknown; pinned?: unknown };
+    const known = new Set([...projectFiles, ...projectImages]);
+    openTabs = Array.isArray(saved.tabs) ? saved.tabs.filter((tab): tab is string => typeof tab === "string" && known.has(tab)) : [];
+    pinnedTabs = new Set(Array.isArray(saved.pinned) ? saved.pinned.filter((tab): tab is string => typeof tab === "string" && openTabs.includes(tab)) : []);
+  } catch { openTabs = []; pinnedTabs = new Set(); }
+  renderFileTabs();
+}
+const treeGrip = el("tree-resize");
+let treeDrag: { pointer: number; y: number; height: number } | null = null;
+function setTreeHeight(height: number | null): void {
+  const list = el("file-list");
+  if (height === null) { list.style?.removeProperty?.("max-height"); list.style?.removeProperty?.("height"); storageSet("dikdik.tree.height", ""); return; }
+  const clamped = Math.round(Math.max(80, Math.min(height, (globalThis.innerHeight || 900) * 0.7)));
+  list.style?.setProperty?.("max-height", "none");
+  list.style?.setProperty?.("height", `${clamped}px`);
+  storageSet("dikdik.tree.height", String(clamped));
+}
+{
+  const saved = Number(storageGet("dikdik.tree.height"));
+  if (saved > 0) setTreeHeight(saved);
+}
+treeGrip.addEventListener("pointerdown", (event: PointerEvent) => {
+  treeDrag = { pointer: event.pointerId, y: event.clientY, height: el("file-list").getBoundingClientRect?.().height ?? 200 };
+  treeGrip.setPointerCapture?.(event.pointerId); event.preventDefault();
+});
+treeGrip.addEventListener("pointermove", (event: PointerEvent) => { if (treeDrag?.pointer === event.pointerId) setTreeHeight(treeDrag.height + event.clientY - treeDrag.y); });
+for (const name of ["pointerup", "pointercancel", "lostpointercapture"]) treeGrip.addEventListener(name, () => { treeDrag = null; });
+treeGrip.addEventListener("keydown", (event: KeyboardEvent) => {
+  const height = el("file-list").getBoundingClientRect?.().height ?? 200;
+  if (event.key === "ArrowDown") setTreeHeight(height + 24);
+  else if (event.key === "ArrowUp") setTreeHeight(height - 24);
+  else if (event.key === "Home") setTreeHeight(null);
+  else return;
+  event.preventDefault();
+});
+
+// --- collapsed rail, status filter and the status menu ----------------------------------
+el("rail-expand").addEventListener("click", () => setSidebarCollapsed(false));
+el("rail-new").addEventListener("click", newTask);
+el("rail-palette").addEventListener("click", togglePalette);
+el("rail-settings").addEventListener("click", () => openSettings("general", true));
+select("task-scope").addEventListener("change", () => { storageSet("dikdik.list.scope", select("task-scope").value); renderHistory(); });
+select("task-scope").value = storageGet("dikdik.list.scope") || "all";
+const STATE_TEXT: Record<string, string> = {
+  queued: "Waiting to start.", running: "Working now.", completed: "Finished. Review the result or send a follow-up.",
+  paused: "Stopped. Resume continues from the exact step.", failed: "Failed. Resume or send a follow-up to try again.",
+  blocked: "Blocked by a check or a missing approval.", cancelled: "Cancelled.", interrupted: "Interrupted by a restart.",
+};
+function closeStateMenu(): void { el("state-menu").hidden = true; }
+function openStateMenu(): void {
+  const menu = el("state-menu");
+  if (!menu.hidden || !selected || !selectedState) { closeStateMenu(); return; }
+  const item = (label: string, iconName: string, run: () => void) => {
+    const node = make("button"); node.type = "button"; node.setAttribute("role", "menuitem");
+    node.append(icon(iconName), make("span", "", label));
+    node.onclick = () => { closeStateMenu(); run(); };
+    return node;
+  };
+  const items: HTMLElement[] = [make("p", "menu-note", STATE_TEXT[selectedState] ?? selectedState)];
+  if (!isTerminal(selectedState)) {
+    if (!el("pause").hidden) items.push(item("Pause after this step", "pause", () => button("pause").click()));
+    items.push(item("Stop the current action", "stop", () => { const task = selected; if (task) void api(`/api/tasks/${encodeURIComponent(task)}/interrupt`, {}).then(() => observe()).catch(error => message(String(error), true)); }));
+  } else if (taskRequest?.mode === "agent" && isResumable(selectedState)) {
+    items.push(item("Resume", "play", () => { void resumeTask(); }));
+  }
+  items.push(item("Display usage", "chart", () => openCanvas("usage")));
+  if (isTerminal(selectedState)) items.push(item("Fork this conversation", "branch", () => { if (selected) void forkTask(selected).catch(error => message(String(error), true)); }));
+  menu.replaceChildren(...items);
+  const box = el("state-button").getBoundingClientRect();
+  menu.hidden = false;
+  menu.style.left = `${Math.max(8, Math.min(box.left, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${box.bottom + 4}px`;
+  menu.querySelector<HTMLButtonElement>("button")?.focus();
+}
+el("state-button").addEventListener("click", event => { event.stopPropagation(); openStateMenu(); });
+if (typeof document.addEventListener === "function") {
+  document.addEventListener("click", event => { if (!el("state-menu").hidden && event.target instanceof Node && !el("state-menu").contains(event.target)) closeStateMenu(); });
+  document.addEventListener("keydown", (event: KeyboardEvent) => { if (event.key === "Escape" && !el("state-menu").hidden) closeStateMenu(); });
+}
 
 let stopArmed: ReturnType<typeof setTimeout> | undefined;
 button("cancel").onclick = async () => {

@@ -17,6 +17,41 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 RESPONSE_LIMIT = 256000
 
 
+class ProviderError(ValueError):
+    """A model request that failed, with a plain reason. Never carries the key or the provider's body."""
+
+    def __init__(self, kind: str, message: str):
+        super().__init__(message)
+        self.kind = kind
+
+
+def provider_failure(exc: BaseException) -> ProviderError:
+    if isinstance(exc, urllib.error.HTTPError):
+        code = exc.code
+        if code in {401, 403}:
+            return ProviderError("authentication", f"The provider rejected the API key (HTTP {code}). Check the key in Settings → API keys or the connection")
+        if code == 404:
+            return ProviderError("not_found", "The provider does not know this model or endpoint (HTTP 404). Check the model name and endpoint")
+        if code == 429:
+            try:
+                detail = json.loads(exc.read(4096) or b"{}").get("error", {})
+            except (ValueError, OSError, AttributeError):
+                detail = {}
+            if isinstance(detail, dict) and "insufficient_quota" in (detail.get("type"), detail.get("code")):
+                return ProviderError("quota", "The provider account is out of credit (HTTP 429, insufficient quota)")
+            return ProviderError("rate_limit", "The provider is rate-limiting requests (HTTP 429). Try again shortly")
+        if code in {400, 422}:
+            return ProviderError("bad_request", f"The provider refused the request (HTTP {code}). Check the model name and its settings")
+        return ProviderError("provider", f"The provider had an error (HTTP {code}). Try again later")
+    if isinstance(exc, TimeoutError) or "timed out" in str(exc).lower():
+        return ProviderError("timeout", "The provider did not answer in time")
+    if isinstance(exc, ValueError) and "redirect" in str(exc).lower():
+        return ProviderError("redirect", "The provider tried to redirect the request; redirects are not followed")
+    if isinstance(exc, ValueError):  # e.g. a malformed header; its text may contain the key, so it is not repeated
+        return ProviderError("invalid", "The request could not be sent. Check the endpoint and the API key's format")
+    return ProviderError("unreachable", "Could not reach the model provider. Check the endpoint and your connection")
+
+
 def _assemble(lines, on_text) -> dict:
     """Rebuild one chat-completions response from its streamed chunks."""
     content, reasoning, calls, finish, usage, size = "", "", {}, None, None, 0
@@ -95,16 +130,16 @@ def chat_completion(messages: list[dict], tools: list[dict] | None = None, max_t
                 return _parse(raw)
         except urllib.error.HTTPError as exc:
             if exc.code not in {400, 404, 415, 422}:
-                raise ValueError("Model request failed; check server configuration and provider availability") from None
+                raise provider_failure(exc) from None
             # Some compatible servers reject streaming options; fall through to a plain request.
-        except (urllib.error.URLError, TimeoutError, OSError):
-            raise ValueError("Model request failed; check server configuration and provider availability") from None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise provider_failure(exc) from None
     try:
         req = urllib.request.Request(config.url, data=json.dumps(body).encode(), headers=headers, method="POST")
         with urllib.request.build_opener(NoRedirect).open(req, timeout=config.timeout) as response:
             raw = response.read(RESPONSE_LIMIT + 1)
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        raise ValueError("Model request failed; check server configuration and provider availability") from None
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise provider_failure(exc) from None
     return _parse(raw)
 
 

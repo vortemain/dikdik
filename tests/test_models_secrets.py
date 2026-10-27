@@ -147,6 +147,56 @@ class RoutingTests(Base):
         self.assertIsNone(self.engine._model_for(task, {"objective": "x", "mode": "agent"}, None))
 
 
+class ClassifierAndBulkTests(Base):
+    def profile(self, name):
+        return self.ok("POST", "/api/profiles", {"name": name, "provider": "openai", "model": name.lower()})["id"]
+
+    def test_classifier_router_picks_from_its_table(self):
+        from dikdik.routing import parse_label
+        judge, small, big = self.profile("Judge"), self.profile("Small"), self.profile("Big")
+        self.assertEqual(self.call("POST", "/api/routers", {"name": "C", "strategy": "classifier", "strong_profile_id": judge,
+                                                           "prompt_template": "no slot", "model_table": {"easy": small, "hard": big}})[0], 400)
+        self.assertEqual(self.call("POST", "/api/routers", {"name": "C", "strategy": "classifier", "strong_profile_id": judge, "model_table": {"only": small}})[0], 400)
+        self.assertEqual(self.call("POST", "/api/routers", {"name": "C", "strategy": "classifier", "strong_profile_id": judge, "model_table": {"Bad Label": small, "x": big}})[0], 400)
+        router = self.ok("POST", "/api/routers", {"name": "C", "strategy": "classifier", "strong_profile_id": judge, "model_table": {"easy": small, "hard": big}})["id"]
+        listed = self.ok("GET", "/api/routers")["routers"][0]
+        self.assertEqual((listed["model_table"], listed["table_names"]["hard"], listed["fast_profile_id"]), ({"easy": small, "hard": big}, "Big", small))
+        self.assertIn("{{ instance_text }}", listed["prompt_template"])
+        self.assertEqual(parse_label('{"label": "HARD"}', {"easy", "hard"}), "hard")
+        self.assertEqual(parse_label("I think: easy.", {"easy", "hard"}), "easy")
+        self.assertIsNone(parse_label("medium", {"easy", "hard"}))
+        self.engine.update_app_settings({"router": router})
+        task = self.engine.store.create({"objective": "Refactor the parser", **AGENT})
+        prompts = []
+        with patch("dikdik.engine.complete", side_effect=lambda config, messages, limit: prompts.append(messages[0]["content"]) or "hard"), \
+                patch.object(self.engine.models, "resolve", return_value=object()):
+            self.assertEqual(self.engine._model_for(task, {"objective": "Refactor the parser", **AGENT}, None), big)
+            self.assertIn("Refactor the parser", prompts[0])
+            self.assertIn("easy, hard", prompts[0])
+        with patch("dikdik.engine.complete", return_value="no idea"), patch.object(self.engine.models, "resolve", return_value=object()):
+            self.assertEqual(self.engine._model_for(task, {"objective": "x", **AGENT}, None), small)
+        with patch("dikdik.engine.complete") as call:  # no sharing approval: the message is not sent to the classifier
+            self.assertEqual(self.engine._model_for(task, {"objective": "x", "mode": "agent"}, None), small)
+        call.assert_not_called()
+        reasons = [e["data"]["reason"] for e in self.engine.store.get(task)["events"] if e["kind"] == "model_routed"]
+        self.assertEqual(reasons[0], "classifier chose “hard”")
+        self.assertIn("not a label", reasons[1])
+
+    def test_bulk_add_and_limits(self):
+        from dikdik import connections, profiles
+        conn = self.ok("POST", "/api/connections", {"name": "Lab", "provider": "openai", "api_key": "sk-x"})["id"]
+        added = self.ok("POST", f"/api/connections/{conn}/add-models", {"models": ["gpt-5", "gpt-5-mini", "gpt-5"]})
+        self.assertEqual(added, {"created": ["Lab / gpt-5", "Lab / gpt-5-mini"], "skipped": []})
+        self.assertEqual(self.ok("POST", f"/api/connections/{conn}/add-models", {"models": ["gpt-5"]})["skipped"], ["Lab / gpt-5"])
+        self.assertEqual(self.ok("GET", "/api/connections")[0]["models"], 2)
+        self.assertEqual(self.call("POST", f"/api/connections/{conn}/add-models", {"models": []})[0], 400)
+        with patch.object(profiles, "MAX_PROFILES", 2):
+            code, data = self.call("POST", "/api/profiles", {"name": "Third", "provider": "openai", "model": "m"})
+        self.assertEqual((code, data["error"]), (409, "Profile limit reached (2). Delete one before adding another"))
+        with patch.object(connections, "MAX_CONNECTIONS", 1):
+            self.assertEqual(self.call("POST", "/api/connections", {"name": "Two", "provider": "openai", "api_key": "k"})[0], 409)
+
+
 class SecretTests(Base):
     def test_rotation_undo_rename_and_env(self):
         self.ok("POST", "/api/secrets", {"ref": "gh", "plaintext": "first-value"})
@@ -195,6 +245,67 @@ class SecretTests(Base):
         names = [e["data"]["names"] for e in self.engine.store.get(task)["events"] if e["kind"] == "sandbox_secrets"]
         self.assertEqual(names, [["GH"]])
         self.assertNotIn("value-123", json.dumps(self.engine.store.get(task)["events"]))
+
+
+class SecretRequestTests(Base):
+    def test_agent_asks_and_the_value_never_reaches_the_model_or_events(self):
+        from dikdik.agent import ToolCall
+        secret = "ghp-TYPED-BY-USER-123"
+        seen_env, model_inputs = {}, []
+
+        class Model:
+            def __init__(self, *args, **kwargs):
+                self.replies = [ModelResponse("", [ToolCall("s1", "request_secret", {"name": "GH_TOKEN", "reason": "To call the GitHub API"})]),
+                                ModelResponse("", [ToolCall("r1", "run_command", {"command": "echo $GH_TOKEN"})]),
+                                ModelResponse("Done.", [])]
+
+            def respond(self, messages, tools):
+                model_inputs.append(json.dumps(messages))
+                return self.replies.pop(0)
+
+        def shell(_workdir, _files, _command, cancel, **kwargs):
+            seen_env.update(kwargs.get("env") or {})
+            return {"status": "passed", "exit_code": 0, "output": "[redacted GH_TOKEN]\n", "changed": {}}
+
+        def answer():
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                asked = [e for e in self.engine.store.get(task)["events"] if e["kind"] == "secret_requested"]
+                if asked:
+                    self.engine.answer_secret(task, {"id": asked[0]["data"]["id"], "value": secret})
+                    return
+                time.sleep(0.05)
+
+        with patch.dict(os.environ, {"DIKDIK_MODEL_URL": "https://provider.example/v1/chat/completions", "DIKDIK_MODEL": "m", "DIKDIK_API_KEY": "k"}), \
+                patch("dikdik.engine.CompatibleAgentModel", Model), patch("dikdik.engine.run_shell", side_effect=shell):
+            task = self.engine.submit({"objective": "Use the API", "mode": "agent", "verification": "docker", "approve_external": True, "approve_execution": True})
+            helper = threading.Thread(target=answer)
+            helper.start()
+            data = self.idle(task)
+            helper.join()
+        self.assertEqual(data["state"], "completed")
+        self.assertEqual(seen_env, {"GH_TOKEN": secret})
+        self.assertEqual(self.engine.models.secrets.reveal("GH_TOKEN"), secret.encode())
+        answered = [e["data"] for e in data["events"] if e["kind"] == "secret_answered"]
+        self.assertEqual(answered[0]["provided"], True)
+        transcript = (self.engine.data / "transcripts" / f"{task}.json").read_text(encoding="utf-8")
+        for text in (json.dumps(data), transcript, *model_inputs):
+            self.assertNotIn(secret, text)
+        with self.assertRaises(KeyError):
+            self.engine.answer_secret(task, {"id": "nope", "value": "x"})
+
+    def test_requests_need_docker_approval_and_a_valid_name(self):
+        from dikdik.control import SecretRequests
+        requests = SecretRequests()
+        with self.assertRaises(ValueError):
+            requests.answer("t", "x", "   ")
+        stop = threading.Event()
+        stop.set()
+        self.assertIsNone(requests.wait("t", "x", stop))
+        with self.assertRaises(ValueError):
+            self.engine._ask_for_secret("t", {"name": "PATH", "reason": "x"}, {}, stop)
+        with self.assertRaises(ValueError):
+            self.engine._ask_for_secret("t", {"name": "GH", "reason": " "}, {}, stop)
 
 
 class BehaviourTests(Base):

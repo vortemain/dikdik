@@ -79,6 +79,7 @@
 
   <p id="message" role="status" aria-live="polite"></p>
   <div id="model-menu" class="menu" role="menu" aria-label="Model" hidden></div>
+  <div id="state-menu" class="menu" role="menu" aria-label="Status and actions" hidden></div>
   <div id="task-menu" class="menu" role="menu" aria-label="Task actions" hidden>
     <button type="button" role="menuitem" data-action="rename"><svg class="i"><use href="#i-pencil"/></svg><span>Rename</span></button>
     <button type="button" role="menuitem" data-action="organise"><svg class="i"><use href="#i-tag"/></svg><span>Folder and tags…</span></button>
@@ -106,6 +107,8 @@
         <select id="task-sort" class="mini-select"><option value="recent">Recent activity</option><option value="created">Newest first</option><option value="title">Title</option></select>
         <label class="sr-only" for="task-since">Show conversations from</label>
         <select id="task-since" class="mini-select"><option value="0">Any time</option><option value="7">Past week</option><option value="30">Past month</option></select>
+        <label class="sr-only" for="task-scope">Show conversations by status</label>
+        <select id="task-scope" class="mini-select"><option value="all">All</option><option value="running">Running</option><option value="attention">Needs you</option></select>
       </div>
       <div id="tag-chips" class="tag-chips" role="group" aria-label="Filter by tag" hidden></div>
       <p id="recent-head" class="list-head">Recent</p>
@@ -123,13 +126,20 @@
         <button id="open-settings" class="foot-button" type="button"><svg class="i"><use href="#i-gear"/></svg>Settings</button>
       </div>
     </aside>
+    <nav id="rail" class="rail" aria-label="Quick actions">
+      <button id="rail-expand" class="ghost icon" type="button" aria-label="Show sidebar" title="Show sidebar"><svg class="i"><use href="#i-sidebar"/></svg></button>
+      <button id="rail-new" class="ghost icon" type="button" aria-label="New task" title="New task (Ctrl ⇧ O)"><svg class="i"><use href="#i-plus"/></svg></button>
+      <button id="rail-palette" class="ghost icon" type="button" aria-label="Command menu" title="Command menu (Ctrl K)"><svg class="i"><use href="#i-command"/></svg></button>
+      <span class="rail-spacer"></span>
+      <button id="rail-settings" class="ghost icon" type="button" aria-label="Settings" title="Settings"><svg class="i"><use href="#i-gear"/></svg></button>
+    </nav>
     <div id="scrim" class="scrim"></div>
 
     <main id="main" class="main" aria-label="Conversation">
       <header class="topbar">
         <button id="show-sidebar" class="ghost icon" type="button" aria-label="Show sidebar" title="Show sidebar" hidden><svg class="i"><use href="#i-sidebar"/></svg></button>
         <button id="toggle-sidebar-mobile" class="ghost icon" type="button" aria-label="Open menu"><svg class="i"><use href="#i-menu"/></svg></button>
-        <div class="topbar-title"><h1 id="chat-title">New task</h1><span id="task-state" class="state-pill" role="status" aria-live="polite"></span></div>
+        <div class="topbar-title"><h1 id="chat-title">New task</h1><button id="state-button" class="state-button" type="button" aria-haspopup="menu" title="Status and actions"><span id="task-state" class="state-pill" role="status" aria-live="polite"></span></button></div>
         <div class="topbar-actions">
           <button id="task-actions" class="ghost icon" type="button" aria-label="Task actions" title="Task actions" hidden><svg class="i"><use href="#i-more"/></svg></button>
           <button id="pause" class="ghost small" type="button" hidden title="Pause after the current step; resume later from exactly here"><svg class="i"><use href="#i-pause"/></svg>Pause</button>
@@ -228,14 +238,23 @@
         <p id="review-note">Run a task to produce a real diff.</p>
         <div class="diff-view">
           <div class="code-block">
-            <div class="code-head"><h3 id="selected-file" hidden></h3><button id="copy-diff" class="copy" type="button"><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button></div>
+            <div class="code-head"><h3 id="selected-file" hidden></h3>
+              <div id="diff-mode" class="segmented" role="group" aria-label="View" hidden>
+                <button type="button" data-mode="diff" aria-pressed="true" title="Unified diff">Diff</button>
+                <button type="button" data-mode="split" aria-pressed="false" title="Old and new side by side">Split</button>
+                <button type="button" data-mode="new" aria-pressed="false" title="The new version (Markdown rendered)">New</button>
+              </div>
+              <button id="copy-diff" class="copy" type="button"><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button></div>
             <pre id="diff" tabindex="0" aria-labelledby="selected-file" hidden></pre>
+            <div id="diff-split" class="diff-split" hidden></div>
+            <div id="diff-new" class="diff-new" hidden></div>
           </div>
         </div>
       </div>
       <div class="canvas-body" data-pane="files" hidden>
         <label class="file-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Find a file</span><input id="file-search" type="search" placeholder="Find a file" autocomplete="off"></label>
         <div id="file-list" class="file-list file-tree" role="tree" aria-label="Workspace files"></div>
+        <div id="tree-resize" class="tree-resize" role="separator" aria-orientation="horizontal" aria-label="Resize the file tree; arrow keys resize, Home resets" tabindex="0" title="Drag to resize"></div>
         <div id="file-tabs" class="file-tabs" role="tablist" aria-label="Open files" hidden></div>
         <div class="diff-view">
           <div class="code-block">
@@ -293,14 +312,15 @@
       <button class="settings-tab" type="button" role="tab" data-pane="automations" aria-selected="false"><svg class="i"><use href="#i-clock"/></svg>Automations</button>
     </nav>
     <div class="settings-main">
-      <div class="settings-head"><h3 id="settings-pane-title">General</h3><button id="close-settings" class="ghost icon" type="button" aria-label="Close settings"><svg class="i"><use href="#i-x"/></svg></button></div>
+      <div class="settings-head"><button id="settings-back" class="ghost small settings-back" type="button" aria-label="Back to settings"><svg class="i"><use href="#i-chevron"/></svg>Settings</button><h3 id="settings-pane-title">General</h3><button id="close-settings" class="ghost icon" type="button" aria-label="Close settings"><svg class="i"><use href="#i-x"/></svg></button></div>
       <section class="settings-pane" data-pane="general" role="tabpanel">
         <div class="setting-row"><div><h4>Appearance</h4><p>Match your system, or pick light or dark.</p></div><select id="theme" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
         <div class="setting-row"><div><h4>Confirm actions</h4><p>Ask before the agent runs a tool. “Risky only” asks for commands that delete, install, use the network or rewrite history.</p></div><select id="confirmation-policy" aria-label="Confirm actions"><option value="never">Never ask</option><option value="risky">Risky only</option><option value="always">Every action</option></select></div>
         <div class="setting-row"><div><h4>Condense long conversations</h4><p>When a conversation outgrows the history budget, older turns are replaced with a summary written by your model.</p></div><label class="check"><input id="condenser" type="checkbox" checked>On</label></div>
         <div class="setting-row"><div><h4>Sound when a task finishes</h4><p>A short chime when a run ends while you are in another tab or window.</p></div><label class="check"><input id="sounds" type="checkbox">On</label></div>
         <div class="setting-row setting-stack"><div><h4>Git identity</h4><p>Name and email for commits made from the Git tab. Leave blank to use your Git configuration.</p></div>
-          <form id="git-identity" class="inline-form"><label class="sr-only" for="git-name">Git name</label><input id="git-name" maxlength="100" placeholder="Your Name"><label class="sr-only" for="git-email">Git email</label><input id="git-email" type="email" maxlength="254" placeholder="you@example.com"><button class="small" type="submit">Save</button></form></div>
+          <form id="git-identity" class="inline-form"><label class="sr-only" for="git-name">Git name</label><input id="git-name" maxlength="100" placeholder="Your Name"><label class="sr-only" for="git-email">Git email</label><input id="git-email" type="email" maxlength="254" placeholder="you@example.com"><button id="git-save" class="small" type="submit" disabled>Save</button></form></div>
+        <div class="setting-row"><div><h4>Conversation titles</h4><p>After the first finished turn, name the conversation with a short model-written title. Only conversations that already share content with a model are titled.</p></div><select id="title-model" aria-label="Title model"><option value="auto">The conversation’s model</option><option value="off">Off — use my first message</option></select></div>
         <div class="setting-row"><div><h4>Browser tools</h4><p>Enable public web captures. Each task or manual capture still needs your approval.</p><p id="browser-availability" class="hint"></p></div><label class="check"><input id="browser-enabled" type="checkbox">Enabled</label></div>
         <div class="setting-row"><div><h4>Workspace</h4><p>The only folder Dikdik may read. Candidates are written to the private data directory.</p></div></div>
         <dl class="kv"><dt>Project</dt><dd id="settings-project">—</dd><dt>Inventory</dt><dd id="settings-inventory">—</dd><dt>Indexer</dt><dd id="settings-indexer">—</dd><dt>Network</dt><dd>Loopback only (127.0.0.1)</dd><dt>Sign-in</dt><dd>Remembered in this browser for 30 days. Restart with <code>--rotate-token</code> to sign out everywhere.</dd></dl>

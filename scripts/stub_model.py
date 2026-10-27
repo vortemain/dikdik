@@ -13,12 +13,13 @@ endpoint http://127.0.0.1:8899/v1, model "stub-model", and an API key holding
 the same value as --key.
 
 Behaviour (keyed on words in the latest user message):
-- side-question / summary / goal-judge system prompts get canned answers
+- side-question / title / summary / goal-judge system prompts get canned answers
   (the judge says "not yet" once, then "achieved");
 - a request without tools (single proposal) returns one exact edit;
 - "EDIT": edit_file on calculator.py, then run_tests, then an answer;
 - "SLOW": slow read_file calls, so Pause/Stop can be clicked mid-run
   (alternating two files, which Dikdik's stuck detector stops after 6 calls);
+- "SECRET": asks for a DEMO_TOKEN secret with request_secret (needs Docker approval in the task);
 - "MARKDOWN": a reply with a table, an alert, a quote and a file path, plus
   provider "reasoning_content" (shown as a Thinking row);
 - an attached image: says it sees an image;
@@ -76,6 +77,8 @@ def make_handler(expected_key: str, log_path: str | None, delay: float):
             n = len(messages)
             if system.startswith("Answer the user's side question"):
                 data = reply("Side answer: calculator.py defines add(a, b).")
+            elif system.startswith("Write a short title"):
+                data = reply("Stand-in conversation title")
             elif system.startswith("Summarize this coding conversation"):
                 data = reply("Summary: the user asked about calculator.py; add returns a + b.")
             elif system.startswith("You judge whether a coding goal"):
@@ -90,6 +93,8 @@ def make_handler(expected_key: str, log_path: str | None, delay: float):
                 data = reply("I'll make the change.", [call("edit_file", {"path": "calculator.py", "before": "return a + b", "after": "return b + a"}, n)])
             elif "EDIT" in objective and "run_tests" not in done:
                 data = reply("Checking it.", [call("run_tests", {}, n)])
+            elif "SECRET" in objective and "request_secret" in tools and "request_secret" not in done:
+                data = reply("I need a token for this.", [call("request_secret", {"name": "DEMO_TOKEN", "reason": "To call the demo API"}, n)])
             elif "MARKDOWN" in objective:
                 data = reply(MARKDOWN, reasoning="The user wants a summary. I will list the files with their sizes.")
             elif has_image:

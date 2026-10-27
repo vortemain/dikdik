@@ -53,11 +53,14 @@ autonomous engineering platform.
 - **Find and organise.** Ctrl+K opens a command menu for every action, panel,
   settings page and conversation. File conversations in folders, tag them, sort
   and filter the sidebar, and download a conversation as a .zip. Files has a
-  tree, tabs and Markdown preview; paths in replies open the file.
+  tree (with image previews), pinned tabs that survive reloads and Markdown
+  preview; Changes shows a diff, a side-by-side split or the new version; paths
+  in replies open the file. Conversations get a short title after their first turn.
 - **Models and keys.** Provider connections share one key across profiles;
   profiles can be renamed, duplicated, tuned and tested with one click; a router
-  can send first messages to a strong model and follow-ups to a fast one; the
-  composer pill switches models. Keys can be rotated with undo, renamed, and
+  can send first messages to a strong model and follow-ups to a fast one, or let
+  a classifier model pick from your table; the composer pill switches models,
+  and Test explains failures in plain words (rejected key, out of credit…). Keys can be rotated with undo, renamed, and
   (only when a task allows it) exposed to sandbox commands, redacted from output.
 - **Tests for several stacks** in network-less Docker containers: Python
   `unittest`, `bun test`, `npm test` and `cargo test --offline`, picked from the
@@ -78,8 +81,7 @@ autonomous engineering platform.
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
 
-**Not yet:** classifier-based
-routing, plugins and extension apps,
+**Not yet:** plugins and extension apps,
 WebSocket and TypeScript clients, a desktop app, and any recorded run against a
 live model provider or Docker engine. See [the parity audit](docs/PARITY.md).
 

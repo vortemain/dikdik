@@ -89,7 +89,28 @@ def build_routes(engine_or_stores):
             return 200, connections.update(parts[2], body)
         if method == "DELETE" and len(parts) == 3:
             return 200, connections.delete(parts[2])
+        if method == "POST" and len(parts) == 4 and parts[3] == "add-models":
+            return 201, add_models(parts[2], body)
         return None
+
+    def add_models(connection_id: str, body) -> dict:
+        """One linked profile per chosen model, named "<connection> / <model>"; existing names are skipped."""
+        connection = connections.get(connection_id)
+        models = body.get("models")
+        if not isinstance(models, list) or not 1 <= len(models) <= 20 or not all(isinstance(m, str) and 1 <= len(m.strip()) <= 128 for m in models):
+            raise ValueError("Choose 1–20 models")
+        status, listed = profiles.list_profiles()
+        taken = {item["name"] for item in listed}
+        created, skipped = [], []
+        for model in dict.fromkeys(m.strip() for m in models):
+            name = f"{connection['name'][:40]} / {model}"[:64]
+            if name in taken:
+                skipped.append(name)
+                continue
+            profiles.create({"name": name, "provider": connection["provider"], "model": model, "connection_id": connection_id})
+            created.append(name)
+            taken.add(name)
+        return {"created": created, "skipped": skipped}
 
     def router_routes(method, parts, body, query):
         if method == "GET" and len(parts) == 2:

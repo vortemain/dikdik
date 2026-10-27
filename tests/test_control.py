@@ -384,7 +384,7 @@ class ControlTests(unittest.TestCase):
 
     # --- settings -------------------------------------------------------------------------------------
     def test_app_settings(self):
-        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": False, "router": ""})
+        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": False, "router": "", "title_model": "auto"})
         self.assertEqual(self.engine.update_app_settings({"confirmation": "risky"})["confirmation"], "risky")
         for bad in ({"confirmation": "sometimes"}, {"condenser": "yes"}, {"theme": "dark"}, {}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):

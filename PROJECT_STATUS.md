@@ -18,11 +18,11 @@ control (interrupt/exact resume, pause-at-boundary, per-action confirmation, hoo
 attachments, slash commands, side questions, condensing, judged goals, forks);
 an organised interface (command menu, folders and tags, file tree, onboarding);
 and model management (connections, routing, a model picker, sandbox secrets).
-The parity audit (docs/PARITY.md) moved from 89 to 333 fully matched OpenHands sub-features
+The parity audit (docs/PARITY.md) moved from 89 to 353 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **310 passed, 2 live-runtime tests skipped**; Bun
-**89 passed / 436 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-27): Python **318 passed, 2 live-runtime tests skipped**; Bun
+**93 passed / 447 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -63,6 +63,18 @@ Test status (2026-10-27): Python **310 passed, 2 live-runtime tests skipped**; B
 - Added an image lightbox, Ctrl/Cmd+Enter and Shift+Ctrl/Cmd+Backspace for
   pending approvals, and Branch on individual messages (a reply is kept, your own
   message is left out so it can be rewritten).
+- Closed interface gaps: workspace images in Files, Diff/Split/New views in
+  Changes (Markdown rendered), pinned tabs kept across reloads, a resizable file
+  tree, a collapsed sidebar rail, "+" on folders, a Running / Needs you filter, a
+  status menu on the state pill, automatic conversation titles with a chosen
+  model, a phone settings hub with Back, and a Git identity Save that is enabled
+  only when something changed.
+- Closed model gaps: classifier routers (a model of your choice labels each
+  message; your table maps labels to profiles), Add models… on a connection,
+  profile/connection/router limits, provider errors in plain words (rejected key,
+  unknown model, rate limit, out of credit, unreachable) without echoing keys,
+  and the agent's request for a secret: a card in the chat whose value is sealed,
+  given to this run's sandbox commands and never sent to the model.
 - Added the interface phase: Ctrl+K command menu, Get started card, a banner and
   blocked Send without a model, folders/tags/sort/age filter, grouped steps,
   Thinking rows, Markdown tables and alerts, clickable workspace paths, a file
@@ -83,8 +95,8 @@ Test status (2026-10-27): Python **310 passed, 2 live-runtime tests skipped**; B
 
 ## Test status
 
-- Python: **310 passed, 2 live-runtime tests skipped** (312 total).
-- Bun: **89 passed / 436 assertions**; strict TypeScript check and browser build passed.
+- Python: **318 passed, 2 live-runtime tests skipped** (320 total).
+- Bun: **93 passed / 447 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit

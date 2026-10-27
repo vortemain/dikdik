@@ -81,9 +81,27 @@ class TransportTests(unittest.TestCase):
     def test_server_errors_are_not_retried(self):
         with patch("urllib.request.build_opener") as opener:
             opener.return_value.open.side_effect = urllib.error.HTTPError("u", 500, "down", {}, io.BytesIO())
-            with self.assertRaisesRegex(ValueError, "Model request failed"):
+            with self.assertRaisesRegex(ValueError, r"provider had an error \(HTTP 500\)"):
                 chat_completion([], config=CONFIG, on_text=lambda text: None)
             self.assertEqual(opener.return_value.open.call_count, 1)
+
+
+class ProviderErrorTests(unittest.TestCase):
+    def test_failures_are_named_without_the_key_or_body(self):
+        from dikdik.providers import provider_failure
+        def http(code, body=b""):
+            return urllib.error.HTTPError("u", code, "x", {}, io.BytesIO(body))
+        cases = [(http(401), "authentication"), (http(403), "authentication"), (http(404), "not_found"),
+                 (http(429, b'{"error": {"type": "insufficient_quota"}}'), "quota"), (http(429, b"not json"), "rate_limit"),
+                 (http(422), "bad_request"), (http(503), "provider"), (TimeoutError(), "timeout"),
+                 (urllib.error.URLError("refused"), "unreachable"), (ValueError("Provider redirects are disabled"), "redirect")]
+        for error, kind in cases:
+            with self.subTest(kind=kind):
+                failure = provider_failure(error)
+                self.assertEqual(failure.kind, kind)
+                self.assertIsInstance(failure, ValueError)
+        self.assertNotIn("insufficient_quota\"", str(provider_failure(http(429, b'{"error": {"type": "insufficient_quota", "message": "sk-secret"}}'))))
+        self.assertNotIn("sk-secret", str(provider_failure(http(401, b"sk-secret"))))
 
 
 class StreamEndpointTests(unittest.TestCase):

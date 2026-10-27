@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { alertKind, fileTree, fuzzyScore, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, workspacePath } from "../../dikdik/web/organise";
+import { alertKind, fileTree, fuzzyScore, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, workspacePath } from "../../dikdik/web/organise";
 import type { TaskSummary } from "../../dikdik/web/contracts";
 
 const now = 1_000_000;
@@ -85,4 +85,30 @@ describe("markdown extras", () => {
     expect(workspacePath("src/other.py", files)).toBeNull();
     expect(workspacePath("rm -rf /", files)).toBeNull();
   });
+});
+
+describe("side-by-side diff", () => {
+  test("pairs removals with additions and keeps line numbers", () => {
+    const diff = ["diff --git a/x.py b/x.py", "--- a/x.py", "+++ b/x.py", "@@ -1,3 +1,4 @@", " a", "-b", "+B", "+B2", " c", "\\ No newline at end of file", ""].join("\n");
+    const rows = splitDiff(diff);
+    expect(rows.filter(r => r.kind === "meta")).toHaveLength(3);
+    const pairs = rows.filter(r => r.kind === "pair").map(r => r.kind === "pair" ? [r.left ? `${r.left.n}${r.left.kind[0]}:${r.left.text}` : "-", r.right ? `${r.right.n}${r.right.kind[0]}:${r.right.text}` : "-"] : []);
+    expect(pairs).toEqual([["1c:a", "1c:a"], ["2d:b", "2a:B"], ["-", "3a:B2"], ["3c:c", "4c:c"]]);
+  });
+  test("a new file has only right-hand lines", () => {
+    const rows = splitDiff("@@ -0,0 +1,2 @@\n+x\n+y\n");
+    expect(rows.filter(r => r.kind === "pair").every(r => r.kind === "pair" && r.left === null)).toBe(true);
+  });
+});
+
+test("status filter keeps running or needs-you conversations", () => {
+  const list = [
+    { id: "a", state: "running", objective: "a", updated: 3 }, { id: "b", state: "paused", objective: "b", updated: 2 },
+    { id: "c", state: "completed", objective: "c", updated: 1 }, { id: "d", state: "failed", objective: "d", updated: 0 },
+  ];
+  const base = { query: "", tag: "", sort: "recent" as const, sinceDays: 0, showArchived: false, selected: null, now: 10 };
+  expect(organiseTasks(list, { ...base, scope: "running" }).recent.map(t => t.id)).toEqual(["a"]);
+  expect(organiseTasks(list, { ...base, scope: "attention" }).recent.map(t => t.id)).toEqual(["b", "d"]);
+  expect(organiseTasks(list, { ...base, scope: "all" }).recent).toHaveLength(4);
+  expect(organiseTasks(list, { ...base, scope: "running", selected: "c" }).recent.map(t => t.id)).toEqual(["a", "c"]);
 });

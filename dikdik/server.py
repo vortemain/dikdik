@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .engine import ApplyConflict, Engine, TERMINAL
-from .control import IMAGE_TYPES
+from .control import IMAGE_TYPES, workspace_image, workspace_images
 from . import gitops
 from .repository import INDEXER, approved_root, inventory, metadata
 from .server_routes import ROUTE_PREFIXES, build_routes
@@ -197,7 +197,10 @@ def make_server(engine: Engine, port: int, token: str):
                 if bash is not None:
                     self.reply(*bash)
                 elif path == "/api/project":
-                    self.reply(200, {"name": engine.root.name, "indexer": INDEXER, **metadata(inventory(engine.root))})
+                    self.reply(200, {"name": engine.root.name, "indexer": INDEXER, **metadata(inventory(engine.root)), "images": workspace_images(engine.root)})
+                elif path == "/api/files/image":
+                    kind, raw = workspace_image(engine.root, parse_qs(urlsplit(self.path).query).get("path", [""])[0])
+                    self.reply(200, raw, kind)
                 elif path == "/api/tasks":
                     self.reply(200, engine.store.list())
                 elif path.startswith("/api/tasks/") and path.endswith("/stream") and path.count("/") == 4:
@@ -292,6 +295,10 @@ def make_server(engine: Engine, port: int, token: str):
                         self.reply(200, engine.condense(task, body.get("approve_external")))
                     elif action == "fork":
                         self.reply(201, engine.fork(task, body))
+                    elif action == "secret":
+                        self.reply(200, {"answered": engine.answer_secret(task, body)})
+                    elif action == "title":
+                        self.reply(200, engine.auto_title(task))
                     elif action in {"goal/stop", "goal/resume"}:
                         self.reply(200, engine.goal_control(task, action.split("/")[1]))
                     else:

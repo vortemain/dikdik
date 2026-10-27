@@ -810,3 +810,65 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
 .lightbox-head { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--line); }
 .lightbox-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--muted); }
 .lightbox-image { display: block; max-width: 100%; max-height: calc(100dvh - 120px); margin: 0 auto; object-fit: contain; background: var(--surface-2); }
+
+/* Changes view modes, file images, tab pins, tree resize. */
+.diff-split { overflow: auto; max-height: 100%; }
+.split-table { width: 100%; border-collapse: collapse; table-layout: fixed; font: 12.5px/1.55 var(--mono); }
+.split-table td { padding: 0 8px; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere; }
+.split-table .split-n { width: 44px; color: var(--faint); text-align: right; user-select: none; }
+.split-table .split-del { background: var(--diff-del); color: var(--diff-del-ink); }
+.split-table .split-add { background: var(--diff-add); color: var(--diff-add-ink); }
+.split-table .split-empty { background: var(--surface-2); }
+.split-table .split-hunk { background: var(--diff-hunk); color: var(--diff-hunk-ink); padding: 2px 8px; }
+.split-table .split-meta { color: var(--faint); padding: 2px 8px; }
+.diff-new { padding: 14px 18px; overflow: auto; }
+.diff-new > .prose { max-height: 600px; overflow: auto; }
+.code-head .segmented { margin-left: auto; }
+.code-head .segmented + .copy { margin-left: 8px; }
+.file-image { display: block; max-width: 100%; max-height: 70vh; margin: 0 auto; object-fit: contain; background: var(--surface-2); border-radius: 8px; }
+.file-tab-pin { width: 20px; height: 20px; opacity: .45; }
+.file-tab-pin .i { width: 12px; height: 12px; }
+.file-tab:hover .file-tab-pin, .file-tab.pinned .file-tab-pin { opacity: 1; }
+.file-tab.pinned .file-tab-pin { color: var(--accent); }
+.tree-resize { flex: 0 0 auto; height: 6px; margin-top: -3px; cursor: row-resize; position: relative; z-index: 2; }
+.tree-resize:hover, .tree-resize:focus-visible { background: color-mix(in srgb, var(--accent) 35%, transparent); outline: none; }
+
+/* Collapsed rail, folder "+", status menu. */
+.rail { display: none; }
+.app.sidebar-collapsed { grid-template-columns: 56px minmax(0, 1fr) auto; }
+.app.sidebar-collapsed .sidebar { display: none; }
+.app.sidebar-collapsed .rail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0; border-right: 1px solid var(--line); background: var(--sidebar); }
+.rail-spacer { flex: 1 1 auto; }
+.folder-row { display: flex; align-items: center; margin-top: 8px; }
+.folder-row .folder-head { margin-top: 0; flex: 1 1 auto; }
+.folder-new { width: 24px; height: 24px; opacity: 0; transition: opacity .15s; }
+.folder-new .i { width: 13px; height: 13px; }
+.folder-row:hover .folder-new, .folder-new:focus-visible { opacity: 1; }
+.state-button { padding: 0; border: 0; background: none; border-radius: 999px; cursor: pointer; }
+.state-button[hidden] { display: none; }
+.state-button:hover .state-pill { filter: brightness(.96); box-shadow: 0 0 0 1px var(--line-strong); }
+.menu-note { margin: 2px 6px 6px; padding: 4px 6px 8px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--muted); max-width: 260px; }
+@media (max-width: 760px) {
+  .app.sidebar-collapsed .rail { display: none; }
+  .folder-new { opacity: 1; }
+}
+
+/* Settings: Back button and the phone hub. */
+.settings-back { display: none; gap: 4px; margin-left: -8px; }
+.settings-back .i { transform: rotate(180deg); }
+@media (max-width: 760px) {
+  .settings[open] .settings-back { display: inline-flex; }
+  .settings-head h3 { flex: 1 1 auto; text-align: center; }
+  .settings.hub[open] { grid-template-rows: minmax(0, 1fr); }
+  .settings.hub .settings-main { display: none; }
+  .settings.hub .settings-nav { flex-direction: column; overflow: auto; border-bottom: 0; padding: 16px 10px; }
+  .settings.hub .settings-nav h2 { display: block; }
+  .settings.hub .settings-tab { padding: 12px 10px; font-size: 15px; }
+  .settings:not(.hub) .settings-nav { display: none; }
+  .settings:not(.hub)[open] { grid-template-rows: minmax(0, 1fr); }
+}
+
+/* Classifier router table. */
+.route-table { display: grid; gap: 6px; }
+.route-row { display: grid; grid-template-columns: minmax(80px, 140px) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.route-table + button { justify-self: start; }

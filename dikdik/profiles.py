@@ -15,6 +15,7 @@ FIXED_ENDPOINTS = {
     "https://mojave.cloud/v1",
 }
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
+MAX_PROFILES = 50
 
 # Additive, defensive hook for the agent-layer whitelist; profiles carry no
 # permission semantics, but a shared referral prevents accidental key reuse.
@@ -143,6 +144,8 @@ class ProfileStore:
             row = db.execute("SELECT 1 FROM profiles WHERE name=?", (fields["name"],)).fetchone()
             if row:
                 raise ApiError(400, "A profile with this name already exists")
+            if db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] >= MAX_PROFILES:
+                raise ApiError(409, f"Profile limit reached ({MAX_PROFILES}). Delete one before adding another")
             default = 0 if db.execute("SELECT 1 FROM profiles LIMIT 1").fetchone() else 1
             db.execute(
                 "INSERT INTO profiles(id,name,provider,model,endpoint,timeout_seconds,credential_secret_ref,is_default,created,connection_id,temperature,top_p,max_output_tokens) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -158,6 +161,8 @@ class ProfileStore:
             if row is None:
                 raise ApiError(404, "Profile not found")
             names = {r[0] for r in db.execute("SELECT name FROM profiles")}
+            if len(names) >= MAX_PROFILES:
+                raise ApiError(409, f"Profile limit reached ({MAX_PROFILES}). Delete one before adding another")
             base = row["name"][:58]
             name, n = f"{base}-copy", 0
             while name in names:

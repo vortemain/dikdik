@@ -4,10 +4,13 @@ import type { TaskSummary } from "./contracts";
 
 // --- conversation list --------------------------------------------------------
 export type TaskSort = "recent" | "created" | "title";
+/** all; running (queued or working); attention (stopped, failed or blocked: needs you). */
+export type TaskScope = "all" | "running" | "attention";
 export interface TaskView {
   query: string; tag: string; sort: TaskSort; sinceDays: number;
-  showArchived: boolean; selected: string | null; now: number;
+  showArchived: boolean; selected: string | null; now: number; scope?: TaskScope;
 }
+const RUNNING = new Set(["queued", "running"]), ATTENTION = new Set(["paused", "failed", "blocked", "interrupted"]);
 export interface OrganisedTasks {
   pinned: TaskSummary[];
   folders: { name: string; tasks: TaskSummary[] }[];
@@ -28,6 +31,8 @@ export function organiseTasks(tasks: readonly TaskSummary[], view: TaskView): Or
     if (task.id === view.selected) return true;
     if (!view.showArchived && task.archived) return false;
     if (view.tag && !(task.tags ?? []).includes(view.tag)) return false;
+    if (view.scope === "running" && !RUNNING.has(task.state)) return false;
+    if (view.scope === "attention" && !ATTENTION.has(task.state)) return false;
     if (query && !`${taskTitle(task)} ${task.folder ?? ""} ${(task.tags ?? []).join(" ")}`.toLowerCase().includes(query)) return false;
     if (cutoff && (task.updated ?? task.created ?? 0) < cutoff && !task.pinned) { older++; return false; }
     return true;
@@ -147,4 +152,36 @@ export function workspacePath(token: string, files: ReadonlySet<string>): { path
   const match = /^\.?\/?([\w.@\/-]+?)(?::(\d+)(?::\d+)?)?$/.exec(token.trim());
   if (!match || !files.has(match[1]!)) return null;
   return match[2] ? { path: match[1]!, line: Number(match[2]) } : { path: match[1]! };
+}
+
+// --- side-by-side diff ------------------------------------------------------------
+export interface SplitSide { n: number; text: string; kind: "del" | "add" | "ctx" }
+export type SplitRow = { kind: "hunk" | "meta"; text: string } | { kind: "pair"; left: SplitSide | null; right: SplitSide | null };
+/** A unified diff as side-by-side rows: removals pair with the additions that follow them. */
+export function splitDiff(diff: string): SplitRow[] {
+  const rows: SplitRow[] = [];
+  let oldLine = 0, newLine = 0;
+  let removed: SplitSide[] = [], added: SplitSide[] = [];
+  const flush = () => {
+    for (let i = 0; i < Math.max(removed.length, added.length); i++) rows.push({ kind: "pair", left: removed[i] ?? null, right: added[i] ?? null });
+    removed = []; added = [];
+  };
+  for (const line of diff.split("\n").map(text => text.replace(/\r$/, ""))) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) { flush(); oldLine = Number(hunk[1]); newLine = Number(hunk[2]); rows.push({ kind: "hunk", text: line }); continue; }
+    if (/^(diff --git|index |--- |\+\+\+ |new file mode|deleted file mode)/.test(line)) { flush(); rows.push({ kind: "meta", text: line }); continue; }
+    if (line.startsWith("-")) removed.push({ n: oldLine++, text: line.slice(1), kind: "del" });
+    else if (line.startsWith("+")) added.push({ n: newLine++, text: line.slice(1), kind: "add" });
+    else if (line.startsWith(" ") || (line === "" && oldLine)) {
+      flush();
+      const text = line.slice(1);
+      rows.push({ kind: "pair", left: { n: oldLine++, text, kind: "ctx" }, right: { n: newLine++, text, kind: "ctx" } });
+    } else if (line.startsWith("\\")) continue;  // "\ No newline at end of file"
+  }
+  flush();
+  while (rows.length && rows[rows.length - 1]!.kind === "pair") {
+    const last = rows[rows.length - 1] as Extract<SplitRow, { kind: "pair" }>;
+    if (last.left?.kind === "ctx" && last.left.text === "" && last.right?.text === "") rows.pop(); else break;
+  }
+  return rows;
 }

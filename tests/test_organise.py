@@ -86,3 +86,72 @@ class ThinkingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkspaceImageTests(unittest.TestCase):
+    def test_images_are_listed_and_served_safely(self):
+        import base64
+        from dikdik.control import workspace_image, workspace_images
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "docs").mkdir()
+            (root / "docs" / "logo.png").write_bytes(png)
+            (root / ".hidden").mkdir()
+            (root / ".hidden" / "x.png").write_bytes(png)
+            (root / "node_modules").mkdir()
+            (root / "node_modules" / "y.png").write_bytes(png)
+            (root / "fake.png").write_bytes(b"not an image")
+            (root / "big.png").write_bytes(png + b"0" * (3 * 1024 * 1024))
+            self.assertEqual(workspace_images(root), ["docs/logo.png", "fake.png"])
+            self.assertEqual(workspace_image(root, "docs/logo.png"), ("image/png", png))
+            with self.assertRaises(ValueError):
+                workspace_image(root, "fake.png")
+            for bad in ("../outside.png", "/etc/x.png", ".hidden/x.png", "big.png", "docs/missing.png", "docs/notes.txt", ""):
+                with self.subTest(bad=bad), self.assertRaises(KeyError):
+                    workspace_image(root, bad)
+
+
+class TitleTests(unittest.TestCase):
+    def setUp(self):
+        from unittest.mock import patch
+        self.patch = patch
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        base = Path(self.temp.name)
+        (base / "repo").mkdir()
+        self.engine = Engine(base / "repo", base / "data")
+        self.addCleanup(self.engine.close)
+        resolve = patch.object(self.engine.models, "resolve", return_value=object())
+        resolve.start()
+        self.addCleanup(resolve.stop)
+
+    def task(self, approve=True, state="completed"):
+        task = self.engine.store.create({"objective": "fix the adder please", "mode": "agent", "approve_external": approve})
+        self.engine.store.state(task, state, {})
+        return task
+
+    def test_titles_once_and_only_with_consent(self):
+        task = self.task()
+        with self.patch("dikdik.engine.complete", return_value='  "Fix the adder."\n') as call:
+            self.assertEqual(self.engine.auto_title(task), {"title": "Fix the adder"})
+            self.assertEqual(self.engine.auto_title(task), {"title": "Fix the adder"})
+        self.assertEqual(call.call_count, 1)
+        self.assertEqual(next(t for t in self.engine.store.list() if t["id"] == task)["title"], "Fix the adder")
+        for task in (self.task(approve=False), self.task(state="running")):
+            with self.patch("dikdik.engine.complete") as call:
+                self.assertEqual(self.engine.auto_title(task), {"title": ""})
+            call.assert_not_called()
+
+    def test_off_setting_and_failures_leave_the_title_alone(self):
+        self.engine.update_app_settings({"title_model": "off"})
+        with self.patch("dikdik.engine.complete") as call:
+            self.assertEqual(self.engine.auto_title(self.task()), {"title": ""})
+        call.assert_not_called()
+        self.engine.update_app_settings({"title_model": "auto"})
+        with self.patch("dikdik.engine.complete", side_effect=ValueError("provider down")):
+            self.assertEqual(self.engine.auto_title(self.task()), {"title": ""})
+        with self.assertRaises(ValueError):
+            self.engine.update_app_settings({"title_model": "missing-profile"})
+        with self.assertRaises(KeyError):
+            self.engine.auto_title("missing")

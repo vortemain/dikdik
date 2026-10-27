@@ -535,6 +535,10 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [{ ...base, role: "system", title: "Pausing after this step" }];
     case "forked":
       return [{ ...base, role: "system", title: "Forked from another conversation", details: { from_task: textOf(d.from_task, 64), from_seq: numOrUndef(d.from_seq) } }];
+    case "secret_requested":
+      return [{ ...base, role: "system", title: "The agent needs a secret", body: textOf(d.reason, 300), details: { id: textOf(d.id, 64), name: textOf(d.name, 64) } }];
+    case "secret_answered":
+      return [{ ...base, role: "system", title: d.provided === true ? `Secret ${textOf(d.name, 64)} provided` : `Secret ${textOf(d.name, 64)} not provided`, details: { id: textOf(d.id, 64), provided: d.provided === true } }];
     case "model_routed":
       return [{ ...base, role: "system", title: `Routed to ${textOf(d.profile, 64) || "a model"}`, body: textOf(d.reason, 200), details: { router: textOf(d.router, 64) } }];
     case "critic":

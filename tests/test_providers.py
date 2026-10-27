@@ -61,4 +61,4 @@ class ProviderTests(unittest.TestCase):
             with self.assertRaises(ValueError) as caught:
                 propose({"mode": "model", "approve_external": True, "objective": "x"}, {})
         self.assertNotIn("private-key", str(caught.exception))
-        self.assertIn("request failed", str(caught.exception))
+        self.assertIn("could not be sent", str(caught.exception))

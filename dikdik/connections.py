@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS connections (
 """
 
 
+MAX_CONNECTIONS = 64
+
+
 def secret_ref(connection_id: str) -> str:
     return f"conn.{connection_id}"
 
@@ -72,6 +75,8 @@ class ConnectionStore:
         with self.store.connect() as db:
             if db.execute("SELECT 1 FROM connections WHERE name=?", (name,)).fetchone():
                 raise ApiError(400, f"A connection called “{name}” already exists")
+            if db.execute("SELECT COUNT(*) FROM connections").fetchone()[0] >= MAX_CONNECTIONS:
+                raise ApiError(409, f"Provider connection limit reached ({MAX_CONNECTIONS}). Delete one before adding another")
         if key:
             self.secrets.set(secret_ref(connection_id), key)  # sealed first: no row ever points at a missing key
         with self.store.connect() as db:

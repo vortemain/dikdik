@@ -7,13 +7,14 @@ stored in the private data directory and only ever reach a model as data.
 
 import base64
 import json
+import os
 import re
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from .agent import ToolCall
+from .agent import ToolCall, _tool
 from .providers import chat_completion
 
 # --- risk -----------------------------------------------------------------------
@@ -25,7 +26,8 @@ HIGH = [
     (re.compile(r"\b(mkfs|dd)\b|>\s*/dev/"), "writes to devices"),
     (re.compile(r"\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f)\b"), "rewrites or publishes history"),
 ]
-READ_TOOLS = {"list_files", "read_file", "search_text", "read_plan", "task_tracker", "write_plan", "finish", "delegate"}
+READ_TOOLS = {"list_files", "read_file", "search_text", "read_plan", "task_tracker", "write_plan", "finish", "delegate",
+              "request_secret"}  # request_secret is itself a question to the user
 
 
 def assess(call: ToolCall) -> tuple[str, str]:
@@ -55,6 +57,47 @@ def needs_approval(policy: str, risk: str, tool: str | None = None) -> bool:
     if policy == "always":
         return tool not in READ_TOOLS if tool is not None else risk != "low"
     return policy == "risky" and risk == "high"
+
+
+REQUEST_SECRET = _tool(
+    "request_secret",
+    "Ask the user for a secret (a token or password) that a sandbox command needs. The value is never shown to you: "
+    "it becomes the environment variable `name` for your run_command calls. Use only when a command truly needs it.",
+    {"name": {"type": "string", "description": "Environment variable name, e.g. GITHUB_TOKEN"},
+     "reason": {"type": "string", "description": "One sentence the user sees: what the secret is for"}},
+    ["name", "reason"])
+
+
+class SecretRequests:
+    """Secrets the agent asked for, waiting for the user to type them (or decline). Values live here only until taken."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.pending: dict[tuple[str, str], dict] = {}
+
+    def wait(self, task: str, request_id: str, cancel, timeout: float = 1800) -> str | None:
+        slot = {"event": threading.Event(), "value": None}
+        with self.lock:
+            self.pending[(task, request_id)] = slot
+        try:
+            deadline = time.monotonic() + timeout
+            while not slot["event"].wait(0.2):
+                if cancel.is_set() or time.monotonic() > deadline:
+                    return None
+            return slot["value"]
+        finally:
+            with self.lock:
+                self.pending.pop((task, request_id), None)
+
+    def answer(self, task: str, request_id: str, value) -> None:
+        if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > 65536):
+            raise ValueError("Type the secret, or decline")
+        with self.lock:
+            slot = self.pending.get((task, request_id))
+        if slot is None:
+            raise KeyError(request_id)
+        slot["value"] = value
+        slot["event"].set()
 
 
 class Confirmations:
@@ -265,6 +308,58 @@ class Attachments:
             clipped = text[:TEXT_INLINE_LIMIT]
             texts.append(f"\n\nAttached file `{row['name']}` (untrusted data):\n```\n{clipped}\n```" + ("\n(truncated)" if len(text) > TEXT_INLINE_LIMIT else ""))
         return meta, images, "".join(texts)
+
+
+IMAGE_SUFFIXES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+SKIPPED_DIRS = {"node_modules", "target", "build", "dist", "__pycache__", "venv", ".venv"}
+
+
+def workspace_images(root: Path, limit: int = 500) -> list[str]:
+    """Image files in the workspace for the Files preview: no hidden or build folders, no symlinks, ≤3 MB."""
+    found: list[str] = []
+    base = root.resolve()
+
+    def walk(directory: Path, depth: int) -> None:
+        if depth > 20 or len(found) >= limit:
+            return
+        try:
+            entries = sorted(os.scandir(directory), key=lambda e: e.name)
+        except OSError:
+            return
+        for entry in entries:
+            if entry.name.startswith(".") or entry.is_symlink():
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                if entry.name not in SKIPPED_DIRS:
+                    walk(Path(entry.path), depth + 1)
+            elif Path(entry.name).suffix.lower() in IMAGE_SUFFIXES:
+                try:
+                    if entry.stat(follow_symlinks=False).st_size <= ATTACHMENT_LIMIT:
+                        found.append(Path(entry.path).resolve().relative_to(base).as_posix())
+                except (OSError, ValueError):
+                    continue
+            if len(found) >= limit:
+                return
+
+    walk(base, 0)
+    return found
+
+
+def workspace_image(root: Path, path) -> tuple[str, bytes]:
+    """(type, bytes) of one workspace image, only if it is what its name says."""
+    if not isinstance(path, str) or not path or path.startswith(("/", "\\")) or ".." in path.split("/"):
+        raise KeyError(path)
+    kind = IMAGE_SUFFIXES.get(Path(path).suffix.lower())
+    target = (root / path)
+    if kind is None or target.is_symlink() or any(part.startswith(".") for part in Path(path).parts):
+        raise KeyError(path)
+    resolved = target.resolve()
+    if root.resolve() not in resolved.parents or not resolved.is_file() or resolved.stat().st_size > ATTACHMENT_LIMIT:
+        raise KeyError(path)
+    raw = resolved.read_bytes()
+    if not _looks_like_image(raw, kind):
+        raise ValueError("That file is not the image type its name says")
+    return kind, raw
 
 
 def _looks_like_image(raw: bytes, kind: str) -> bool:

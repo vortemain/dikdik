@@ -269,18 +269,18 @@ approval shortcuts and Branch on individual messages. Still open:
 - Fork at an arbitrary event (srv `F10.fork-from-event`), compact from the Usage tab
   (`F27.usage-compact`), a provider balance card (`F27.usage-provider-balance`).
 
-**Interface (Phase B)**
-- Language switching (i18n with English as source; `<html lang>`), title generation with a chosen model (`F16.language`, `F16.title-model*`).
-- Settings phone hub with Back, save states and unsaved-change prompts (`F09.phone-*`, `F16.save-states`).
-- Conversation status menu (`F07.status-menu`), hover preview, collapsed rail, folder "+" to start a conversation in it, presets (`F04.*`).
-- Files: image preview, split diff, Markdown diff preview, pinned tabs, open tabs kept across reloads, tree resize (`F08.files-*`, `F08.diff-*`).
+**Interface (Phase B)** — done since this document was written: title generation,
+phone settings hub/Back, Git Save state, status menu, collapsed rail, folder "+",
+a status filter, image previews, split/new diff views, pinned and remembered tabs,
+tree resize. Still open:
+- Language switching (i18n with English as source; `<html lang>`) (`F16.language`).
+- Hover preview, presets and Compact view (`F04.*`); old-version diff view; HTML preview.
 - "Show N earlier messages" was never browser-checked (needs a conversation with >150 messages).
 
-**Models and secrets (Phase C)**
-- Classifier-based routers (a prompt template with `{{ instance_text }}` and a classifier model, model table) alongside the rule-based ones (`F12.*`, srv `F22.*`).
-- "Add models from a connection" in bulk (`F10.add-models`, `F11.add-models`).
-- The agent's `request_secret` tool showing a "The agent needs a secret" card (`F14.agent-request`).
-- Settings schema endpoints, profile limit (50) and connection limit (64), typed validation errors, phone layouts for these panes.
+**Models and secrets (Phase C)** — done since this document was written: classifier
+routers, bulk Add models…, limits, plain-words provider errors, the agent's
+`request_secret` card. Still open:
+- Settings schema endpoints and a router template chooser (`F12.template-chooser`).
 - Sandbox secrets have never reached a real container — add a live test guarded by `DIKDIK_RUN_DOCKER=1` (like `tests/test_sandbox.py`) and run it if the owner starts Docker.
 
 **Flaky test to investigate:** once during the final handoff check, a full

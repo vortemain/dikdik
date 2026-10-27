@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { optionalNumber, profileBody } from "../../dikdik/web/models-pane";
+import { optionalNumber, profileBody, routeTable } from "../../dikdik/web/models-pane";
+
+test("classifier tables need 2–8 unique, valid labels", () => {
+  expect(routeTable([{ label: " Easy ", profile: "a" }, { label: "hard", profile: "b" }, { label: "", profile: "" }])).toEqual({ easy: "a", hard: "b" });
+  expect(() => routeTable([{ label: "easy", profile: "a" }])).toThrow("2–8 rows");
+  expect(() => routeTable([{ label: "easy", profile: "a" }, { label: "EASY", profile: "b" }])).toThrow("used twice");
+  expect(() => routeTable([{ label: "two words", profile: "a" }, { label: "x", profile: "b" }])).toThrow("not a valid label");
+});
 import { buildTaskRequest, eventToMessages, type TaskEvent } from "../../dikdik/web/contracts";
 
 const fields = { name: " Fast ", provider: "openai", model: " gpt-5-mini ", endpoint: "", timeout: "", connection: "", keyRef: "openai-key", temperature: "", topP: "", maxTokens: "" };
