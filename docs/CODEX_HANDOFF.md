@@ -295,7 +295,10 @@ an HTTP or engine test) rather than retrying.
 
 Build in this order; one commit per numbered item (or per sub-feature if large).
 
-1. **Skills marketplace** (app F18, srv F25): search, facets, detail view, copy
+1. **Skills marketplace** (app F18, srv F25) — done (`dikdik/skills_market.py`,
+   `dikdik/web/skills-pane.ts`); open: URL-mirrored search/facets, a shared public
+   repository, plugin skills.
+   Original brief: search, facets, detail view, copy
    source, install from a local folder or a Git URL at a pinned ref (validated front
    matter, size limits), refresh, self-heal of broken installs, uninstall. Any
    network fetch needs explicit approval at the moment of install; clone into the

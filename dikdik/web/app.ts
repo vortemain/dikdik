@@ -1,9 +1,10 @@
 import { browserView, buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
 import { attachmentList, contextUsage, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
-import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries, profilesPanel, secretsPanel, skillsPanel } from "./contracts";
-import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, SlashCommand, TaskRequest, DiffReview, M4Factory, M4Node, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
+import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
+import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, SlashCommand, TaskRequest, DiffReview, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
 import { keysPane, modelsPane } from "./models-pane";
+import { skillsPane } from "./skills-pane";
 import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, workspacePath } from "./organise";
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
@@ -1258,7 +1259,6 @@ async function request<T>(path: string, method: string, body?: unknown): Promise
   return data as T;
 }
 const api = <T>(path: string, body?: unknown): Promise<T> => request<T>(path, body === undefined ? "GET" : "POST", body);
-const apiM4 = <T>(path: string, method: string, body?: unknown): Promise<T> => request<T>(path, method, body);
 const composerDrafts = new ComposerDrafts(request, (content, status) => {
   if (content !== null) textarea('objective').value = content;
   const labels = { loading: 'Loading draft…', saving: 'Saving draft…', saved: 'Draft saved', unsaved: 'Draft not saved. Keep this tab open.', conflict: 'This draft changed in another tab. Choose which version to keep.' };
@@ -1633,13 +1633,6 @@ async function observe(force = false): Promise<void> {
 }
 
 // --- sign-in and panels ---------------------------------------------------
-const m4Create: M4Factory = (tag: string): M4Node => document.createElement(tag) as unknown as M4Node;
-function mountPanel(containerId: string, panel: (dom: { root: M4Node; create: M4Factory; request: <T>(p: string, m: string, b?: unknown) => Promise<T> }) => { refresh(): Promise<void> }): () => Promise<void> {
-  const container = document.getElementById(containerId);
-  if (!container) throw new Error(`Missing M4 panel container: ${containerId}`);
-  container.replaceChildren();
-  return panel({ root: container as unknown as M4Node, create: m4Create, request: apiM4 }).refresh;
-}
 let refreshPanels: Record<string, () => Promise<void>> = {};
 
 async function connect(): Promise<void> {
@@ -1654,7 +1647,7 @@ async function connect(): Promise<void> {
     refreshPanels = {
       models: modelsPane(el("panel-profiles"), paneDeps),
       secrets: keysPane(el("panel-secrets"), paneDeps),
-      skills: mountPanel("panel-skills", skillsPanel),
+      skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
     };
   }
   textarea("objective").focus?.();
@@ -2944,6 +2937,13 @@ const paneDeps = {
   make, message,
   changed: () => { void loadModel().catch(() => undefined); void loadExposedSecrets(); void ensureLists(true); },
 };
+/** "Use skill": a new task with the skill's slash command ready in the composer. */
+function useSkill(name: string): void {
+  (el("settings") as HTMLDialogElement).close();
+  newTask();
+  fillComposer(`/${name} `);
+  void ensureLists(true);
+}
 /** Agent-profile sandbox secrets: blank → every exposed key (null), "none" → [], else the listed names. */
 function secretRefsField(text: string): string[] | null {
   const value = text.trim();

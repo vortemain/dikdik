@@ -140,7 +140,7 @@ class Engine:
         # Same files as the /api/secrets routes; the default profile decides the model.
         self.models = ModelResolver(self.store, SecretsStore(data / "secrets.bin", data / "secrets.key"))
         self.routers = RouterStore(self.store)
-        self.skills = SkillIndex(self.store, data / "skills", root / ".dikdik" / "skills")
+        self.skills = SkillIndex(self.store, data / "skills", root / ".dikdik" / "skills", data / "skills-installed")
         self.mcp = McpStore(self.store)
         self.agents = AgentProfiles(self.store)
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dikdik")

@@ -18,11 +18,11 @@ control (interrupt/exact resume, pause-at-boundary, per-action confirmation, hoo
 attachments, slash commands, side questions, condensing, judged goals, forks);
 an organised interface (command menu, folders and tags, file tree, onboarding);
 and model management (connections, routing, a model picker, sandbox secrets).
-The parity audit (docs/PARITY.md) moved from 89 to 353 fully matched OpenHands sub-features
+The parity audit (docs/PARITY.md) moved from 89 to 373 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **318 passed, 2 live-runtime tests skipped**; Bun
-**93 passed / 447 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-27): Python **323 passed, 2 live-runtime tests skipped**; Bun
+**96 passed / 457 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -75,6 +75,11 @@ Test status (2026-10-27): Python **318 passed, 2 live-runtime tests skipped**; B
   unknown model, rate limit, out of credit, unreachable) without echoing keys,
   and the agent's request for a secret: a card in the chat whose value is sealed,
   given to this run's sandbox commands and never sent to the model.
+- Phase D, skills marketplace: install skills from a folder, a Git source
+  (https://, file://, github:owner/repo) pinned to a commit, or a marketplace you
+  add; refresh, uninstall, hand-copied skills listed; a Skills page with search,
+  filters, cards, a detail view and Use skill. Git runs with hooks, prompts and
+  other protocols off, only files are copied, and internet fetches need approval.
 - Added the interface phase: Ctrl+K command menu, Get started card, a banner and
   blocked Send without a model, folders/tags/sort/age filter, grouped steps,
   Thinking rows, Markdown tables and alerts, clickable workspace paths, a file
@@ -95,8 +100,8 @@ Test status (2026-10-27): Python **318 passed, 2 live-runtime tests skipped**; B
 
 ## Test status
 
-- Python: **318 passed, 2 live-runtime tests skipped** (320 total).
-- Bun: **93 passed / 447 assertions**; strict TypeScript check and browser build passed.
+- Python: **323 passed, 2 live-runtime tests skipped** (325 total).
+- Bun: **96 passed / 457 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit

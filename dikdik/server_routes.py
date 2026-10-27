@@ -23,6 +23,7 @@ from .providers import chat_completion
 from .routing import STRATEGIES, RouterStore
 from .secrets_store import SecretsError, SecretsStore
 from .skills import SkillIndex
+from .skills_market import InstallConflict, SkillStore
 
 ROUTE_PREFIXES = ("/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts",
                   "/api/connections", "/api/routers", "/api/model-catalog")
@@ -33,7 +34,8 @@ def build_routes(engine_or_stores):
     stores = engine_or_stores
     profiles = ProfileStore(stores.store)
     secrets = SecretsStore(stores.data / "secrets.bin", stores.data / "secrets.key")
-    skills = SkillIndex(stores.store, stores.data / "skills", stores.root / ".dikdik" / "skills")
+    skills = SkillIndex(stores.store, stores.data / "skills", stores.root / ".dikdik" / "skills", stores.data / "skills-installed")
+    market = SkillStore(stores.data, stores.store)
     automations = stores.automation
     drafts = Drafts(stores.store)
     connections = ConnectionStore(stores.store, secrets)
@@ -163,8 +165,38 @@ def build_routes(engine_or_stores):
         return None
 
     def skills_routes(method: str, parts: list[str], body: dict, query: dict):
+        if len(parts) >= 3 and parts[2] == "marketplaces":
+            if method == "GET" and len(parts) == 3:
+                return 200, market.marketplaces()
+            if method == "POST" and len(parts) == 3:
+                return 201, market.add_marketplace(body)
+            if method == "DELETE" and len(parts) == 4:
+                return 200, market.remove_marketplace(parts[3])
+            if method == "POST" and len(parts) == 5 and parts[4] == "sync":
+                return 200, market.sync(parts[3], body.get("approve_network") is True)
+            return None
+        if len(parts) >= 3 and parts[2] == "catalog":
+            if method == "GET" and len(parts) == 3:
+                return 200, market.catalog()
+            if method == "POST" and len(parts) == 4 and parts[3] == "install":
+                return 201, market.install_from_catalog(body.get("marketplace"), body.get("repo_path"))
+            return None
+        if method == "POST" and len(parts) == 3 and parts[2] == "install":
+            return 201, market.install(body)
+        if method == "POST" and len(parts) == 4 and parts[3] == "refresh":
+            return 200, market.refresh(parts[2], body.get("approve_network") is True)
+        if method == "GET" and len(parts) == 3:
+            return 200, skills.read(parts[2])
+        if method == "DELETE" and len(parts) == 3 and (skills.find(parts[2]) or {}).get("scope") == "installed":
+            return 200, market.uninstall(parts[2])
         if method == "GET" and len(parts) == 2:
-            return 200, skills.enumerate_skills()
+            rows = skills.enumerate_skills()
+            for row in rows:
+                if row["scope"] == "installed":
+                    record = market.record(row["id"])
+                    row["source"] = record.get("source", "local")
+                    row["resolved_ref"] = record.get("resolved_ref", "")
+            return 200, rows
         if method == "PUT" and len(parts) == 3:
             return skills.set_enabled(parts[2], body.get("enabled") if isinstance(body, dict) else None)
         if method == "POST" and len(parts) == 2:
@@ -264,6 +296,8 @@ def build_routes(engine_or_stores):
             result = handler(method, parts, body, query)
         except ApiError as exc:
             return exc.status, {"error": exc.error}
+        except InstallConflict as exc:
+            return 409, {"error": str(exc)}
         except SecretsError as exc:
             return 500, {"error": str(exc) or "Secret store unavailable; the change was not applied"}
         except sqlite3.OperationalError:

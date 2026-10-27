@@ -73,7 +73,8 @@ autonomous engineering platform.
   drive every call (OpenAI, Anthropic, Azure or any local OpenAI-compatible
   server); environment variables remain a fallback. Replies stream as they arrive.
 - **Skills, MCP servers and agent profiles.** Skills (guidance files) reach the
-  agent as marked, untrusted context. MCP servers (HTTP or local command) add
+  agent as marked, untrusted context; install them from a folder, a Git source
+  or a marketplace you add, and browse, filter and switch them on the Skills page. MCP servers (HTTP or local command) add
   tools. Agent profiles bundle instructions, a model, limits and tool access.
 - **Automations** on a daily or interval schedule, each run an ordinary task,
   using exactly the mode and approvals you set. Run now, edit, open any run.
