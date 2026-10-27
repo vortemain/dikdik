@@ -1767,9 +1767,14 @@ const PANE_TITLES: Record<string, string> = { general: "General", models: "Model
 // --- automations ----------------------------------------------------------
 let automations: Automation[] = [];
 function syncAutoForm(): void {
-  const daily = (el("auto-kind") as HTMLSelectElement).value === "daily";
+  const kind = (el("auto-kind") as HTMLSelectElement).value;
+  const daily = kind === "daily";
   el("auto-daily").hidden = !daily;
-  el("auto-minutes").hidden = daily;
+  el("auto-minutes").hidden = kind !== "interval";
+  el("auto-cron").hidden = kind !== "cron";
+  el("auto-timezone").hidden = kind !== "cron";
+  el("auto-event-repo").hidden = kind !== "event";
+  el("auto-event-ref").hidden = kind !== "event";
   const agent = (el("auto-mode") as HTMLSelectElement).value === "agent";
   const picker = el("auto-profile") as HTMLSelectElement;
   picker.hidden = !agent || !agentProfiles.length;
@@ -1785,10 +1790,16 @@ function fillAutoForm(auto: Automation | null): void {
   field("auto-id").value = auto?.id ?? "";
   field("auto-name").value = auto?.name ?? "";
   (el("auto-objective") as HTMLTextAreaElement).value = auto?.objective ?? "";
-  const daily = !auto || "daily_at" in auto.schedule;
-  (el("auto-kind") as HTMLSelectElement).value = daily ? "daily" : "interval";
+  const kind = !auto || "daily_at" in auto.schedule ? "daily" : "interval_seconds" in auto.schedule ? "interval" : "cron" in auto.schedule ? "cron" : "event";
+  (el("auto-kind") as HTMLSelectElement).value = kind;
   field("auto-daily").value = auto && "daily_at" in auto.schedule ? auto.schedule.daily_at : "07:00";
   field("auto-minutes").value = auto && "interval_seconds" in auto.schedule ? String(Math.round(auto.schedule.interval_seconds / 60)) : "60";
+  field("auto-cron").value = auto && "cron" in auto.schedule ? auto.schedule.cron : "0 9 * * 1-5";
+  field("auto-timezone").value = auto && "cron" in auto.schedule ? auto.schedule.timezone : "local";
+  field("auto-event-repo").value = auto && "event" in auto.schedule ? auto.schedule.event.repository : ".";
+  field("auto-event-ref").value = auto && "event" in auto.schedule ? auto.schedule.event.ref : "HEAD";
+  (el("auto-repositories") as HTMLTextAreaElement).value = auto?.repositories.join("\n") ?? "";
+  field("auto-timeout").value = String(auto?.timeout_seconds ?? 1800);
   (el("auto-mode") as HTMLSelectElement).value = auto?.run?.mode ?? "agent";
   (el("auto-verification") as HTMLSelectElement).value = auto?.run?.verification ?? "syntax";
   syncAutoForm();
@@ -1803,7 +1814,19 @@ async function loadAutomations(): Promise<void> {
     automations = parseAutomations(await api<unknown>("/api/automations"));
   } catch (error) { message(error instanceof Error ? error.message : "Could not load automations", true); return; }
   syncAutoForm();
-  el("auto-list").replaceChildren(...automations.map(auto => {
+  renderAutomations();
+}
+function renderAutomations(): void {
+  const query = (el("auto-search") as HTMLInputElement).value.trim().toLowerCase();
+  const filter = (el("auto-filter") as HTMLSelectElement).value;
+  const sort = (el("auto-sort") as HTMLSelectElement).value;
+  const visible = automations.filter(auto => (!query || `${auto.name} ${auto.objective}`.toLowerCase().includes(query)) &&
+    (filter === "all" || filter === "enabled" && auto.enabled || filter === "disabled" && !auto.enabled || filter === "failed" && (!!auto.failures || auto.last_state === "needs_setup")));
+  visible.sort((a, b) => sort === "name" ? a.name.localeCompare(b.name) : sort === "next" ? Number(a.next_run ?? Infinity) - Number(b.next_run ?? Infinity) : b.updated - a.updated);
+  el("auto-stats").replaceChildren(
+    make("span", "auto-stat", `${automations.length} total`), make("span", "auto-stat", `${automations.filter(item => item.enabled).length} enabled`),
+    make("span", "auto-stat", `${automations.filter(item => item.failures || item.last_state === "needs_setup").length} need attention`));
+  el("auto-list").replaceChildren(...visible.map(auto => {
     const row = make("li", "m4-row");
     const head = make("p", "m4-title");
     const state = auto.last_state ?? "";
@@ -1849,7 +1872,17 @@ async function loadAutomations(): Promise<void> {
           open.type = "button";
           open.append(make("span", `auto-state state-${run.state}`, run.state), make("span", "", run.created ? new Date(run.created * 1000).toLocaleString() : run.id.slice(0, 8)));
           open.onclick = () => { (el("settings") as HTMLDialogElement).close?.(); selectTask(run.id); void observe(); };
-          item.append(open);
+          const logs = make("button", "ghost", "Logs");
+          logs.type = "button";
+          logs.onclick = async event => {
+            event.stopPropagation();
+            try {
+              const detail = await api<Record<string, unknown>>(`/api/automations/${auto.id}/runs/${run.id}`);
+              const pre = make("pre", "auto-log", JSON.stringify(detail, null, 2));
+              const old = item.querySelector(".auto-log"); if (old) old.remove(); else item.append(pre);
+            } catch (error) { message(error instanceof Error ? error.message : "Could not load run logs", true); }
+          };
+          item.append(open, logs);
           return item;
         }) : [make("li", "hint", "No runs yet.")]));
       } catch (error) { message(error instanceof Error ? error.message : "Could not load runs", true); }
@@ -1859,32 +1892,91 @@ async function loadAutomations(): Promise<void> {
     remove.onclick = async () => {
       try { await request(`/api/automations/${auto.id}`, "DELETE"); await loadAutomations(); } catch (error) { message(error instanceof Error ? error.message : "Delete failed", true); }
     };
-    actions.append(enabled, runNow, edit, runsButton, remove);
+    const exportButton = make("button", "secondary", "Export");
+    exportButton.type = "button";
+    exportButton.onclick = async () => {
+      try {
+        const payload = await api<unknown>(`/api/automations/${auto.id}/export`);
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+        link.download = `${auto.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "automation"}.json`; link.click(); URL.revokeObjectURL(link.href);
+      } catch (error) { message(error instanceof Error ? error.message : "Could not export", true); }
+    };
+    actions.append(enabled, runNow, edit, runsButton, exportButton, remove);
     row.append(actions, runs);
     return row;
   }));
-  if (!automations.length) el("auto-list").replaceChildren(make("li", "hint", "No automations yet."));
+  if (!visible.length) el("auto-list").replaceChildren(make("li", "hint", automations.length ? "No automations match this view." : "No automations yet."));
 }
 for (const id of ["auto-kind", "auto-mode", "auto-verification"]) el(id).addEventListener("change", syncAutoForm);
+for (const id of ["auto-search", "auto-filter", "auto-sort"]) el(id).addEventListener(id === "auto-search" ? "input" : "change", renderAutomations);
 el("auto-cancel").addEventListener("click", () => fillAutoForm(null));
+function autoFormBody(source?: "custom" | "template") {
+  const field = (id: string) => el(id) as HTMLInputElement;
+  return buildAutomation({
+    name: field("auto-name").value, objective: (el("auto-objective") as HTMLTextAreaElement).value,
+    scheduleKind: (el("auto-kind") as HTMLSelectElement).value as "daily" | "interval" | "cron" | "event",
+    intervalMinutes: field("auto-minutes").value, dailyAt: field("auto-daily").value,
+    cron: field("auto-cron").value, timezone: field("auto-timezone").value,
+    eventRepository: field("auto-event-repo").value, eventRef: field("auto-event-ref").value,
+    repositories: (el("auto-repositories") as HTMLTextAreaElement).value, timeoutSeconds: field("auto-timeout").value,
+    mode: (el("auto-mode") as HTMLSelectElement).value, verification: (el("auto-verification") as HTMLSelectElement).value,
+    approveExternal: field("auto-external").checked, approveExecution: field("auto-execution").checked,
+    agentProfile: (el("auto-profile") as HTMLSelectElement).value, ...(source ? { source } : {}),
+  });
+}
 el("auto-form").addEventListener("submit", async event => {
   event.preventDefault();
   const field = (id: string) => el(id) as HTMLInputElement;
   try {
-    const body = buildAutomation({
-      name: field("auto-name").value, objective: (el("auto-objective") as HTMLTextAreaElement).value,
-      scheduleKind: (el("auto-kind") as HTMLSelectElement).value === "daily" ? "daily" : "interval",
-      intervalMinutes: field("auto-minutes").value, dailyAt: field("auto-daily").value,
-      mode: (el("auto-mode") as HTMLSelectElement).value, verification: (el("auto-verification") as HTMLSelectElement).value,
-      approveExternal: field("auto-external").checked, approveExecution: field("auto-execution").checked,
-      agentProfile: (el("auto-profile") as HTMLSelectElement).value,
-    });
+    const body = autoFormBody();
     const id = field("auto-id").value;
     await request(id ? `/api/automations/${id}` : "/api/automations", id ? "PATCH" : "POST", body);
     message(id ? "Automation saved." : "Automation added.");
     fillAutoForm(null);
     await loadAutomations();
   } catch (error) { message(error instanceof Error ? error.message : "Could not save the automation", true); }
+});
+el("auto-draft").addEventListener("click", async () => {
+  try {
+    const body = autoFormBody();
+    await request("/api/automations/drafts", "POST", { name: body.name, spec: body });
+    message("Automation draft saved.");
+  } catch (error) { message(error instanceof Error ? error.message : "Could not save the draft", true); }
+});
+el("auto-templates").addEventListener("click", async () => {
+  const list = el("auto-template-list");
+  if (!list.hidden) { list.hidden = true; return; }
+  try {
+    const templates = await api<unknown>("/api/automations/templates");
+    if (!Array.isArray(templates)) throw new Error("Template response is invalid.");
+    list.replaceChildren(...templates.flatMap(value => {
+      if (typeof value !== "object" || value === null) return [];
+      const item = value as Record<string, unknown>, spec = item.spec as Record<string, unknown> | undefined;
+      if (!spec || typeof item.name !== "string") return [];
+      const card = make("article", "auto-template"); card.append(make("h4", "", item.name), make("p", "hint", typeof item.description === "string" ? item.description : ""));
+      const use = make("button", "secondary small", "Use template"); use.type = "button";
+      use.onclick = () => {
+        fillAutoForm(null);
+        (el("auto-name") as HTMLInputElement).value = typeof spec.name === "string" ? spec.name : "";
+        (el("auto-objective") as HTMLTextAreaElement).value = typeof spec.objective === "string" ? spec.objective : "";
+        const schedule = spec.schedule as Record<string, unknown> | undefined;
+        if (schedule?.daily_at) (el("auto-kind") as HTMLSelectElement).value = "daily", (el("auto-daily") as HTMLInputElement).value = String(schedule.daily_at);
+        else if (schedule?.cron) (el("auto-kind") as HTMLSelectElement).value = "cron", (el("auto-cron") as HTMLInputElement).value = String(schedule.cron), (el("auto-timezone") as HTMLInputElement).value = String(schedule.timezone ?? "local");
+        else if (schedule?.event) { const event = schedule.event as Record<string, unknown>; (el("auto-kind") as HTMLSelectElement).value = "event"; (el("auto-event-repo") as HTMLInputElement).value = String(event.repository ?? "."); (el("auto-event-ref") as HTMLInputElement).value = String(event.ref ?? "HEAD"); }
+        else if (schedule?.interval_seconds) (el("auto-kind") as HTMLSelectElement).value = "interval", (el("auto-minutes") as HTMLInputElement).value = String(Number(schedule.interval_seconds) / 60);
+        (el("auto-timeout") as HTMLInputElement).value = String(spec.timeout_seconds ?? 1800); syncAutoForm(); list.hidden = true;
+      };
+      card.append(use); return [card];
+    })); list.hidden = false;
+  } catch (error) { message(error instanceof Error ? error.message : "Could not load templates", true); }
+});
+el("auto-import").addEventListener("click", () => (el("auto-import-file") as HTMLInputElement).click());
+el("auto-import-file").addEventListener("change", async () => {
+  const input = el("auto-import-file") as HTMLInputElement, file = input.files?.[0]; if (!file) return;
+  try { await request("/api/automations/import", "POST", JSON.parse(await file.text())); message("Automation imported disabled for review."); await loadAutomations(); }
+  catch (error) { message(error instanceof Error ? error.message : "Could not import", true); }
+  finally { input.value = ""; }
 });
 
 function showPane(name: string): void {

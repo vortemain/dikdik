@@ -71,7 +71,7 @@ test("sanitizeSecretError never lets an error message echo the just-typed plaint
 // --- automation builder enforces the 60-second interval floor ----------------
 test("buildAutomation validates the schedule and carries the user's approvals", () => {
   const base = { name: "a", objective: "do thing", scheduleKind: "interval" as const, intervalMinutes: "60", mode: "agent", verification: "syntax", approveExternal: true, approveExecution: false };
-  expect(buildAutomation(base)).toEqual({ name: "a", schedule: { interval_seconds: 3600 }, objective: "do thing", mode: "agent", verification: "syntax", approve_external: true, approve_execution: false });
+  expect(buildAutomation(base)).toEqual({ name: "a", schedule: { interval_seconds: 3600 }, objective: "do thing", mode: "agent", verification: "syntax", approve_external: true, approve_execution: false, timeout_seconds: 1800 });
   expect(buildAutomation({ ...base, scheduleKind: "daily", dailyAt: "07:30", agentProfile: "p" }).schedule).toEqual({ daily_at: "07:30" });
   expect(buildAutomation({ ...base, agentProfile: "p" }).agent_profile).toBe("p");
   expect(buildAutomation({ ...base, mode: "model", agentProfile: "p" }).agent_profile).toBeUndefined();
@@ -80,8 +80,10 @@ test("buildAutomation validates the schedule and carries the user's approvals", 
     expect(() => buildAutomation({ ...base, ...bad })).toThrow();
   }
   expect(buildAutomation({ ...base, verification: "docker", approveExecution: true }).approve_execution).toBe(true);
-  expect([{ interval_seconds: 60 }, { interval_seconds: 7200 }, { interval_seconds: 86400 }, { interval_seconds: 300 }, { daily_at: "07:30" }].map(describeSchedule))
-    .toEqual(["every minute", "every 2 hours", "every day", "every 5 minutes", "daily at 07:30"]);
+  expect(buildAutomation({ ...base, scheduleKind: "cron", cron: "0 9 * * 1-5", timezone: "UTC" }).schedule).toEqual({ cron: "0 9 * * 1-5", timezone: "UTC" });
+  expect(buildAutomation({ ...base, scheduleKind: "event", eventRepository: ".", eventRef: "HEAD" }).schedule).toEqual({ event: { type: "git_commit", repository: ".", ref: "HEAD" } });
+  expect([{ interval_seconds: 60 }, { interval_seconds: 7200 }, { interval_seconds: 86400 }, { interval_seconds: 300 }, { daily_at: "07:30" }, { cron: "0 9 * * 1-5", timezone: "UTC" }, { event: { type: "git_commit", repository: ".", ref: "HEAD" } }].map(describeSchedule))
+    .toEqual(["every minute", "every 2 hours", "every day", "every 5 minutes", "daily at 07:30", "0 9 * * 1-5 (UTC)", "when .@HEAD changes"]);
 });
 
 test("buildSkillToggle and the toggle builders round-trip the boolean", () => {

@@ -272,7 +272,8 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(status, 201)
         status, rows = routes("GET", "/api/automations", None)
         self.assertEqual(status, 200)
-        self.assertEqual(set(rows[0]), {"id", "name", "schedule", "workspace_path", "objective", "enabled", "last_state", "next_run", "failures", "run", "last_task_id"})
+        self.assertEqual(set(rows[0]), {"id", "name", "schedule", "workspace_path", "objective", "enabled", "last_state", "next_run", "failures", "run", "last_task_id",
+                                        "repositories", "timeout_seconds", "source", "created", "updated"})
         self.assertEqual(rows[0]["schedule"], {"interval_seconds": 90})
         self.assertEqual(routes("POST", "/api/automations", {"name": "daily", "schedule": {"interval_seconds": 5}, "objective": "x", "enabled": True})[0], 400)
         self.assertEqual(routes("POST", "/api/automations", {"name": "x", "schedule": {"interval_seconds": 61}, "objective": ""})[0], 400)

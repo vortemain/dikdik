@@ -136,14 +136,14 @@ against a live model provider or Docker engine.
 | F18 Skills | Missing catalogs and personal/project skill enablement. Treat skill text as untrusted context, never permission overrides. | P1 |
 | F19 Plugins | Partial: install from a folder, Git or a marketplace; a trust review before first enable; enable/disable, update, uninstall, files and launch parameters. Plugins add skills, block rules, subagents and switched-off MCP servers only; nothing in them runs on the host. Missing deep links and a /launch route. | P2 |
 | F20 Extension apps | Missing app/page embedding and lifecycle. Isolate untrusted content and scope bridge permissions; no arbitrary same-origin script privileges. | P2 |
-| F21 Automation dashboard | Missing. Reference requires a separate Automation service. Original scheduling/run/list/filter/import/export operations need durable state and real execution evidence. | P2 |
-| F22 Automation creation | Missing templates/custom/import setup. Configure real triggers and permissions; do not ship nonfunctional template cards. | P2 |
-| F23 Automation runs/detail | Missing logs, triggers, editing/debugging. Verify idempotency, bounded retries, cancel and crash recovery. | P2 |
+| F21 Automation dashboard | Partial: the settings dashboard now has durable overview counts, search, status filters, sorting, run/edit/toggle/delete and JSON import/export. Missing reference routes, grid/list persistence, pinning, pagination and cancellation. | P2 |
+| F22 Automation creation | Partial: three working built-in templates, custom create/edit and disabled-on-import setup. Missing the reference template catalog/integration queues and agent-assisted setup. | P2 |
+| F23 Automation runs/detail | Partial: interval/daily/cron/local-Git triggers, run-now, history and scoped task events/results. Existing durable intents retain idempotent catch-up and three-failure disable. Missing run cancellation and reference activity visualizations. | P2 |
 | F24 Automation Git sync | Missing. Require explicit network/publication/credential approvals and reproducible encrypted configuration behavior. | P2 |
 | F25 Backends/Cloud/sharing | Local-only; multi-backend/sharing missing. Cloud/vendor accounts are external, not bundled OSS features. Prove backend isolation and explicit disclosure consent. | P1/P2/external |
 | F26 Runtime/distribution | Partial: source startup and inspected dependency-free wheel/fresh install; Docker test runner not live-verified. Desktop, embedding and remote runtime variants missing. Verify each supported artifact and actual sandbox boundary. | P0/P2 |
 | F27 Workspace tools | Partial list/read/search/create/edit, fixed multi-stack runners, Terminal/Bash API, Docker browser, separate read-only planning/review/Build and a reported task checklist. Workspace plan import and detailed usage remain missing. Live Docker/browser execution remains an acceptance gate. | P0/P1 |
-| F28 Automation setup/drafts | Missing schedule/event forms, draft tests and resume. Backend validation, persisted draft lifecycle and actual dispatch must precede UI completion claims. | P2 |
+| F28 Automation setup/drafts | Partial: schedule/event forms, repositories, time limit, persisted drafts and actual draft test dispatch. Invalid drafts are accepted by the API, but the compact settings UI currently saves only locally valid drafts and has no resume browser. | P2 |
 
 Reference sources: `upstream/OpenHands/src/routes.ts`,
 `src/constants/settings-nav.tsx`, and the read-only `.agents/skills/verify-openhands/

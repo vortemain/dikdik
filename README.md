@@ -81,8 +81,9 @@ autonomous engineering platform.
 - **Plugins** bundle skills, block rules, subagents and MCP server definitions.
   Install from a folder, Git or a marketplace; nothing loads until you review
   what a plugin adds and trust it, and its MCP servers arrive switched off.
-- **Automations** on a daily or interval schedule, each run an ordinary task,
-  using exactly the mode and approvals you set. Run now, edit, open any run.
+- **Automations** on daily, interval, cron or local Git-commit triggers. Search,
+  filter and sort the dashboard; start from built-in templates; save/test drafts;
+  import/export portable JSON; inspect every run. Runs use the approvals you set.
 - **Python client and CLI** (`python -m dikdik.client`) and a native Rust
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
@@ -231,8 +232,10 @@ A *local command* server runs on this machine with a minimal environment plus on
 the encrypted API keys you map to it. Supported remote servers use authorization-code
 OAuth with S256 PKCE and a loopback callback; access and refresh tokens stay in the
 encrypted key store and are not listed under API keys. Agent profiles appear in the
-composer in Agent mode. Automations run daily or every N minutes with the mode and
-approvals you choose; older automations made without approvals wait for an edit.
+composer in Agent mode. Automations run daily, every N minutes, on a five-field cron
+schedule in an IANA time zone, or after a local Git revision changes. Their templates,
+drafts, import/export and bounded run logs are under Automations; imported definitions
+start disabled. Older automations made without approvals wait for an edit.
 
 ### Python client and command line
 

@@ -376,7 +376,16 @@
         <div id="panel-mcp" class="m4-panel-mount"></div>
       </section>
       <section class="settings-pane" data-pane="automations" role="tabpanel" hidden>
-        <p class="lead">Run a task on a schedule, like a nightly dependency check or a weekly tidy-up. Each run is an ordinary task you can open, review and apply. Runs use exactly the mode and approvals you set here.</p>
+        <p class="lead">Run tasks on a timer, cron schedule, or local Git commit. Each run is an ordinary task you can inspect, review and apply, using exactly the approvals saved here.</p>
+        <div id="auto-stats" class="auto-stats" aria-label="Automation summary"></div>
+        <div class="row auto-toolbar">
+          <input id="auto-search" type="search" placeholder="Search automations" aria-label="Search automations">
+          <select id="auto-filter" aria-label="Filter automations"><option value="all">All</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="failed">Needs attention</option></select>
+          <select id="auto-sort" aria-label="Sort automations"><option value="updated">Recently updated</option><option value="name">Name</option><option value="next">Next run</option></select>
+          <button id="auto-templates" type="button" class="secondary">Templates</button>
+          <button id="auto-import" type="button" class="secondary">Import</button><input id="auto-import-file" type="file" accept="application/json,.json" hidden>
+        </div>
+        <div id="auto-template-list" class="auto-template-list" hidden></div>
         <form id="auto-form" class="skill-form">
           <input id="auto-id" type="hidden">
           <div class="skill-fields">
@@ -384,10 +393,16 @@
             <label for="auto-objective">Task</label><textarea id="auto-objective" rows="3" required placeholder="Run the tests and fix anything that fails, without changing the tests."></textarea>
             <label for="auto-kind">When</label>
             <div class="row auto-when">
-              <select id="auto-kind"><option value="daily">Every day at</option><option value="interval">Every N minutes</option></select>
+              <select id="auto-kind"><option value="daily">Every day at</option><option value="interval">Every N minutes</option><option value="cron">Cron schedule</option><option value="event">On Git commit</option></select>
               <input id="auto-daily" type="time" value="07:00" aria-label="Time of day">
               <input id="auto-minutes" type="number" min="1" value="60" aria-label="Minutes between runs" hidden>
+              <input id="auto-cron" value="0 9 * * 1-5" aria-label="Cron schedule" placeholder="0 9 * * 1-5" hidden>
+              <input id="auto-timezone" value="local" aria-label="Time zone" placeholder="local or Africa/Nairobi" hidden>
+              <input id="auto-event-repo" value="." aria-label="Event repository" placeholder="Repository path" hidden>
+              <input id="auto-event-ref" value="HEAD" aria-label="Git revision" placeholder="HEAD" hidden>
             </div>
+            <label for="auto-repositories">Repositories</label><textarea id="auto-repositories" rows="2" placeholder="One workspace-relative path per line; blank uses this workspace"></textarea>
+            <label for="auto-timeout">Time limit (seconds)</label><input id="auto-timeout" type="number" min="60" max="86400" value="1800">
             <label for="auto-mode">Mode</label>
             <div class="row auto-when">
               <select id="auto-mode"><option value="agent">Agent</option><option value="model">Single proposal</option></select>
@@ -400,7 +415,7 @@
               <label class="check" id="auto-execution-field" hidden><input id="auto-execution" type="checkbox">Run tests in Docker on each run</label>
             </div>
           </div>
-          <div class="row"><button id="auto-save" type="submit" class="primary small">Add automation</button><button id="auto-cancel" type="button" class="ghost small" hidden>Cancel edit</button></div>
+          <div class="row"><button id="auto-save" type="submit" class="primary small">Add automation</button><button id="auto-draft" type="button" class="secondary small">Save draft</button><button id="auto-cancel" type="button" class="ghost small" hidden>Cancel edit</button></div>
         </form>
         <ol id="auto-list" class="m4-list"></ol>
       </section>

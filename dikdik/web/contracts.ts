@@ -768,17 +768,20 @@ export interface SecretSetResult { ref: string; set: true }
 export interface Skill { id: string; name: string; scope: SkillScope; enabled: boolean; path: string; description?: string }
 export interface SkillToggle { enabled: boolean }
 
-export type AutomationSchedule = { interval_seconds: number } | { daily_at: string };
+export type AutomationSchedule = { interval_seconds: number } | { daily_at: string } |
+  { cron: string; timezone: string } | { event: { type: "git_commit"; repository: string; ref: string } };
 export interface AutomationRunSettings { mode: "model" | "agent"; verification: Verification; approve_external: boolean; approve_execution: boolean; agent_profile?: string }
 export interface Automation {
   id: string; name: string; schedule: AutomationSchedule; workspace_path: string;
   objective: string; enabled: boolean; last_state: string | null;
   next_run: EpochOrIso | null; failures: number;
   run: AutomationRunSettings | null; last_task_id: string | null;
+  repositories: string[]; timeout_seconds: number; source: "custom" | "template" | "import"; created: number; updated: number;
 }
 export interface AutomationInput {
   name: string; schedule: AutomationSchedule; objective: string;
   mode: "model" | "agent"; verification: Verification; approve_external: boolean; approve_execution: boolean; agent_profile?: string;
+  repositories?: string[]; timeout_seconds?: number; source?: "custom" | "template" | "import";
 }
 export interface AutomationRun { id: string; state: string; created: number | null }
 
@@ -917,7 +920,8 @@ export function buildSecretInput(input: { ref: string; plaintext: string }): Sec
 
 /** An automation's settings. Its runs use exactly the mode and approvals given here. */
 export function buildAutomation(input: {
-  name: string; objective: string; scheduleKind: "interval" | "daily"; intervalMinutes?: string | number; dailyAt?: string;
+  name: string; objective: string; scheduleKind: "interval" | "daily" | "cron" | "event"; intervalMinutes?: string | number; dailyAt?: string;
+  cron?: string; timezone?: string; eventRepository?: string; eventRef?: string; repositories?: string; timeoutSeconds?: string | number; source?: "custom" | "template";
   mode: string; verification: string; approveExternal: boolean; approveExecution: boolean; agentProfile?: string;
 }): AutomationInput {
   const name = input.name.trim();
@@ -928,17 +932,30 @@ export function buildAutomation(input: {
   if (input.scheduleKind === "daily") {
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.dailyAt ?? "")) throw new Error("Pick a time of day.");
     schedule = { daily_at: input.dailyAt as string };
-  } else {
+  } else if (input.scheduleKind === "interval") {
     const minutes = Number(String(input.intervalMinutes ?? "").trim());
     if (!Number.isInteger(minutes) || minutes < 1) throw new Error(M4_TEXT.intervalRule);
     schedule = { interval_seconds: minutes * 60 };
+  } else if (input.scheduleKind === "cron") {
+    const cron = (input.cron ?? "").trim(), timezone = (input.timezone ?? "local").trim() || "local";
+    if (cron.split(/\s+/).length !== 5) throw new Error("Enter a five-field cron schedule.");
+    if (timezone.length > 80) throw new Error("Time zone is too long.");
+    schedule = { cron, timezone };
+  } else {
+    const repository = (input.eventRepository ?? ".").trim() || ".", ref = (input.eventRef ?? "HEAD").trim() || "HEAD";
+    if (repository.length > 260 || ref.length > 200 || ref.startsWith("-")) throw new Error("Enter a safe repository path and Git revision.");
+    schedule = { event: { type: "git_commit", repository, ref } };
   }
   if (input.mode !== "model" && input.mode !== "agent") throw new Error("Scheduled runs use agent or single-proposal mode.");
   const verification = parseVerification(input.verification);
   if (!input.approveExternal) throw new Error("Approve sending code to your model provider for these runs.");
   if (verification === "docker" && !input.approveExecution) throw new Error("Approve running tests in Docker for these runs.");
+  const timeout = Number(String(input.timeoutSeconds ?? "1800").trim());
+  if (!Number.isInteger(timeout) || timeout < 60 || timeout > 86400) throw new Error("Timeout must be 60–86400 seconds.");
+  const repositories = (input.repositories ?? "").split("\n").map(item => item.trim()).filter(Boolean);
   return {
     name, schedule, objective, mode: input.mode, verification, approve_external: true, approve_execution: verification === "docker",
+    timeout_seconds: timeout, ...(repositories.length ? { repositories } : {}), ...(input.source ? { source: input.source } : {}),
     ...(input.mode === "agent" && input.agentProfile ? { agent_profile: input.agentProfile } : {}),
   };
 }
@@ -946,6 +963,8 @@ export function buildAutomation(input: {
 /** "every 2 hours", "daily at 07:30". */
 export function describeSchedule(schedule: AutomationSchedule): string {
   if ("daily_at" in schedule) return `daily at ${schedule.daily_at}`;
+  if ("cron" in schedule) return `${schedule.cron} (${schedule.timezone})`;
+  if ("event" in schedule) return `when ${schedule.event.repository}@${schedule.event.ref} changes`;
   const minutes = Math.round(schedule.interval_seconds / 60);
   if (minutes % 1440 === 0) return minutes === 1440 ? "every day" : `every ${minutes / 1440} days`;
   if (minutes % 60 === 0) return minutes === 60 ? "every hour" : `every ${minutes / 60} hours`;
@@ -1015,8 +1034,12 @@ export function parseAutomations(value: unknown): Automation[] {
     const id = safeText(item.id), name = safeText(item.name), objective = item.objective, workspacePath = item.workspace_path;
     const enabled = item.enabled, lastState = item.last_state, nextRun = item.next_run, failures = item.failures;
     const raw = isRecord(item.schedule) ? item.schedule : {};
+    const event = isRecord(raw.event) && raw.event.type === "git_commit" && typeof raw.event.repository === "string" && typeof raw.event.ref === "string"
+      ? { event: { type: "git_commit" as const, repository: raw.event.repository, ref: raw.event.ref } } : null;
     const schedule: AutomationSchedule | null = typeof raw.daily_at === "string" ? { daily_at: raw.daily_at }
-      : typeof raw.interval_seconds === "number" && Number.isInteger(raw.interval_seconds) ? { interval_seconds: raw.interval_seconds } : null;
+      : typeof raw.interval_seconds === "number" && Number.isInteger(raw.interval_seconds) ? { interval_seconds: raw.interval_seconds }
+      : typeof raw.cron === "string" && typeof raw.timezone === "string" ? { cron: raw.cron, timezone: raw.timezone }
+      : event;
     if (!id || !name || typeof objective !== "string" || objective === "" || typeof workspacePath !== "string" ||
         (enabled !== true && enabled !== false) || (lastState !== null && typeof lastState !== "string") ||
         (nextRun !== null && typeof nextRun !== "number" && typeof nextRun !== "string") ||
@@ -1025,10 +1048,15 @@ export function parseAutomations(value: unknown): Automation[] {
       ? { mode: item.run.mode, verification: item.run.verification, approve_external: item.run.approve_external === true, approve_execution: item.run.approve_execution === true,
           ...(typeof item.run.agent_profile === "string" ? { agent_profile: item.run.agent_profile } : {}) } as AutomationRunSettings
       : null;
+    const repositories = Array.isArray(item.repositories) && item.repositories.every(value => typeof value === "string") ? item.repositories as string[] : [workspacePath];
+    const timeout = typeof item.timeout_seconds === "number" && Number.isInteger(item.timeout_seconds) ? item.timeout_seconds : 1800;
+    const source = item.source === "template" || item.source === "import" ? item.source : "custom";
     automations.push({
       id, name, schedule, workspace_path: workspacePath, objective,
       enabled, last_state: lastState as string | null, next_run: nextRun as EpochOrIso | null, failures,
       run, last_task_id: safeText(item.last_task_id) || null,
+      repositories, timeout_seconds: timeout, source,
+      created: typeof item.created === "number" ? item.created : 0, updated: typeof item.updated === "number" ? item.updated : 0,
     });
   }
   return automations;

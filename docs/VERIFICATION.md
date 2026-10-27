@@ -238,6 +238,23 @@ fair autonomous-capability comparison or proof of superiority.
   fields, and showed the library entry as Installed after refresh. No provider sign-in
   or credential was used.
 
+## Automation suite verification
+
+- Focused Python coverage passes **24 tests** for the original scheduler plus cron
+  parsing, IANA time zones, local Git polling (one dispatch per new commit), richer
+  metadata, versioned import/export, disabled imports, invalid/valid drafts, test
+  dispatch, templates, enforced run time limits, scoped run details and routes.
+- TypeScript type-checking and the complete web suite pass (**100 tests**); the
+  production browser bundle builds successfully.
+- The full Python suite passes **356 tests** with 2 live Docker/browser tests skipped
+  by their explicit gates. The first managed-sandbox attempt denied loopback sockets;
+  the required normal-temp unrestricted rerun completed cleanly.
+- A real browser against disposable local data opened Settings → Automations, showed
+  the empty dashboard and three template cards, applied the Weekday review template,
+  exposed its cron/time-zone fields, created it after explicit per-run disclosure
+  approval, updated the overview to `1 total · 1 enabled`, and verified the client-side
+  no-match search state. No model request or scheduled run was made.
+
 ## Packaging evidence
 
 Built with local setuptools/wheel in the reference tooling venv, **without network

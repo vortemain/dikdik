@@ -14,6 +14,7 @@ import urllib.parse
 
 from .agent_profiles import AgentProfiles
 from .automation import validate_schedule
+from .automation_templates import templates as automation_templates
 from .drafts import DraftConflict, Drafts
 from .mcp import OAUTH_PREFIX, McpError, McpStore, oauth_ref, test_server
 from .mcp_catalog import catalog as mcp_library, install as mcp_install
@@ -246,6 +247,22 @@ def build_routes(engine_or_stores):
         if method == "POST" and len(parts) == 2:
             validate_schedule(body.get("schedule"))
             return automations.create(body)
+        if method == "GET" and len(parts) == 3 and parts[2] == "templates":
+            return 200, automation_templates()
+        if method == "POST" and len(parts) == 3 and parts[2] == "import":
+            return automations.import_spec(body)
+        if len(parts) >= 3 and parts[2] == "drafts":
+            if method == "GET" and len(parts) == 3:
+                return automations.list_drafts()
+            if method == "POST" and len(parts) == 3:
+                return automations.save_draft(body)
+            if method == "PATCH" and len(parts) == 4:
+                return automations.save_draft(body, parts[3])
+            if method == "DELETE" and len(parts) == 4:
+                return automations.delete_draft(parts[3])
+            if method == "POST" and len(parts) == 5 and parts[4] == "test":
+                return automations.test_draft(parts[3])
+            return None
         if method == "PUT" and len(parts) == 3:
             return automations.toggle(parts[2], body)
         if method == "PATCH" and len(parts) == 3:
@@ -256,6 +273,10 @@ def build_routes(engine_or_stores):
             return automations.delete(parts[2])
         if method == "GET" and len(parts) == 4 and parts[3] == "runs":
             return automations.runs(parts[2])
+        if method == "GET" and len(parts) == 4 and parts[3] == "export":
+            return automations.export(parts[2])
+        if method == "GET" and len(parts) == 5 and parts[3] == "runs":
+            return automations.run_detail(parts[2], parts[4])
         return None
 
     mcp = getattr(stores, "mcp", None) or McpStore(stores.store)

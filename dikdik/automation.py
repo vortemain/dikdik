@@ -2,8 +2,8 @@
 
 Each run is one durable task submission via `engine.submit()`, made with the mode and
 approvals the user chose when creating the automation: a schedule never grants
-consent on its own. Schedules are `{interval_seconds >= 60}` or `{daily_at: "HH:MM"}`
-(local time). Persistence lives in the `automations` table of the shared Store; run
+consent on its own. Schedules may be interval, daily, five-field cron, or a local Git
+revision change. Persistence lives in the `automations` table of the shared Store; run
 intents survive restarts so that a catch-up after restart submits each missed run
 exactly once (idempotency key = automation_id + due time). Three consecutive failures
 disable the automation and emit an `automation_disabled` event.
@@ -12,10 +12,14 @@ The scheduler thread is started with the engine and joined on close().
 """
 
 import json
+import subprocess
 import re
 import threading
 import time
 import uuid
+from pathlib import Path
+
+from .cron import next_after as cron_next_after, parse as parse_cron, timezone as cron_timezone
 
 MAX_CONSECUTIVE_FAILURES = 3
 MIN_INTERVAL = 60
@@ -34,12 +38,41 @@ CREATE TABLE IF NOT EXISTS automations_runs (
     run_key TEXT PRIMARY KEY, automation_id TEXT NOT NULL,
     task_id TEXT, ran_at REAL
 );
+CREATE TABLE IF NOT EXISTS automation_drafts (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT NOT NULL,
+    created REAL NOT NULL, updated REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS automation_draft_runs (
+    id TEXT PRIMARY KEY, draft_id TEXT NOT NULL, task_id TEXT NOT NULL,
+    created REAL NOT NULL
+);
 """
 
 
 def validate_schedule(schedule) -> dict:
-    if not isinstance(schedule, dict) or len(schedule) != 1 or set(schedule) - {"interval_seconds", "daily_at"}:
-        raise ValueError("Schedule must contain interval_seconds or daily_at only")
+    if not isinstance(schedule, dict):
+        raise ValueError("Schedule must be an object")
+    if "cron" in schedule:
+        if set(schedule) - {"cron", "timezone"}:
+            raise ValueError("Cron schedules contain cron and optional timezone only")
+        parse_cron(schedule["cron"])
+        zone = schedule.get("timezone", "local")
+        cron_timezone(zone)
+        return {"cron": schedule["cron"], "timezone": zone or "local"}
+    if "event" in schedule:
+        if set(schedule) != {"event"} or not isinstance(schedule["event"], dict):
+            raise ValueError("Event schedules contain event only")
+        event = schedule["event"]
+        if set(event) - {"type", "repository", "ref"} or event.get("type") != "git_commit":
+            raise ValueError("Only git_commit event schedules are supported")
+        repository, ref = event.get("repository", "."), event.get("ref", "HEAD")
+        if not isinstance(repository, str) or not repository.strip() or len(repository) > 260 or any(ord(c) < 32 for c in repository):
+            raise ValueError("Event repository must be a path of at most 260 characters")
+        if not isinstance(ref, str) or not ref.strip() or len(ref) > 200 or ref.startswith("-") or any(ord(c) < 33 for c in ref):
+            raise ValueError("Event ref must be a safe Git revision")
+        return {"event": {"type": "git_commit", "repository": repository.strip(), "ref": ref.strip()}}
+    if len(schedule) != 1 or set(schedule) - {"interval_seconds", "daily_at"}:
+        raise ValueError("Schedule must contain interval_seconds, daily_at, cron, or event")
     if "daily_at" in schedule:
         if not isinstance(schedule["daily_at"], str) or not DAILY.match(schedule["daily_at"]):
             raise ValueError("Daily time must be HH:MM in 24-hour time")
@@ -71,10 +104,34 @@ def validate_run(body: dict) -> dict:
     return run
 
 
+def validate_repositories(value, workspace: str = "") -> list[str]:
+    if value is None:
+        return [workspace] if workspace else []
+    if not isinstance(value, list) or not 1 <= len(value) <= 10:
+        raise ValueError("Repositories must contain 1–10 paths")
+    result = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip() or len(item) > 260 or any(ord(c) < 32 for c in item):
+            raise ValueError("Repository paths must contain 1–260 printable characters")
+        if item.strip() not in result:
+            result.append(item.strip())
+    return result
+
+
+def validate_timeout(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 60 <= value <= 86400:
+        raise ValueError("Timeout must be an integer from 60 to 86400 seconds")
+    return value
+
+
 def next_after(schedule: dict, after: float) -> float:
     """The first scheduled time strictly after `after`."""
     if "interval_seconds" in schedule:
         return after + schedule["interval_seconds"]
+    if "cron" in schedule:
+        return cron_next_after(schedule["cron"], after, schedule.get("timezone", "local"))
+    if "event" in schedule:
+        return after + MIN_INTERVAL
     hour, minute = map(int, schedule["daily_at"].split(":"))
     day = time.localtime(after)
     candidate = time.mktime((day.tm_year, day.tm_mon, day.tm_mday, hour, minute, 0, 0, 0, -1))
@@ -97,8 +154,17 @@ class AutomationScheduler:
             db.executescript(_SCHEMA)
             # Added after the first release: the run request (mode + approvals). Old rows
             # have none and stay paused until the user edits them and approves.
-            if "request" not in {row["name"] for row in db.execute("PRAGMA table_info(automations)")}:
-                db.execute("ALTER TABLE automations ADD COLUMN request TEXT")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(automations)")}
+            migrations = (
+                ("request", "TEXT"), ("repositories", "TEXT"),
+                ("timeout_seconds", "INTEGER NOT NULL DEFAULT 1800"),
+                ("source", "TEXT NOT NULL DEFAULT 'custom'"), ("event_cursor", "TEXT"),
+                ("updated", "REAL"),
+            )
+            for name, kind in migrations:
+                if name not in columns:
+                    db.execute(f"ALTER TABLE automations ADD COLUMN {name} {kind}")
+            db.execute("UPDATE automations SET updated=created WHERE updated IS NULL")
 
     # --- lifecycle -----------------------------------------------------
     def start(self):
@@ -118,6 +184,29 @@ class AutomationScheduler:
             except Exception:
                 pass  # never kill the thread; the next tick retries
 
+    def _event_revision(self, schedule: dict) -> str | None:
+        """Resolve a local Git event without invoking a shell or any hooks."""
+        if "event" not in schedule:
+            return None
+        event = schedule["event"]
+        root = Path(getattr(self.engine, "root", "")).resolve()
+        repository = (root / event["repository"]).resolve()
+        try:
+            repository.relative_to(root)
+        except ValueError:
+            raise ValueError("Event repository must stay inside the workspace") from None
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--verify", event["ref"]], cwd=repository,
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ValueError("Could not inspect the event repository") from exc
+        revision = result.stdout.strip()
+        if result.returncode or not re.fullmatch(r"[0-9a-fA-F]{40,64}", revision):
+            raise ValueError("Event repository or Git revision is not available")
+        return revision.lower()
+
     # --- CRUD API --------------------------------------------------------
     def list_automations(self):
         with self.store.connect() as db:
@@ -131,6 +220,9 @@ class AutomationScheduler:
                 "next_run": r["next_run"], "failures": r["failures"],
                 "run": json.loads(r["request"]) if r["request"] else None,
                 "last_task_id": r["last_task_id"],
+                "repositories": json.loads(r["repositories"]) if r["repositories"] else [r["workspace_path"]],
+                "timeout_seconds": r["timeout_seconds"], "source": r["source"],
+                "created": r["created"], "updated": r["updated"] or r["created"],
             })
         return 200, result
 
@@ -157,6 +249,15 @@ class AutomationScheduler:
             if not isinstance(enabled, bool):
                 raise ValueError("Enabled must be a boolean")
             fields["enabled"] = enabled
+        if creating or "repositories" in body:
+            fields["repositories"] = validate_repositories(body.get("repositories"), str(getattr(self.engine, "root", "")))
+        if creating or "timeout_seconds" in body:
+            fields["timeout_seconds"] = validate_timeout(body.get("timeout_seconds", 1800))
+        if creating or "source" in body:
+            source = body.get("source", "custom")
+            if source not in {"custom", "template", "import"}:
+                raise ValueError("Source must be custom, template, or import")
+            fields["source"] = source
         return fields
 
     def create(self, body):
@@ -169,9 +270,11 @@ class AutomationScheduler:
             if self.started_at is None:
                 self.started_at = now
             next_run = next_after(fields["schedule"], max(self.started_at, now))
-            db.execute("INSERT INTO automations(id,name,schedule,workspace_path,objective,enabled,last_state,next_run,failures,last_task_id,last_key,created,request) VALUES(?,?,?,?,?,?,NULL,?,0,NULL,NULL,?,?)",
+            cursor = self._event_revision(fields["schedule"]) if "event" in fields["schedule"] else None
+            db.execute("INSERT INTO automations(id,name,schedule,workspace_path,objective,enabled,last_state,next_run,failures,last_task_id,last_key,created,request,repositories,timeout_seconds,source,event_cursor,updated) VALUES(?,?,?,?,?,?,NULL,?,0,NULL,NULL,?,?,?,?,?,?,?)",
                        (automation_id, fields["name"], json.dumps(fields["schedule"]), str(getattr(self.engine, "root", "")),
-                        fields["objective"], int(fields["enabled"]), next_run, now, json.dumps(fields["run"])))
+                        fields["objective"], int(fields["enabled"]), next_run, now, json.dumps(fields["run"]),
+                        json.dumps(fields["repositories"]), fields["timeout_seconds"], fields["source"], cursor, now))
         return 201, {"id": automation_id, "next_run": next_run}
 
     def update(self, automation_id: str, body):
@@ -192,7 +295,15 @@ class AutomationScheduler:
             if "run" in fields:
                 db.execute("UPDATE automations SET request=?, last_state=CASE WHEN last_state='needs_setup' THEN NULL ELSE last_state END WHERE id=?", (json.dumps(fields["run"]), automation_id))
             if "schedule" in fields:
-                db.execute("UPDATE automations SET schedule=?, next_run=? WHERE id=?", (json.dumps(fields["schedule"]), next_after(fields["schedule"], self.clock()), automation_id))
+                cursor = self._event_revision(fields["schedule"]) if "event" in fields["schedule"] else None
+                db.execute("UPDATE automations SET schedule=?, next_run=?, event_cursor=? WHERE id=?", (json.dumps(fields["schedule"]), next_after(fields["schedule"], self.clock()), cursor, automation_id))
+            if "repositories" in fields:
+                db.execute("UPDATE automations SET repositories=? WHERE id=?", (json.dumps(fields["repositories"]), automation_id))
+            if "timeout_seconds" in fields:
+                db.execute("UPDATE automations SET timeout_seconds=? WHERE id=?", (fields["timeout_seconds"], automation_id))
+            if "source" in fields:
+                db.execute("UPDATE automations SET source=? WHERE id=?", (fields["source"], automation_id))
+            db.execute("UPDATE automations SET updated=? WHERE id=?", (self.clock(), automation_id))
         return 200, {"id": automation_id}
 
     def toggle(self, automation_id: str, body):
@@ -224,6 +335,92 @@ class AutomationScheduler:
                 (automation_id,)).fetchall()
         return 200, [{"task_id": r["task_id"], "created": r["created"], "state": r["state"]} for r in rows]
 
+    def run_detail(self, automation_id: str, task_id: str):
+        with self.store.connect() as db:
+            linked = db.execute("SELECT 1 FROM automations_runs WHERE automation_id=? AND task_id=?", (automation_id, task_id)).fetchone()
+        if linked is None:
+            raise ValueError("Automation run not found")
+        try:
+            task = self.store.get(task_id)
+        except KeyError:
+            raise ValueError("Automation run task not found") from None
+        # Requests and event payloads are bounded, but omit approval flags from the
+        # detail response because they add no diagnostic value.
+        request = {key: value for key, value in task["request"].items() if not key.startswith("approve_")}
+        return 200, {"task_id": task_id, "created": task["created"], "state": task["state"],
+                     "request": request, "result": task["result"], "events": task["events"][-200:]}
+
+    def export(self, automation_id: str):
+        rows = [row for row in self.list_automations()[1] if row["id"] == automation_id]
+        if not rows:
+            raise ValueError(f"Automation not found (id={automation_id})")
+        row = rows[0]
+        spec = {key: row[key] for key in ("name", "schedule", "objective", "repositories", "timeout_seconds")}
+        spec.update(row["run"] or {})
+        return 200, {"version": 1, "kind": "dikdik-automation", "spec": spec}
+
+    def import_spec(self, body):
+        if not isinstance(body, dict) or body.get("version") != 1 or body.get("kind") != "dikdik-automation" or not isinstance(body.get("spec"), dict):
+            raise ValueError("Import must be a version 1 dikdik-automation document")
+        spec = dict(body["spec"])
+        spec["enabled"] = False
+        spec["source"] = "import"
+        return self.create(spec)
+
+    def _draft_errors(self, spec) -> list[str]:
+        try:
+            self._fields(spec, creating=True)
+        except (TypeError, ValueError) as exc:
+            return [str(exc)]
+        return []
+
+    def list_drafts(self):
+        with self.store.connect() as db:
+            rows = db.execute("SELECT * FROM automation_drafts ORDER BY updated DESC").fetchall()
+        return 200, [{"id": r["id"], "name": r["name"], "spec": json.loads(r["spec"]),
+                      "errors": self._draft_errors(json.loads(r["spec"])), "created": r["created"], "updated": r["updated"]} for r in rows]
+
+    def save_draft(self, body, draft_id: str | None = None):
+        if not isinstance(body, dict) or not isinstance(body.get("spec"), dict):
+            raise ValueError("Draft must contain a spec object")
+        encoded = json.dumps(body["spec"])
+        if len(encoded.encode()) > 65536:
+            raise ValueError("Draft is larger than 64 KiB")
+        name = body.get("name") or body["spec"].get("name") or "Untitled draft"
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 64:
+            raise ValueError("Draft name must contain 1–64 characters")
+        now = self.clock()
+        with self.store.connect() as db:
+            if draft_id:
+                if not db.execute("SELECT 1 FROM automation_drafts WHERE id=?", (draft_id,)).fetchone():
+                    raise ValueError("Automation draft not found")
+                db.execute("UPDATE automation_drafts SET name=?,spec=?,updated=? WHERE id=?", (name.strip(), encoded, now, draft_id))
+                status = 200
+            else:
+                draft_id, status = uuid.uuid4().hex, 201
+                db.execute("INSERT INTO automation_drafts VALUES(?,?,?,?,?)", (draft_id, name.strip(), encoded, now, now))
+        return status, {"id": draft_id, "name": name.strip(), "spec": body["spec"], "errors": self._draft_errors(body["spec"]), "updated": now}
+
+    def delete_draft(self, draft_id: str):
+        with self.store.connect() as db:
+            if not db.execute("SELECT 1 FROM automation_drafts WHERE id=?", (draft_id,)).fetchone():
+                raise ValueError("Automation draft not found")
+            db.execute("DELETE FROM automation_drafts WHERE id=?", (draft_id,))
+            db.execute("DELETE FROM automation_draft_runs WHERE draft_id=?", (draft_id,))
+        return 200, {"deleted": draft_id}
+
+    def test_draft(self, draft_id: str):
+        with self.store.connect() as db:
+            row = db.execute("SELECT spec FROM automation_drafts WHERE id=?", (draft_id,)).fetchone()
+        if row is None:
+            raise ValueError("Automation draft not found")
+        fields = self._fields(json.loads(row["spec"]), creating=True)
+        task_id = self.engine.submit({"objective": fields["objective"], **fields["run"]})
+        run_id, now = uuid.uuid4().hex, self.clock()
+        with self.store.connect() as db:
+            db.execute("INSERT INTO automation_draft_runs VALUES(?,?,?,?)", (run_id, draft_id, task_id, now))
+        return 202, {"task_id": task_id, "draft_id": draft_id}
+
     def run_now(self, automation_id: str):
         """Start one run immediately; the schedule is unchanged."""
         with self.store.connect() as db:
@@ -253,6 +450,12 @@ class AutomationScheduler:
         with self.store.connect() as db:
             row = db.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()
         return row["state"] if row else None
+
+    def _task_info(self, task_id: str | None):
+        if not task_id:
+            return None
+        with self.store.connect() as db:
+            return db.execute("SELECT state,created FROM tasks WHERE id=?", (task_id,)).fetchone()
 
     def _record_result(self, automation_id: str, task_id: str | None, state: str) -> bool:
         """Record a finished run; return True if the automation is still enabled."""
@@ -289,14 +492,59 @@ class AutomationScheduler:
             # Harvest a finished run before considering a new one (single flight:
             # while a task is queued/running, never submit a second one).
             if auto["last_task_id"]:
-                state = self._task_state(auto["last_task_id"])
+                task = self._task_info(auto["last_task_id"])
+                state = task["state"] if task else None
                 if state is None or state in ACTIVE_STATES:
+                    if task and state in ACTIVE_STATES and now - task["created"] >= auto["timeout_seconds"] and auto["last_state"] != "cancelling":
+                        cancel = getattr(self.engine, "cancel", None)
+                        if callable(cancel) and cancel(auto["last_task_id"]):
+                            with self.store.connect() as db:
+                                db.execute("UPDATE automations SET last_state='cancelling' WHERE id=?", (auto["id"],))
+                            self.store.event(auto["last_task_id"], "automation_timeout", {"automation": auto["id"], "timeout_seconds": auto["timeout_seconds"]})
                     continue
                 if not self._record_result(auto["id"], auto["last_task_id"], state):
                     continue  # automation was disabled by this harvest; do not run
             if now < auto["next_run"]:
                 continue
+            schedule = json.loads(auto["schedule"])
+            if "event" in schedule:
+                self._poll_event(auto, schedule, now)
+                continue
             self._run(auto, now)
+
+    def _poll_event(self, auto: dict, schedule: dict, now: float):
+        try:
+            revision = self._event_revision(schedule)
+        except ValueError:
+            with self.store.connect() as db:
+                db.execute("UPDATE automations SET next_run=? WHERE id=?", (now + MIN_INTERVAL, auto["id"]))
+            self._record_result(auto["id"], None, "invalid")
+            return
+        if revision == auto["event_cursor"]:
+            with self.store.connect() as db:
+                db.execute("UPDATE automations SET next_run=? WHERE id=?", (now + MIN_INTERVAL, auto["id"]))
+            return
+        key = f"{auto['id']}|git|{revision}"
+        with self.store.connect() as db:
+            existing = db.execute("SELECT task_id FROM automations_runs WHERE run_key=?", (key,)).fetchone()
+        if existing is not None:
+            with self.store.connect() as db:
+                db.execute("UPDATE automations SET event_cursor=?,next_run=?,last_task_id=COALESCE(last_task_id,?) WHERE id=?",
+                           (revision, now + MIN_INTERVAL, existing["task_id"], auto["id"]))
+            return
+        try:
+            task_id = self.engine.submit(self._submit_request(auto))
+        except ValueError as exc:
+            if str(exc).startswith(BUSY):
+                return
+            with self.store.connect() as db:
+                db.execute("UPDATE automations SET event_cursor=?,next_run=? WHERE id=?", (revision, now + MIN_INTERVAL, auto["id"]))
+            self._record_result(auto["id"], None, "invalid")
+            return
+        with self.store.connect() as db:
+            db.execute("INSERT OR IGNORE INTO automations_runs(run_key,automation_id,task_id,ran_at) VALUES(?,?,?,?)", (key, auto["id"], task_id, now))
+            db.execute("UPDATE automations SET event_cursor=?,next_run=?,last_task_id=?,last_key=?,last_state='queued' WHERE id=?",
+                       (revision, now + MIN_INTERVAL, task_id, key, auto["id"]))
 
     def _run(self, auto: dict, now: float):
         due = auto["next_run"]

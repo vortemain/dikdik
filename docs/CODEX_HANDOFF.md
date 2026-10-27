@@ -322,12 +322,12 @@ Build in this order; one commit per numbered item (or per sub-feature if large).
    no access to the session cookie; CSP updated narrowly and documented), an optional
    app backend run in Docker reached through a loopback proxy that strips cookies and
    auth headers; enable/disable/uninstall.
-5. **Automations suite** (app F21–F23, F28): dashboard (search, filters, sort, overview
-   tiles, card/list views), detail page with activity and logs, templates,
-   import/export (JSON, secrets excluded), cron schedules (write a small stdlib cron
-   parser with tests), event triggers (e.g. a local Git commit detected by polling),
-   drafts with a test run, per-automation repository, agent-assisted setup. Stored
-   approvals stay exactly what the user set (existing rule).
+5. **Automations suite** (app F21–F23, F28) — core complete: dashboard counts,
+   search/status filters/sort, run/edit/toggle/delete, run logs, three real templates,
+   versioned import/export (imports disabled), stdlib cron + IANA zones, local Git
+   commit polling, persisted drafts + test dispatch, repositories and time limits.
+   Stored approvals remain exact. Open reference deltas: grid/list persistence,
+   cancellation, draft browser/resume, larger catalog and agent-assisted setup.
 6. **Automation Git sync** (app F24): sync automation definitions to a Git repository
    the user picks; secrets are never written (or are sealed with a user-held key);
    every push needs explicit approval; hooks disabled.

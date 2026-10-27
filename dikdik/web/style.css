@@ -569,6 +569,15 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
 .auto-runs { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 2px; }
 .auto-runs button { justify-content: flex-start; gap: 8px; width: 100%; border: 0; background: transparent; padding: 4px 6px; font-weight: 400; font-size: 12.5px; color: var(--ink-2); }
 .auto-runs button:hover { background: var(--hover); }
+.auto-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.auto-stat { padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12px; }
+.auto-toolbar { flex-wrap: wrap; align-items: center; }
+.auto-toolbar input { min-width: 180px; flex: 1; }
+.auto-toolbar select { width: auto; }
+.auto-template-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; margin: 12px 0; }
+.auto-template { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--surface-2); }
+.auto-template h4, .auto-template p { margin: 0 0 8px; }
+.auto-log { overflow: auto; max-height: 260px; margin: 6px; padding: 10px; border-radius: 8px; background: var(--surface-3); font-size: 11px; white-space: pre-wrap; }
 .auto-state { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--surface-3); color: var(--muted); }
 .auto-state.state-completed { background: var(--ok-soft); color: var(--ok); }
 .auto-state.state-failed, .auto-state.state-invalid, .auto-state.state-blocked, .auto-state.state-needs_setup { background: var(--danger-soft); color: var(--danger); }

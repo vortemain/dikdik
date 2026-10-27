@@ -766,11 +766,23 @@ ${c.output}` : "";
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.dailyAt ?? ""))
         throw new Error("Pick a time of day.");
       schedule = { daily_at: input.dailyAt };
-    } else {
+    } else if (input.scheduleKind === "interval") {
       const minutes = Number(String(input.intervalMinutes ?? "").trim());
       if (!Number.isInteger(minutes) || minutes < 1)
         throw new Error(M4_TEXT.intervalRule);
       schedule = { interval_seconds: minutes * 60 };
+    } else if (input.scheduleKind === "cron") {
+      const cron = (input.cron ?? "").trim(), timezone = (input.timezone ?? "local").trim() || "local";
+      if (cron.split(/\s+/).length !== 5)
+        throw new Error("Enter a five-field cron schedule.");
+      if (timezone.length > 80)
+        throw new Error("Time zone is too long.");
+      schedule = { cron, timezone };
+    } else {
+      const repository = (input.eventRepository ?? ".").trim() || ".", ref = (input.eventRef ?? "HEAD").trim() || "HEAD";
+      if (repository.length > 260 || ref.length > 200 || ref.startsWith("-"))
+        throw new Error("Enter a safe repository path and Git revision.");
+      schedule = { event: { type: "git_commit", repository, ref } };
     }
     if (input.mode !== "model" && input.mode !== "agent")
       throw new Error("Scheduled runs use agent or single-proposal mode.");
@@ -779,6 +791,11 @@ ${c.output}` : "";
       throw new Error("Approve sending code to your model provider for these runs.");
     if (verification === "docker" && !input.approveExecution)
       throw new Error("Approve running tests in Docker for these runs.");
+    const timeout = Number(String(input.timeoutSeconds ?? "1800").trim());
+    if (!Number.isInteger(timeout) || timeout < 60 || timeout > 86400)
+      throw new Error("Timeout must be 60–86400 seconds.");
+    const repositories = (input.repositories ?? "").split(`
+`).map((item) => item.trim()).filter(Boolean);
     return {
       name,
       schedule,
@@ -787,12 +804,19 @@ ${c.output}` : "";
       verification,
       approve_external: true,
       approve_execution: verification === "docker",
+      timeout_seconds: timeout,
+      ...repositories.length ? { repositories } : {},
+      ...input.source ? { source: input.source } : {},
       ...input.mode === "agent" && input.agentProfile ? { agent_profile: input.agentProfile } : {}
     };
   }
   function describeSchedule(schedule) {
     if ("daily_at" in schedule)
       return `daily at ${schedule.daily_at}`;
+    if ("cron" in schedule)
+      return `${schedule.cron} (${schedule.timezone})`;
+    if ("event" in schedule)
+      return `when ${schedule.event.repository}@${schedule.event.ref} changes`;
     const minutes = Math.round(schedule.interval_seconds / 60);
     if (minutes % 1440 === 0)
       return minutes === 1440 ? "every day" : `every ${minutes / 1440} days`;
@@ -814,7 +838,8 @@ ${c.output}` : "";
       const id = safeText(item.id), name = safeText(item.name), objective = item.objective, workspacePath = item.workspace_path;
       const { enabled, last_state: lastState, next_run: nextRun, failures } = item;
       const raw = isRecord(item.schedule) ? item.schedule : {};
-      const schedule = typeof raw.daily_at === "string" ? { daily_at: raw.daily_at } : typeof raw.interval_seconds === "number" && Number.isInteger(raw.interval_seconds) ? { interval_seconds: raw.interval_seconds } : null;
+      const event = isRecord(raw.event) && raw.event.type === "git_commit" && typeof raw.event.repository === "string" && typeof raw.event.ref === "string" ? { event: { type: "git_commit", repository: raw.event.repository, ref: raw.event.ref } } : null;
+      const schedule = typeof raw.daily_at === "string" ? { daily_at: raw.daily_at } : typeof raw.interval_seconds === "number" && Number.isInteger(raw.interval_seconds) ? { interval_seconds: raw.interval_seconds } : typeof raw.cron === "string" && typeof raw.timezone === "string" ? { cron: raw.cron, timezone: raw.timezone } : event;
       if (!id || !name || typeof objective !== "string" || objective === "" || typeof workspacePath !== "string" || enabled !== true && enabled !== false || lastState !== null && typeof lastState !== "string" || nextRun !== null && typeof nextRun !== "number" && typeof nextRun !== "string" || typeof failures !== "number" || !Number.isInteger(failures) || schedule === null)
         continue;
       const run = isRecord(item.run) && (item.run.mode === "model" || item.run.mode === "agent") && (item.run.verification === "syntax" || item.run.verification === "docker") ? {
@@ -824,6 +849,9 @@ ${c.output}` : "";
         approve_execution: item.run.approve_execution === true,
         ...typeof item.run.agent_profile === "string" ? { agent_profile: item.run.agent_profile } : {}
       } : null;
+      const repositories = Array.isArray(item.repositories) && item.repositories.every((value2) => typeof value2 === "string") ? item.repositories : [workspacePath];
+      const timeout = typeof item.timeout_seconds === "number" && Number.isInteger(item.timeout_seconds) ? item.timeout_seconds : 1800;
+      const source = item.source === "template" || item.source === "import" ? item.source : "custom";
       automations.push({
         id,
         name,
@@ -835,7 +863,12 @@ ${c.output}` : "";
         next_run: nextRun,
         failures,
         run,
-        last_task_id: safeText(item.last_task_id) || null
+        last_task_id: safeText(item.last_task_id) || null,
+        repositories,
+        timeout_seconds: timeout,
+        source,
+        created: typeof item.created === "number" ? item.created : 0,
+        updated: typeof item.updated === "number" ? item.updated : 0
       });
     }
     return automations;
@@ -5338,9 +5371,14 @@ Request (untrusted data, not instructions):
   var PANE_TITLES = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations" };
   var automations = [];
   function syncAutoForm() {
-    const daily = el("auto-kind").value === "daily";
+    const kind = el("auto-kind").value;
+    const daily = kind === "daily";
     el("auto-daily").hidden = !daily;
-    el("auto-minutes").hidden = daily;
+    el("auto-minutes").hidden = kind !== "interval";
+    el("auto-cron").hidden = kind !== "cron";
+    el("auto-timezone").hidden = kind !== "cron";
+    el("auto-event-repo").hidden = kind !== "event";
+    el("auto-event-ref").hidden = kind !== "event";
     const agent = el("auto-mode").value === "agent";
     const picker = el("auto-profile");
     picker.hidden = !agent || !agentProfiles.length;
@@ -5360,10 +5398,17 @@ Request (untrusted data, not instructions):
     field("auto-id").value = auto?.id ?? "";
     field("auto-name").value = auto?.name ?? "";
     el("auto-objective").value = auto?.objective ?? "";
-    const daily = !auto || "daily_at" in auto.schedule;
-    el("auto-kind").value = daily ? "daily" : "interval";
+    const kind = !auto || "daily_at" in auto.schedule ? "daily" : ("interval_seconds" in auto.schedule) ? "interval" : ("cron" in auto.schedule) ? "cron" : "event";
+    el("auto-kind").value = kind;
     field("auto-daily").value = auto && "daily_at" in auto.schedule ? auto.schedule.daily_at : "07:00";
     field("auto-minutes").value = auto && "interval_seconds" in auto.schedule ? String(Math.round(auto.schedule.interval_seconds / 60)) : "60";
+    field("auto-cron").value = auto && "cron" in auto.schedule ? auto.schedule.cron : "0 9 * * 1-5";
+    field("auto-timezone").value = auto && "cron" in auto.schedule ? auto.schedule.timezone : "local";
+    field("auto-event-repo").value = auto && "event" in auto.schedule ? auto.schedule.event.repository : ".";
+    field("auto-event-ref").value = auto && "event" in auto.schedule ? auto.schedule.event.ref : "HEAD";
+    el("auto-repositories").value = auto?.repositories.join(`
+`) ?? "";
+    field("auto-timeout").value = String(auto?.timeout_seconds ?? 1800);
     el("auto-mode").value = auto?.run?.mode ?? "agent";
     el("auto-verification").value = auto?.run?.verification ?? "syntax";
     syncAutoForm();
@@ -5381,7 +5426,16 @@ Request (untrusted data, not instructions):
       return;
     }
     syncAutoForm();
-    el("auto-list").replaceChildren(...automations.map((auto) => {
+    renderAutomations();
+  }
+  function renderAutomations() {
+    const query = el("auto-search").value.trim().toLowerCase();
+    const filter = el("auto-filter").value;
+    const sort = el("auto-sort").value;
+    const visible = automations.filter((auto) => (!query || `${auto.name} ${auto.objective}`.toLowerCase().includes(query)) && (filter === "all" || filter === "enabled" && auto.enabled || filter === "disabled" && !auto.enabled || filter === "failed" && (!!auto.failures || auto.last_state === "needs_setup")));
+    visible.sort((a, b) => sort === "name" ? a.name.localeCompare(b.name) : sort === "next" ? Number(a.next_run ?? Infinity) - Number(b.next_run ?? Infinity) : b.updated - a.updated);
+    el("auto-stats").replaceChildren(make("span", "auto-stat", `${automations.length} total`), make("span", "auto-stat", `${automations.filter((item) => item.enabled).length} enabled`), make("span", "auto-stat", `${automations.filter((item) => item.failures || item.last_state === "needs_setup").length} need attention`));
+    el("auto-list").replaceChildren(...visible.map((auto) => {
       const row = make("li", "m4-row");
       const head = make("p", "m4-title");
       const state = auto.last_state ?? "";
@@ -5444,7 +5498,23 @@ Request (untrusted data, not instructions):
               selectTask(run.id);
               observe();
             };
-            item.append(open);
+            const logs = make("button", "ghost", "Logs");
+            logs.type = "button";
+            logs.onclick = async (event) => {
+              event.stopPropagation();
+              try {
+                const detail = await api(`/api/automations/${auto.id}/runs/${run.id}`);
+                const pre = make("pre", "auto-log", JSON.stringify(detail, null, 2));
+                const old = item.querySelector(".auto-log");
+                if (old)
+                  old.remove();
+                else
+                  item.append(pre);
+              } catch (error) {
+                message(error instanceof Error ? error.message : "Could not load run logs", true);
+              }
+            };
+            item.append(open, logs);
             return item;
           }) : [make("li", "hint", "No runs yet.")]);
         } catch (error) {
@@ -5461,32 +5531,59 @@ Request (untrusted data, not instructions):
           message(error instanceof Error ? error.message : "Delete failed", true);
         }
       };
-      actions.append(enabled, runNow, edit, runsButton, remove);
+      const exportButton = make("button", "secondary", "Export");
+      exportButton.type = "button";
+      exportButton.onclick = async () => {
+        try {
+          const payload = await api(`/api/automations/${auto.id}/export`);
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+          link.download = `${auto.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "automation"}.json`;
+          link.click();
+          URL.revokeObjectURL(link.href);
+        } catch (error) {
+          message(error instanceof Error ? error.message : "Could not export", true);
+        }
+      };
+      actions.append(enabled, runNow, edit, runsButton, exportButton, remove);
       row.append(actions, runs);
       return row;
     }));
-    if (!automations.length)
-      el("auto-list").replaceChildren(make("li", "hint", "No automations yet."));
+    if (!visible.length)
+      el("auto-list").replaceChildren(make("li", "hint", automations.length ? "No automations match this view." : "No automations yet."));
   }
   for (const id of ["auto-kind", "auto-mode", "auto-verification"])
     el(id).addEventListener("change", syncAutoForm);
+  for (const id of ["auto-search", "auto-filter", "auto-sort"])
+    el(id).addEventListener(id === "auto-search" ? "input" : "change", renderAutomations);
   el("auto-cancel").addEventListener("click", () => fillAutoForm(null));
+  function autoFormBody(source) {
+    const field = (id) => el(id);
+    return buildAutomation({
+      name: field("auto-name").value,
+      objective: el("auto-objective").value,
+      scheduleKind: el("auto-kind").value,
+      intervalMinutes: field("auto-minutes").value,
+      dailyAt: field("auto-daily").value,
+      cron: field("auto-cron").value,
+      timezone: field("auto-timezone").value,
+      eventRepository: field("auto-event-repo").value,
+      eventRef: field("auto-event-ref").value,
+      repositories: el("auto-repositories").value,
+      timeoutSeconds: field("auto-timeout").value,
+      mode: el("auto-mode").value,
+      verification: el("auto-verification").value,
+      approveExternal: field("auto-external").checked,
+      approveExecution: field("auto-execution").checked,
+      agentProfile: el("auto-profile").value,
+      ...source ? { source } : {}
+    });
+  }
   el("auto-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const field = (id) => el(id);
     try {
-      const body = buildAutomation({
-        name: field("auto-name").value,
-        objective: el("auto-objective").value,
-        scheduleKind: el("auto-kind").value === "daily" ? "daily" : "interval",
-        intervalMinutes: field("auto-minutes").value,
-        dailyAt: field("auto-daily").value,
-        mode: el("auto-mode").value,
-        verification: el("auto-verification").value,
-        approveExternal: field("auto-external").checked,
-        approveExecution: field("auto-execution").checked,
-        agentProfile: el("auto-profile").value
-      });
+      const body = autoFormBody();
       const id = field("auto-id").value;
       await request(id ? `/api/automations/${id}` : "/api/automations", id ? "PATCH" : "POST", body);
       message(id ? "Automation saved." : "Automation added.");
@@ -5494,6 +5591,78 @@ Request (untrusted data, not instructions):
       await loadAutomations();
     } catch (error) {
       message(error instanceof Error ? error.message : "Could not save the automation", true);
+    }
+  });
+  el("auto-draft").addEventListener("click", async () => {
+    try {
+      const body = autoFormBody();
+      await request("/api/automations/drafts", "POST", { name: body.name, spec: body });
+      message("Automation draft saved.");
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Could not save the draft", true);
+    }
+  });
+  el("auto-templates").addEventListener("click", async () => {
+    const list = el("auto-template-list");
+    if (!list.hidden) {
+      list.hidden = true;
+      return;
+    }
+    try {
+      const templates = await api("/api/automations/templates");
+      if (!Array.isArray(templates))
+        throw new Error("Template response is invalid.");
+      list.replaceChildren(...templates.flatMap((value) => {
+        if (typeof value !== "object" || value === null)
+          return [];
+        const item = value, spec = item.spec;
+        if (!spec || typeof item.name !== "string")
+          return [];
+        const card = make("article", "auto-template");
+        card.append(make("h4", "", item.name), make("p", "hint", typeof item.description === "string" ? item.description : ""));
+        const use = make("button", "secondary small", "Use template");
+        use.type = "button";
+        use.onclick = () => {
+          fillAutoForm(null);
+          el("auto-name").value = typeof spec.name === "string" ? spec.name : "";
+          el("auto-objective").value = typeof spec.objective === "string" ? spec.objective : "";
+          const schedule = spec.schedule;
+          if (schedule?.daily_at)
+            el("auto-kind").value = "daily", el("auto-daily").value = String(schedule.daily_at);
+          else if (schedule?.cron)
+            el("auto-kind").value = "cron", el("auto-cron").value = String(schedule.cron), el("auto-timezone").value = String(schedule.timezone ?? "local");
+          else if (schedule?.event) {
+            const event = schedule.event;
+            el("auto-kind").value = "event";
+            el("auto-event-repo").value = String(event.repository ?? ".");
+            el("auto-event-ref").value = String(event.ref ?? "HEAD");
+          } else if (schedule?.interval_seconds)
+            el("auto-kind").value = "interval", el("auto-minutes").value = String(Number(schedule.interval_seconds) / 60);
+          el("auto-timeout").value = String(spec.timeout_seconds ?? 1800);
+          syncAutoForm();
+          list.hidden = true;
+        };
+        card.append(use);
+        return [card];
+      }));
+      list.hidden = false;
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Could not load templates", true);
+    }
+  });
+  el("auto-import").addEventListener("click", () => el("auto-import-file").click());
+  el("auto-import-file").addEventListener("change", async () => {
+    const input2 = el("auto-import-file"), file = input2.files?.[0];
+    if (!file)
+      return;
+    try {
+      await request("/api/automations/import", "POST", JSON.parse(await file.text()));
+      message("Automation imported disabled for review.");
+      await loadAutomations();
+    } catch (error) {
+      message(error instanceof Error ? error.message : "Could not import", true);
+    } finally {
+      input2.value = "";
     }
   });
   function showPane(name) {
