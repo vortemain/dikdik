@@ -146,6 +146,21 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.call("POST", f"/api/tasks/{task}/goal/stop", {})[0], 400)
         self.assertEqual(self.call("POST", f"/api/tasks/{task}/unknown", {})[0], 404)
 
+    def test_organisation_routes(self):
+        status, _, body = self.call("POST", "/api/tasks", {"objective": "Change x", "mode": "offline", "verification": "syntax", "edits": [{"path": "app.py", "before": "x = 1", "after": "x = 2"}]})
+        task = json.loads(body)["id"]
+        self.wait_terminal(task)
+        self.assertEqual(self.call("PATCH", f"/api/tasks/{task}", {"folder": "Bugs", "tags": ["ui"]})[0], 200)
+        listed = next(t for t in json.loads(self.call("GET", "/api/tasks")[2]) if t["id"] == task)
+        self.assertEqual((listed["folder"], listed["tags"]), ("Bugs", ["ui"]))
+        self.assertEqual(self.call("PATCH", f"/api/tasks/{task}", {"tags": ["#"]})[0], 400)
+        status, headers, content = self.call("GET", f"/api/tasks/{task}/download")
+        self.assertEqual((status, headers["Content-Type"], content[:2]), (200, "application/zip", b"PK"))
+        self.assertEqual(self.call("GET", "/api/tasks/" + "0" * 32 + "/download")[0], 404)
+        info = json.loads(self.call("GET", "/api/agent-info")[2])
+        self.assertIn("read_file", {tool["name"] for tool in info["tools"]})
+        self.assertEqual(self.call("GET", "/api/agent-info", auth=False)[0], 401)
+
     def test_bundled_fonts_are_served(self):
         status, headers, content = self.call("GET", "/fonts/inter-latin-wght-normal.woff2", auth=False)
         self.assertEqual((status, headers["Content-Type"]), (200, "font/woff2"))

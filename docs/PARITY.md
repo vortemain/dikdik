@@ -28,14 +28,14 @@ OpenHands app map (799 sub-features) and the agent-server/SDK map
 (`upstream/software-agent-sdk/.agents/skills/verify-agent-server/references/feature-map`,
 950 sub-features). The full list is in [`parity-audit.csv`](parity-audit.csv).
 
-| Status | First audit | After the first build phases | After the parity fix | Now (run control) |
-|---|---|---|---|---|
-| Has (equivalent behaviour) | 89 | 199 | 230 | 260 |
-| Partly (note says what is missing) | 91 | 154 | 165 | 180 |
-| Missing | 1,491 | 1,318 | 1,273 | 1,228 |
-| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 |
-| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 |
-| **Total** | **1,749** | **1,749** | **1,749** | **1,749** |
+| Status | First audit | After the first build phases | After the parity fix | Run control | Now (interface) |
+|---|---|---|---|---|---|
+| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 |
+| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 |
+| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 |
+| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 |
+| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 |
+| **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
 
 Correction (2026-10-27): earlier versions of this table counted 1,801 rows. 51 of
 them were usage notes from the reference maps' "Gotchas" sections that the first
@@ -80,14 +80,22 @@ questions, manual and automatic condensing, a context meter, judged goal loops,
 fork and Branch from here, Copy on replies and a per-tab model choice. Real Chrome
 checked every one of these against real HTTP/SQLite and a local model stand-in;
 no live provider or Docker run was made.
+The interface phase adds a Ctrl+K command menu, a Get started card and a
+missing-model banner that blocks Send, folders, tags, sorting, an age filter and
+archive clean-up in the sidebar, grouped steps, a Thinking row for provider
+reasoning, Markdown tables/alerts/quotes, workspace paths that open in Files,
+Copy on user messages, a file tree with tabs and Markdown preview, a resizable
+panel, `#settings/<page>` links, Git identity and a finish chime, a Skills/hooks/
+tools dialog, a conversation .zip download and a confirming Stop. Stuck detection
+now follows OpenHands (four identical actions in a row, or an A/B pair three
+times). Checked in real Chrome against a local model stand-in.
 
 Gaps the first audit found in features that looked present, all fixed: unused
 model profiles and keys, unused skills, the unloaded Rust indexer, automations
 granting consent on their own, real agent tool events missing from the chat,
 and automation runs never listing (`task_id`/`id` mismatch).
 
-Largest remaining gaps: live browser execution, the command menu, folders and tags,
-model routing, plugins and extension apps, automation Git sync and templates,
+Largest remaining gaps: live browser execution, model routing, plugins and extension apps, automation Git sync and templates,
 WebSocket and TypeScript clients, VS Code serving, onboarding, and any recorded run
 against a live model provider or Docker engine.
 

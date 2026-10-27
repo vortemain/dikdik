@@ -22,6 +22,7 @@ class ModelResponse:
     content: str
     tool_calls: list[ToolCall]
     usage_tokens: int = 0
+    reasoning: str = ""  # provider-reported "thinking"; shown, never trusted or replayed
 
 
 class AgentModel(Protocol):
@@ -49,6 +50,14 @@ class AgentOutcome:
     usage_tokens: int
     error: str | None
     transcript: dict | None = None  # everything needed to resume this run exactly
+
+
+def stuck_loop(recent: list[str]) -> bool:
+    """True after 4 identical actions in a row, or an A, B pair repeated three times."""
+    if len(recent) >= 4 and len(set(recent[-4:])) == 1:
+        return True
+    tail = recent[-6:]
+    return len(tail) == 6 and tail[0] != tail[1] and tail[0::2] == [tail[0]] * 3 and tail[1::2] == [tail[1]] * 3
 
 
 def _tool(name: str, description: str, properties: dict, required: list) -> dict:
@@ -187,7 +196,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
     if delegate is not None and subagents:
         tools = tools + [DELEGATE_TOOL]
     extra_names = {tool['function']['name'] for tool in extras}
-    repeats: dict[str, int] = {}
+    recent: list[str] = []  # successful calls, for loop detection
     checks: list[dict] = []
     model_calls = tool_calls = repairs = tokens = 0
     verified: dict[str, str] | None = None
@@ -307,6 +316,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         "usage_tokens": tokens, "requested_tools": len(response.tool_calls)})
         if tokens > budget.max_total_tokens:
             return outcome("failed", "Token budget exceeded")
+        if isinstance(response.reasoning, str) and response.reasoning.strip():
+            event("thinking", {"content": response.reasoning[:16000]})
         if response.content.strip():
             event("message", {"content": response.content})
         calls = response.tool_calls
@@ -556,8 +567,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                 if failures[fingerprint] >= 2:
                     return outcome("failed", "Repeated identical tool failure")
             else:
-                # The same successful call over and over means the agent is going in circles.
-                repeat = hashlib.sha256(_json([call.name, call.arguments, candidate]).encode()).hexdigest()
-                repeats[repeat] = repeats.get(repeat, 0) + 1
-                if repeats[repeat] >= 3:
+                # Four identical calls in a row, or two calls alternating three times, on an
+                # unchanged candidate mean the agent is going in circles.
+                recent.append(hashlib.sha256(_json([call.name, call.arguments, candidate]).encode()).hexdigest())
+                if stuck_loop(recent):
                     return outcome("failed", "Agent is stuck repeating the same action")

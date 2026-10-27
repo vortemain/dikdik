@@ -1,11 +1,15 @@
 """SQLite is authoritative for state and ordered event history."""
 
 import json
+import re
 import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+
+
+TAG = re.compile(r"[\w][\w -]{0,31}")
 
 
 class Store:
@@ -26,7 +30,8 @@ class Store:
             """)
             # Conversation metadata, added after the first release: migrate in place.
             columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)")}
-            for name, kind in (("title", "TEXT"), ("pinned", "INTEGER NOT NULL DEFAULT 0"), ("archived", "INTEGER NOT NULL DEFAULT 0")):
+            for name, kind in (("title", "TEXT"), ("pinned", "INTEGER NOT NULL DEFAULT 0"), ("archived", "INTEGER NOT NULL DEFAULT 0"),
+                               ("folder", "TEXT"), ("tags", "TEXT")):
                 if name not in columns:
                     db.execute(f"ALTER TABLE tasks ADD COLUMN {name} {kind}")
 
@@ -90,7 +95,7 @@ class Store:
     def list(self):
         with self.connect() as db:
             tasks = []
-            rows = db.execute("SELECT id,created,state,request,title,pinned,archived,"
+            rows = db.execute("SELECT id,created,state,request,title,pinned,archived,folder,tags,"
                               "(SELECT MAX(time) FROM events WHERE task_id=tasks.id) AS updated "
                               "FROM tasks ORDER BY pinned DESC, updated DESC LIMIT 500")
             for row in rows:
@@ -99,7 +104,8 @@ class Store:
                 tasks.append({"id": row["id"], "created": row["created"], "updated": row["updated"] or row["created"],
                               "state": row["state"], "objective": str(request.get("objective", ""))[:200],
                               "title": row["title"] or "", "mode": request.get("mode"),
-                              "pinned": bool(row["pinned"]), "archived": bool(row["archived"])})
+                              "pinned": bool(row["pinned"]), "archived": bool(row["archived"]),
+                              "folder": row["folder"] or "", "tags": json.loads(row["tags"]) if row["tags"] else []})
             return tasks
 
     def events_after(self, task, seq: int, limit: int = 200):
@@ -112,10 +118,20 @@ class Store:
         return state["state"], [{**dict(r), "data": json.loads(r["data"])} for r in rows]
 
     def update_meta(self, task, changes: dict):
-        """Rename, pin or archive a conversation. Unknown keys and bad types are rejected."""
-        if not isinstance(changes, dict) or not changes or set(changes) - {"title", "pinned", "archived"}:
-            raise ValueError("Only title, pinned and archived can be changed")
+        """Rename, pin, archive, file or tag a conversation. Unknown keys and bad types are rejected."""
+        if not isinstance(changes, dict) or not changes or set(changes) - {"title", "pinned", "archived", "folder", "tags"}:
+            raise ValueError("Only title, pinned, archived, folder and tags can be changed")
         values = {}
+        if "folder" in changes:
+            folder = changes["folder"]
+            if folder is not None and (not isinstance(folder, str) or len(folder) > 60 or any(ord(c) < 32 for c in folder)):
+                raise ValueError("Folder must be at most 60 characters on one line")
+            values["folder"] = (folder or "").strip() or None
+        if "tags" in changes:
+            tags = changes["tags"]
+            if not isinstance(tags, list) or len(tags) > 10 or not all(isinstance(t, str) and TAG.fullmatch(t.strip().lower()) for t in tags):
+                raise ValueError("Use up to 10 tags of 1–32 letters, digits, spaces, - or _")
+            values["tags"] = json.dumps(sorted({t.strip().lower() for t in tags})) if tags else None
         if "title" in changes:
             title = changes["title"]
             if not isinstance(title, str) or len(title) > 200 or any(ord(c) < 32 for c in title):

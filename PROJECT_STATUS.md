@@ -15,12 +15,13 @@ encrypted keys driving every call; skills, MCP servers (HTTP and stdio) and agen
 profiles; streamed replies over server-sent events; automations with stored
 approvals; a Python client/CLI; the Rust indexer loaded by default; and run
 control (pause/exact resume, per-action confirmation, hooks, subagents,
-attachments, slash commands, side questions, condensing, judged goals, forks).
-The parity audit (docs/PARITY.md) moved from 89 to 260 fully matched OpenHands sub-features
+attachments, slash commands, side questions, condensing, judged goals, forks);
+and an organised interface (command menu, folders and tags, file tree, onboarding).
+The parity audit (docs/PARITY.md) moved from 89 to 283 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **286 passed, 2 live-runtime tests skipped**; Bun
-**73 passed**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-27): Python **294 passed, 2 live-runtime tests skipped**; Bun
+**83 passed**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -51,6 +52,11 @@ Test status (2026-10-27): Python **286 passed, 2 live-runtime tests skipped**; B
   menu, `/btw` side questions, manual/automatic condensing, a context meter,
   judged goal loops, fork/branch and Copy. Checked in real Chrome with a local
   model stand-in; not run against a live provider or Docker.
+- Added the interface phase: Ctrl+K command menu, Get started card, a banner and
+  blocked Send without a model, folders/tags/sort/age filter, grouped steps,
+  Thinking rows, Markdown tables and alerts, clickable workspace paths, a file
+  tree with tabs and preview, a resizable panel, settings links, Git identity,
+  a finish chime, an agent-info dialog, .zip download and a confirming Stop.
 - Independent review findings fixed: early-exit verification bypass, finalization
   cancellation race, component-token undercount; reviewer reran regressions.
 - Built wheel offline, inspected its 22 entries (no upstream/Python runtime deps),
@@ -61,8 +67,8 @@ Test status (2026-10-27): Python **286 passed, 2 live-runtime tests skipped**; B
 
 ## Test status
 
-- Python: **286 passed, 2 live-runtime tests skipped** (288 total).
-- Bun: **73 passed / 378 assertions**; strict TypeScript check and browser build passed.
+- Python: **294 passed, 2 live-runtime tests skipped** (296 total).
+- Bun: **83 passed / 413 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit

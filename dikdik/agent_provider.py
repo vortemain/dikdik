@@ -53,4 +53,6 @@ class CompatibleAgentModel:
             raise ValueError("Provider returned an invalid or incomplete tool-call response") from None
         usage = usage_counts(data)
         reported = max(usage.get("total_tokens", 0), usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
-        return ModelResponse(content=content, tool_calls=calls, usage_tokens=reported)
+        thinking = message.get("reasoning_content") or message.get("reasoning") or ""
+        return ModelResponse(content=content, tool_calls=calls, usage_tokens=reported,
+                             reasoning=thinking[:16000] if isinstance(thinking, str) else "")

@@ -178,6 +178,7 @@ export interface TaskSummary {
   id: string; state: string;
   objective?: string; title?: string; created?: number; updated?: number;
   pinned?: boolean; archived?: boolean; mode?: string;
+  folder?: string; tags?: string[];
 }
 export interface Task extends TaskSummary {
   request: TaskRequest;
@@ -378,6 +379,10 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [{ ...base, role: "assistant", title: "Proposed edits", details: d }];
     case "agent_started":
       return [{ ...base, role: "assistant", title: "Started tool-using agent", details: d }];
+    case "agent_thinking": {
+      const content = textOf(d.content, 16000);
+      return content ? [{ ...base, role: "tool", kind: "agent_thinking", title: "Thinking", body: content }] : [];
+    }
     case "agent_message": {
       const content = textOf(d.content ?? d.message ?? d.text);
       return content ? [{ ...base, role: "assistant", title: "Agent", body: content, details: d.usage }] : [];

@@ -1,18 +1,21 @@
 """Single-worker lifecycle; source workspace is never modified."""
 
 import difflib
-import json
 import hashlib
+import io
+import json
 import os
+import re
 import shutil
 import threading
 import time
 import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .providers import propose
-from .agent import AgentBudget, BROWSER_TOOL, run_agent
+from .agent import AgentBudget, BROWSER_TOOL, DELEGATE_TOOL, SHELL_TOOL, TOOLS, run_agent
 from .agent_profiles import LIMITS as PROFILE_LIMITS, AgentProfiles
 from .agent_provider import CompatibleAgentModel
 from .automation import AutomationScheduler
@@ -35,7 +38,7 @@ from .store import Store
 TERMINAL = {"completed", "failed", "blocked", "cancelled", "interrupted", "draft", "paused"}
 RESUMABLE = {"paused", "failed", "cancelled", "interrupted", "blocked"}
 POLICIES = {"never", "risky", "always"}
-APP_DEFAULTS = {"confirmation": "never", "condenser": True}
+APP_DEFAULTS = {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": False}
 
 
 def run_tests(snapshot, cancel, name=None, files=None):
@@ -210,12 +213,46 @@ class Engine:
             raise ValueError("Only " + ", ".join(APP_DEFAULTS) + " can be changed here")
         if "confirmation" in body and body["confirmation"] not in POLICIES:
             raise ValueError("confirmation must be never, risky or always")
-        if "condenser" in body and not isinstance(body["condenser"], bool):
-            raise ValueError("condenser must be true or false")
+        for flag in ("condenser", "sounds"):
+            if flag in body and not isinstance(body[flag], bool):
+                raise ValueError(f"{flag} must be true or false")
+        if "git_name" in body and (not isinstance(body["git_name"], str) or len(body["git_name"]) > 100 or any(ord(c) < 32 for c in body["git_name"])):
+            raise ValueError("Git name must be at most 100 characters on one line")
+        if "git_email" in body and (not isinstance(body["git_email"], str) or (body["git_email"] and not re.fullmatch(r"[^@\s<>]{1,64}@[^@\s<>]{1,190}", body["git_email"]))):
+            raise ValueError("Git email must look like name@example.com")
         with self.store.connect() as db:
             for key, value in body.items():
                 db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", ("app." + key, json.dumps(value)))
         return self.app_settings()
+
+    def git_identity(self):
+        settings = self.app_settings()
+        return (settings["git_name"].strip(), settings["git_email"].strip())
+
+    def agent_info(self):
+        """What the agent can use in this workspace: tools, skills, subagents and hook rules."""
+        tools = [*TOOLS, SHELL_TOOL, BROWSER_TOOL, DELEGATE_TOOL, TASK_TRACKER]
+        try:
+            skills = [{"name": row["name"], "description": row["description"], "scope": row["scope"], "enabled": bool(row["enabled"])} for row in self.skills.enumerate_skills()]
+        except OSError:
+            skills = []
+        return {"tools": [{"name": t["function"]["name"], "description": t["function"]["description"]} for t in tools],
+                "skills": skills,
+                "subagents": [{k: a.get(k, "") for k in ("name", "description", "source")} for a in load_subagents(self.root, self.data / "agents")],
+                "hooks": load_hooks(self.root)}
+
+    def archive(self, task):
+        """A zip of the conversation: its events, the result and the candidate files it changed."""
+        source = self.store.get(task)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
+            bundle.writestr("conversation.json", json.dumps({k: source[k] for k in ("id", "created", "state", "request", "result", "events")}, indent=2))
+            artifact = self.data / "artifacts" / task
+            if artifact.is_dir():
+                for path in sorted(artifact.rglob("*")):
+                    if path.is_file() and artifact.resolve() in path.resolve().parents:
+                        bundle.write(path, "candidate/" + path.relative_to(artifact).as_posix())
+        return buffer.getvalue()
 
     def pause(self, task):
         with self.lock:

@@ -51,6 +51,10 @@
     <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6.5v11M15 6.5v11"/></symbol>
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 6.2v11.6a.6.6 0 0 0 .9.5l9.2-5.8a.6.6 0 0 0 0-1L8.9 5.7a.6.6 0 0 0-.9.5Z"/></symbol>
     <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2"/><circle cx="7" cy="18.5" r="2"/><circle cx="17" cy="8" r="2"/><path d="M7 7.5v9M17 10c0 4-10 3-10 6.5"/></symbol>
+    <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 9h6v6H9zM9 9V6.5A2.5 2.5 0 1 0 6.5 9H9Zm6 0V6.5A2.5 2.5 0 1 1 17.5 9H15Zm0 6v2.5a2.5 2.5 0 1 0 2.5-2.5H15Zm-6 0v2.5A2.5 2.5 0 1 1 6.5 15H9Z"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1.4 1.4 0 0 1 0 2L13.8 20.5a1.4 1.4 0 0 1-2 0Z"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.4"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/></symbol>
     <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".6" fill="currentColor"/></symbol>
   </svg>
 
@@ -75,10 +79,13 @@
   <p id="message" role="status" aria-live="polite"></p>
   <div id="task-menu" class="menu" role="menu" aria-label="Task actions" hidden>
     <button type="button" role="menuitem" data-action="rename"><svg class="i"><use href="#i-pencil"/></svg><span>Rename</span></button>
+    <button type="button" role="menuitem" data-action="organise"><svg class="i"><use href="#i-tag"/></svg><span>Folder and tags…</span></button>
     <button type="button" role="menuitem" data-action="pin"><svg class="i"><use href="#i-pin"/></svg><span>Pin</span></button>
     <button type="button" role="menuitem" data-action="archive"><svg class="i"><use href="#i-archive"/></svg><span>Archive</span></button>
     <button type="button" role="menuitem" data-action="export"><svg class="i"><use href="#i-download"/></svg><span>Export transcript</span></button>
     <button type="button" role="menuitem" data-action="fork"><svg class="i"><use href="#i-branch"/></svg><span>Fork conversation</span></button>
+    <button type="button" role="menuitem" data-action="download"><svg class="i"><use href="#i-download"/></svg><span>Download data (.zip)</span></button>
+    <button type="button" role="menuitem" data-action="info"><svg class="i"><use href="#i-info"/></svg><span>Skills, hooks and tools</span></button>
     <button type="button" role="menuitem" data-action="delete" class="danger-item"><svg class="i"><use href="#i-trash"/></svg><span>Delete</span></button>
   </div>
 
@@ -86,14 +93,23 @@
     <aside class="sidebar" aria-label="Tasks">
       <div class="sidebar-top">
         <a class="brand" href="/" aria-label="Dikdik home"><img src="/icon.svg" alt="" width="26" height="26">dikdik</a>
+        <button id="open-palette" class="ghost icon" type="button" aria-label="Command menu" title="Command menu (Ctrl K)"><svg class="i"><use href="#i-command"/></svg></button>
         <button id="toggle-sidebar" class="ghost icon" type="button" aria-label="Hide sidebar" title="Hide sidebar"><svg class="i"><use href="#i-sidebar"/></svg></button>
       </div>
-      <button id="new-task" class="new-task" type="button"><svg class="i"><use href="#i-plus"/></svg>New task<kbd>Ctrl K</kbd></button>
+      <button id="new-task" class="new-task" type="button"><svg class="i"><use href="#i-plus"/></svg>New task<kbd>Ctrl ⇧ O</kbd></button>
       <label class="task-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Search tasks</span><input id="task-search" type="search" placeholder="Search tasks" autocomplete="off"></label>
+      <div class="list-tools">
+        <label class="sr-only" for="task-sort">Sort conversations</label>
+        <select id="task-sort" class="mini-select"><option value="recent">Recent activity</option><option value="created">Newest first</option><option value="title">Title</option></select>
+        <label class="sr-only" for="task-since">Show conversations from</label>
+        <select id="task-since" class="mini-select"><option value="0">Any time</option><option value="7">Past week</option><option value="30">Past month</option></select>
+      </div>
+      <div id="tag-chips" class="tag-chips" role="group" aria-label="Filter by tag" hidden></div>
       <p id="recent-head" class="list-head">Recent</p>
       <nav id="conv-list" class="conv-list" aria-label="Recent tasks">
         <div id="history" class="conv-history"></div>
         <button id="show-archived" class="ghost small show-archived" type="button" hidden>Show archived</button>
+        <button id="delete-archived" class="ghost small show-archived danger-text" type="button" hidden>Delete all archived</button>
       </nav>
       <div class="sidebar-foot">
         <div class="project">
@@ -124,6 +140,10 @@
         <section class="welcome" aria-label="Welcome">
           <img class="welcome-mark" src="/icon.svg" alt="">
           <h1>What should we build?</h1>
+          <div id="onboarding" class="onboarding" hidden>
+            <div class="onb-head"><strong>Get started</strong><button id="onboarding-dismiss" class="ghost small" type="button">Dismiss</button></div>
+            <ol id="onboarding-steps" class="onb-steps"></ol>
+          </div>
           <p id="welcome-sub">Describe a bug, feature or change. Dikdik works on an isolated copy and shows you every diff.</p>
           <div class="suggestions">
             <button class="suggestion" type="button" data-prompt="Fix the failing tests without changing the tests."><strong>Fix failing tests</strong><span>Find the bug and repair it; tests stay untouched.</span></button>
@@ -138,6 +158,7 @@
 
       <section class="composer" aria-label="Send a message">
         <div class="composer-inner">
+          <div id="model-banner" class="goal-banner model-banner" role="alert" hidden><svg class="i"><use href="#i-alert"/></svg><span class="goal-text">No model is set up yet. Agent, planning and single-proposal modes need one.</span><button id="model-banner-setup" class="primary small" type="button">Set up a model</button></div>
           <div id="goal-banner" class="goal-banner" role="status" hidden><svg class="i"><use href="#i-target"/></svg><span id="goal-text" class="goal-text"></span><button id="goal-stop" class="ghost small" type="button">Stop goal</button><button id="goal-resume" class="ghost small" type="button" hidden>Resume goal</button></div>
           <div id="side-answer" class="side-answer" role="status" hidden><div class="side-head"><span id="side-question" class="side-question"></span><button id="side-close" class="ghost icon" type="button" aria-label="Dismiss side answer" title="Dismiss"><svg class="i"><use href="#i-x"/></svg></button></div><div id="side-body"></div></div>
           <ul id="slash-menu" class="slash-menu" role="listbox" aria-label="Commands" hidden></ul>
@@ -177,6 +198,7 @@
     </main>
 
     <aside id="canvas" class="canvas" aria-label="Workspace panel" hidden>
+      <div id="canvas-resize" class="canvas-resize" role="separator" aria-orientation="vertical" aria-label="Resize panel; arrow keys resize, Home resets" tabindex="0" title="Drag to resize"></div>
       <div class="canvas-head">
         <div class="canvas-tabs" role="tablist" aria-label="Panel">
           <button class="canvas-tab" type="button" role="tab" data-tab="changes" aria-selected="true"><span id="review-title">Changes</span><span id="canvas-count" class="tab-count"></span></button>
@@ -208,7 +230,8 @@
       </div>
       <div class="canvas-body" data-pane="files" hidden>
         <label class="file-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Find a file</span><input id="file-search" type="search" placeholder="Find a file" autocomplete="off"></label>
-        <div id="file-list" class="file-list" role="listbox" aria-label="Workspace files"></div>
+        <div id="file-list" class="file-list file-tree" role="tree" aria-label="Workspace files"></div>
+        <div id="file-tabs" class="file-tabs" role="tablist" aria-label="Open files" hidden></div>
         <div class="diff-view">
           <div class="code-block">
             <div class="code-head">
@@ -217,9 +240,11 @@
                 <button type="button" data-version="workspace" aria-pressed="true">Workspace</button>
                 <button type="button" data-version="candidate" aria-pressed="false">Candidate</button>
               </div>
+              <button id="file-preview" class="copy" type="button" hidden aria-pressed="false"><svg class="i"><use href="#i-eye"/></svg><span>Preview</span></button>
               <button id="copy-file" class="copy" type="button" hidden><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button>
             </div>
             <pre id="file-view" class="numbered" tabindex="0"></pre>
+            <div id="file-rendered" class="file-rendered" hidden></div>
           </div>
         </div>
       </div>
@@ -267,6 +292,9 @@
         <div class="setting-row"><div><h4>Appearance</h4><p>Match your system, or pick light or dark.</p></div><select id="theme" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
         <div class="setting-row"><div><h4>Confirm actions</h4><p>Ask before the agent runs a tool. “Risky only” asks for commands that delete, install, use the network or rewrite history.</p></div><select id="confirmation-policy" aria-label="Confirm actions"><option value="never">Never ask</option><option value="risky">Risky only</option><option value="always">Every action</option></select></div>
         <div class="setting-row"><div><h4>Condense long conversations</h4><p>When a conversation outgrows the history budget, older turns are replaced with a summary written by your model.</p></div><label class="check"><input id="condenser" type="checkbox" checked>On</label></div>
+        <div class="setting-row"><div><h4>Sound when a task finishes</h4><p>A short chime when a run ends while you are in another tab or window.</p></div><label class="check"><input id="sounds" type="checkbox">On</label></div>
+        <div class="setting-row setting-stack"><div><h4>Git identity</h4><p>Name and email for commits made from the Git tab. Leave blank to use your Git configuration.</p></div>
+          <form id="git-identity" class="inline-form"><label class="sr-only" for="git-name">Git name</label><input id="git-name" maxlength="100" placeholder="Your Name"><label class="sr-only" for="git-email">Git email</label><input id="git-email" type="email" maxlength="254" placeholder="you@example.com"><button class="small" type="submit">Save</button></form></div>
         <div class="setting-row"><div><h4>Browser tools</h4><p>Enable public web captures. Each task or manual capture still needs your approval.</p><p id="browser-availability" class="hint"></p></div><label class="check"><input id="browser-enabled" type="checkbox">Enabled</label></div>
         <div class="setting-row"><div><h4>Workspace</h4><p>The only folder Dikdik may read. Candidates are written to the private data directory.</p></div></div>
         <dl class="kv"><dt>Project</dt><dd id="settings-project">—</dd><dt>Inventory</dt><dd id="settings-inventory">—</dd><dt>Indexer</dt><dd id="settings-indexer">—</dd><dt>Network</dt><dd>Loopback only (127.0.0.1)</dd><dt>Sign-in</dt><dd>Remembered in this browser for 30 days. Restart with <code>--rotate-token</code> to sign out everywhere.</dd></dl>
@@ -353,6 +381,28 @@
         <ol id="auto-list" class="m4-list"></ol>
       </section>
     </div>
+  </dialog>
+  <dialog id="palette" class="palette" aria-label="Command menu">
+    <div class="palette-field"><svg class="i"><use href="#i-search"/></svg><input id="palette-input" type="text" placeholder="Search conversations and commands…" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"></div>
+    <ul id="palette-list" class="palette-list" role="listbox" aria-label="Results"></ul>
+    <p class="palette-foot"><kbd>↑</kbd><kbd>↓</kbd> move <kbd>Enter</kbd> open <kbd>Esc</kbd> close</p>
+  </dialog>
+  <dialog id="meta-dialog" class="small-dialog" aria-labelledby="meta-title">
+    <form id="meta-form" method="dialog">
+      <h3 id="meta-title">Folder and tags</h3>
+      <label for="meta-folder">Folder</label>
+      <input id="meta-folder" list="folder-options" maxlength="60" placeholder="No folder" autocomplete="off">
+      <datalist id="folder-options"></datalist>
+      <label for="meta-tags">Tags</label>
+      <input id="meta-tags" maxlength="400" placeholder="ui, needs review" autocomplete="off">
+      <p class="hint">Separate tags with commas. Up to 10.</p>
+      <p id="meta-error" class="error-text" role="alert" hidden></p>
+      <div class="row"><button id="meta-cancel" class="ghost small" type="button">Cancel</button><button id="meta-save" class="primary small" type="submit">Save</button></div>
+    </form>
+  </dialog>
+  <dialog id="info-dialog" class="small-dialog wide-dialog" aria-labelledby="info-title">
+    <div class="settings-head"><h3 id="info-title">Skills, hooks and tools</h3><button id="info-close" class="ghost icon" type="button" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+    <div id="info-body" class="info-body"></div>
   </dialog>
 </body>
 </html>

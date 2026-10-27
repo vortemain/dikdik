@@ -19,7 +19,7 @@ RESPONSE_LIMIT = 256000
 
 def _assemble(lines, on_text) -> dict:
     """Rebuild one chat-completions response from its streamed chunks."""
-    content, calls, finish, usage, size = "", {}, None, None, 0
+    content, reasoning, calls, finish, usage, size = "", "", {}, None, None, 0
     for raw in lines:
         size += len(raw)
         if size > RESPONSE_LIMIT:
@@ -43,6 +43,9 @@ def _assemble(lines, on_text) -> dict:
                 continue
             finish = choice.get("finish_reason") or finish
             delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+            for key in ("reasoning_content", "reasoning"):  # model "thinking", when the provider sends it
+                if isinstance(delta.get(key), str) and len(reasoning) < 65536:
+                    reasoning += delta[key]
             if isinstance(delta.get("content"), str) and delta["content"]:
                 content += delta["content"]
                 if on_text:
@@ -55,7 +58,8 @@ def _assemble(lines, on_text) -> dict:
                 function = piece.get("function") if isinstance(piece.get("function"), dict) else {}
                 slot["function"]["name"] += function.get("name") or ""
                 slot["function"]["arguments"] += function.get("arguments") or ""
-    message = {"content": content or None, **({"tool_calls": [calls[i] for i in sorted(calls)]} if calls else {})}
+    message = {"content": content or None, **({"tool_calls": [calls[i] for i in sorted(calls)]} if calls else {}),
+               **({"reasoning_content": reasoning} if reasoning else {})}
     return {"choices": [{"message": message, "finish_reason": finish}], **({"usage": usage} if usage else {})}
 
 

@@ -132,6 +132,14 @@ class ControlTests(unittest.TestCase):
         result = run_agent({"calc.py": "x = 1\n"}, "Look", Script(replies), None, lambda k, d: None, threading.Event())
         self.assertEqual((result.state, result.error), ("failed", "Agent is stuck repeating the same action"))
 
+    def test_stuck_rules(self):
+        from dikdik.agent import stuck_loop
+        self.assertTrue(stuck_loop(list("xaaaa")))
+        self.assertFalse(stuck_loop(list("aaa")))
+        self.assertTrue(stuck_loop(list("ababab")))
+        self.assertFalse(stuck_loop(list("ababa")))
+        self.assertFalse(stuck_loop(list("abacab")))  # re-reading a file now and then is not a loop
+
     # --- approvals and hooks ---------------------------------------------------------
     def test_risk_rules(self):
         cases = {("run_command", "rm -rf build"): "high", ("run_command", "curl https://x"): "high",
@@ -298,7 +306,7 @@ class ControlTests(unittest.TestCase):
 
     # --- settings -------------------------------------------------------------------------------------
     def test_app_settings(self):
-        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True})
+        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": False})
         self.assertEqual(self.engine.update_app_settings({"confirmation": "risky"})["confirmation"], "risky")
         for bad in ({"confirmation": "sometimes"}, {"condenser": "yes"}, {"theme": "dark"}, {}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):

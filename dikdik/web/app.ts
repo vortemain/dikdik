@@ -3,6 +3,8 @@ import { attachmentList, contextUsage, goalState, isResumable, openConfirmations
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries, profilesPanel, secretsPanel, skillsPanel } from "./contracts";
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, SlashCommand, TaskRequest, DiffReview, M4Factory, M4Node, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
+import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, workspacePath } from "./organise";
+import type { TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
@@ -32,6 +34,13 @@ let modelProfiles: { id: string; name: string; model: string }[] = [], skillName
 let slashItems: SlashCommand[] = [], slashIndex = 0, slashModels = false;
 let taskRequest: TaskRequest | null = null;
 const confirmCards = new Map<string, HTMLElement>();
+// Organisation, onboarding and files: read by functions that run at load time.
+let modelReady = true, activeTag = "", listLimit = 40, folderOptions: string[] = [];
+let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean } | null = null;
+let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsElement; summary: HTMLElement; count: number } | null = null;
+let showAllMessages = false, projectFileSet = new Set<string>();
+const expandedDirs = new Set<string>();
+let openTabs: string[] = [], fileText = "", filePreview = false;
 const composerSize = new ComposerSize();
 
 // --- small DOM helpers ----------------------------------------------------
@@ -139,7 +148,15 @@ function inline(text: string): Node[] {
         if (!url.username && !url.password) { const link = make('a', '', parts?.[1] ?? 'Link'); link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; nodes.push(link); }
         else nodes.push(document.createTextNode(token));
       } catch { nodes.push(document.createTextNode(token)); }
-    } else nodes.push(token.startsWith("`") ? make("code", "", token.slice(1, -1)) : make("strong", "", token.slice(2, -2)));
+    } else if (token.startsWith("`")) {
+      const target = workspacePath(token.slice(1, -1), projectFileSet);
+      if (target) {
+        const link = make("button", "path-link"); link.type = "button"; link.title = `Open ${target.path} in Files`;
+        link.append(make("code", "", token.slice(1, -1)));
+        link.onclick = () => { void openFileFromChat(target.path, target.line); };
+        nodes.push(link);
+      } else nodes.push(make("code", "", token.slice(1, -1)));
+    } else nodes.push(make("strong", "", token.slice(2, -2)));
     last = index + token.length;
   }
   if (last < text.length) nodes.push(document.createTextNode(text.slice(last)));
@@ -165,6 +182,26 @@ function richText(text: string): HTMLElement {
       root.append(codeBlock(body.join("\n"), (fence[1] ?? "").toLowerCase()));
       continue;
     }
+    const table = parseTable(lines, i);
+    if (table) {
+      flushParagraph(); flushList();
+      root.append(markdownTable(table));
+      i = table.end - 1;
+      continue;
+    }
+    const alert = alertKind(line);
+    if (alert || /^\s*>/.test(line)) {
+      flushParagraph(); flushList();
+      const body: string[] = [];
+      for (i += alert ? 1 : 0; i < lines.length && /^\s*>/.test(lines[i] ?? ""); i++) body.push((lines[i] ?? "").replace(/^\s*>\s?/, ""));
+      i--;
+      if (alert) {
+        const box = make("div", `md-alert md-alert-${alert}`);
+        box.append(make("p", "md-alert-title", alert[0]!.toUpperCase() + alert.slice(1)), richText(body.join("\n")));
+        root.append(box);
+      } else { const quote = make("blockquote"); quote.append(...inline(body.join("\n"))); root.append(quote); }
+      continue;
+    }
     const heading = /^#{1,4}\s+(.*)$/.exec(line);
     const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
     const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
@@ -184,6 +221,21 @@ function richText(text: string): HTMLElement {
   }
   flushParagraph();
   return root;
+}
+
+function markdownTable(table: NonNullable<ReturnType<typeof parseTable>>): HTMLElement {
+  const scroller = make("div", "table-scroll");
+  const grid = make("table"), head = make("thead"), body = make("tbody"), headRow = make("tr");
+  table.header.forEach((cell, index) => { const th = make("th"); th.append(...inline(cell)); if (table.align[index]) th.style.textAlign = table.align[index]!; headRow.append(th); });
+  head.append(headRow);
+  for (const row of table.rows) {
+    const tr = make("tr");
+    row.forEach((cell, index) => { const td = make("td"); td.append(...inline(cell)); if (table.align[index]) td.style.textAlign = table.align[index]!; tr.append(td); });
+    body.append(tr);
+  }
+  grid.append(head, body);
+  scroller.append(grid);
+  return scroller;
 }
 
 // --- chat rendering -------------------------------------------------------
@@ -238,6 +290,7 @@ function stepLabel(msg: ChatMessage): StepLabel {
     case "cancellation_requested": return { icon: "stop", title: "Cancellation requested", arg: "" };
     case "recovery_cleanup": return { icon: "alert", title: "Recovered after restart", arg: detailField(details, "warning") };
     case "hook_blocked": return { icon: "shield", title: "Blocked by a project hook", arg: msg.body ?? "" };
+    case "agent_thinking": return { icon: "sparkle", title: "Thinking", arg: "" };
     case "confirmation_resolved": return { icon: msg.title === "Approved" ? "check" : "x", title: `${msg.title} · ${detailField(details, "id") ? "action" : ""}`.replace(/ · $/, ""), arg: detailField(details, "reason") };
     case "subagent": return { icon: "sparkle", title: msg.title ?? "Subagent", arg: (msg.body ?? "").split("\n")[0] ?? "" };
     case "condensed": return { icon: "list", title: msg.title ?? "Condensed", arg: "" };
@@ -262,6 +315,10 @@ function evidenceBlocks(msg: ChatMessage, path = ""): HTMLElement[] {
     blocks.push(codeBlock(detailField(details, "command"), "bash", { wrap: true }));
     return blocks;
   }
+  if (msg.kind === "agent_thinking") {
+    blocks.push(make("div", "thinking-text", msg.body ?? ""));
+    return blocks;
+  }
   if (msg.kind === "agent_tool_call" && toolName(msg) === "create_file" && detailField(details, "content")) {
     blocks.push(codeBlock(detailField(details, "content"), languageFor(path)));
     return blocks;
@@ -278,6 +335,7 @@ function evidenceBlocks(msg: ChatMessage, path = ""): HTMLElement[] {
 function stepRow(msg: ChatMessage): { li: HTMLLIElement; body: HTMLElement } {
   const li = make("li", `msg msg-${msg.role === "system" ? "system" : "tool"} msg-${msg.kind}`);
   li.id = msg.id;
+  li.dataset.step = "1";
   const label = stepLabel(msg);
   const details = make("details", "step");
   const summary = make("summary");
@@ -510,7 +568,10 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
   if (msg.role === "user") {
     const li = make("li", `msg msg-user msg-${msg.kind}`);
     li.id = msg.id;
-    li.append(make("div", "bubble", msg.body ?? ""));
+    const bubble = make("div", "bubble", msg.body ?? "");
+    const tools = make("div", "msg-actions user-actions");
+    tools.append(copyButton(() => msg.body ?? "", "Copy"));
+    li.append(bubble, tools);
     lastRole = "user";
     return li;
   }
@@ -544,16 +605,54 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
 function nearBottom(thread: HTMLElement): boolean {
   return !(thread.scrollHeight > 0) || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 120;
 }
+const EARLIER_LIMIT = 150;
 function renderMessageStream(messages: ChatMessage[]): void {
   const stream = el("message-stream"), thread = el("thread");
   const stick = nearBottom(thread);
+  if (!rendered.size && !showAllMessages && messages.length > EARLIER_LIMIT) {
+    // Long conversations open on their newest messages; older ones load on request.
+    const hidden = messages.slice(0, messages.length - EARLIER_LIMIT);
+    for (const msg of hidden) rendered.add(msg.id);
+    const li = make("li", "msg show-earlier");
+    const more = make("button", "ghost small", `Show ${hidden.length} earlier messages`); more.type = "button";
+    more.onclick = () => { showAllMessages = true; rerenderConversation(); };
+    li.append(more);
+    stream.append(li);
+  }
   for (const msg of messages) {
     if (rendered.has(msg.id)) continue;
     rendered.add(msg.id);
     const node = renderMessage(msg);
-    if (node) stream.append(node);
+    if (node) addToStream(stream, node);
   }
   if (stick) thread.scrollTop = thread.scrollHeight;
+}
+/** Consecutive steps share one block; three or more fold into "N steps" once the agent moves on. */
+function addToStream(stream: HTMLElement, node: HTMLLIElement): void {
+  if (node.dataset.step !== "1") { closeStepGroup(); stream.append(node); return; }
+  if (!stepGroup || stream.lastElementChild !== stepGroup.li) {
+    closeStepGroup();
+    const li = make("li", "msg step-group few"), details = make("details"), summary = make("summary"), list = make("ol", "step-list");
+    details.open = true;
+    summary.addEventListener("click", event => { if (li.className.includes("few")) event.preventDefault(); });
+    details.append(summary, list);
+    li.append(details);
+    stream.append(li);
+    stepGroup = { li, list, details, summary, count: 0 };
+  }
+  stepGroup.list.append(node);
+  stepGroup.count++;
+  stepGroup.summary.replaceChildren(icon("chevron"), make("span", "", `${stepGroup.count} steps`));
+  setClass(stepGroup.li, "few", stepGroup.count < 3);
+}
+function closeStepGroup(): void {
+  if (stepGroup && stepGroup.count >= 3) stepGroup.details.open = false;
+  stepGroup = null;
+}
+function rerenderConversation(): void {
+  rendered = new Set(); pendingCalls = []; lastRole = ""; stepGroup = null; confirmCards.clear();
+  el("message-stream").replaceChildren();
+  renderMessageStream(eventsToChat(liveEvents, liveObjective));
 }
 
 // --- diff review canvas ---------------------------------------------------
@@ -773,6 +872,11 @@ function renderFileList(): void {
   const changed = changedPaths();
   const all = [...new Set([...review.files.filter(f => f.status === "added").map(f => f.path), ...projectFiles])].sort();
   const matches = all.filter(path => !query || path.toLowerCase().includes(query));
+  if (!query) {
+    el("file-list").replaceChildren(...treeRows(all, changed));
+    if (!all.length) el("file-list").replaceChildren(make("p", "more", "No files"));
+    return;
+  }
   const nodes: HTMLElement[] = matches.slice(0, 400).map(path => {
     const item = make("button", "", path);
     item.type = "button";
@@ -791,8 +895,15 @@ async function showFile(path: string, version: string): Promise<void> {
   try {
     const query = `/api/files/content?path=${encodeURIComponent(path)}${version === "candidate" && selected ? `&task=${encodeURIComponent(selected)}` : ""}`;
     const data = await api<{ path: string; version: string; text: string }>(query);
-    openFile = path; fileVersion = data.version;
+    openFile = path; fileVersion = data.version; fileText = data.text;
+    openTabs = [...openTabs.filter(tab => tab !== path), path].slice(-8);
+    for (const folder of parentFolders(path)) expandedDirs.add(folder);
     el("file-name").textContent = path;
+    const markdown = /\.(md|markdown)$/i.test(path);
+    el("file-preview").hidden = !markdown;
+    if (!markdown) filePreview = false;
+    showFilePreview();
+    renderFileTabs();
     const lines = data.text.split("\n");
     if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
     el("file-view").replaceChildren(...lines.map((line, index) => {
@@ -891,6 +1002,7 @@ async function applyChanges(): Promise<void> {
   try {
     const done = await request<{ applied: string[]; unchanged: string[] }>(`/api/tasks/${encodeURIComponent(selected)}/apply`, "POST", { confirm: true });
     lastApplied = done.applied;
+    storageSet("dikdik.onboarding.applied", "1");
     applyStep = "done";
     message(done.applied.length ? `Applied ${done.applied.length} file${done.applied.length === 1 ? "" : "s"}.` : "Already applied; nothing to write.");
     watching = true;  // show the "applied" note in the conversation
@@ -906,7 +1018,7 @@ async function applyChanges(): Promise<void> {
 // --- task lifecycle / polling ---------------------------------------------
 function resetConversation(): void {
   rendered = new Set(); pendingCalls = []; lastRole = ""; renderedDiff = ""; applyStep = "idle"; lastApplied = [];
-  confirmCards.clear(); taskRequest = null;
+  confirmCards.clear(); taskRequest = null; stepGroup = null; showAllMessages = false;
   el("goal-banner").hidden = true; el("context-meter").hidden = true; el("pause").hidden = true; el("side-answer").hidden = true;
   el("message-stream").replaceChildren();
   el("review-controls").replaceChildren();
@@ -936,7 +1048,7 @@ function syncComposer(): void {
   syncSend();
 }
 function syncSend(): void {
-  button('start').disabled = submitting || (!textarea('objective').value.trim() && !attached.length);
+  button('start').disabled = submitting || (!textarea('objective').value.trim() && !attached.length) || !el("model-banner").hidden;
   textarea('objective').required = !attached.length;  // attachments alone are a message
 }
 function selectTask(id: string): void {
@@ -1026,17 +1138,20 @@ async function loadModel(): Promise<void> {
   const info = await api<ActiveModel>("/api/model");
   const pill = el("model-pill");
   setClass(pill, "unset", !info.configured);
+  modelReady = info.configured;
   el("model-label").textContent = modelOverride ? modelOverride.name : info.configured ? info.model ?? "Model" : "Set up a model";
   setClass(pill, "override", modelOverride !== null);
   pill.title = info.configured
     ? info.source === "profile" ? `${info.model} · ${info.provider_name} (profile “${info.profile}”). Change it in Settings → Models.` : `${info.model} from server environment variables`
     : info.problem ?? "No model is set up";
+  syncModelBanner(); renderOnboarding(); syncSend();
 }
 
 async function project(): Promise<void> {
   const data = await api<Project>("/api/project");
   projectName = data.name;
   projectFiles = data.files.map(file => file.path);
+  projectFileSet = new Set(projectFiles);
   const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
   const summary = `${plural(data.files.length, "file")} · ${plural(data.python_tests.length, "test")}`;
   el("project-name").textContent = data.name;
@@ -1055,6 +1170,17 @@ function markCurrent(): void {
   }
 }
 function taskRow(task: TaskSummary): HTMLElement {
+  const row = taskRowBase(task);
+  const tags = task.tags ?? [];
+  if (tags.length) {
+    const chip = make("span", "conv-tag", tags[0] ?? "");
+    if (tags.length > 1) chip.textContent += ` +${tags.length - 1}`;
+    row.insertBefore(chip, row.querySelector(".conv-more"));
+    row.title += ` · ${tags.join(", ")}`;
+  }
+  return row;
+}
+function taskRowBase(task: TaskSummary): HTMLElement {
   // A div with button semantics, so the row can hold its own actions button.
   const item = make("div", "conv-item");
   item.setAttribute("role", "button");
@@ -1078,24 +1204,68 @@ function taskRow(task: TaskSummary): HTMLElement {
   });
   return item;
 }
-function renderHistory(): void {
-  const query = ((el("task-search") as HTMLInputElement).value ?? "").trim().toLowerCase();
-  const visible = lastTasks.filter(task => (showArchived || !task.archived || task.id === selected)
-    && (!query || `${task.title ?? ""} ${task.objective ?? ""}`.toLowerCase().includes(query)));
-  const pinned = visible.filter(task => task.pinned), rest = visible.filter(task => !task.pinned);
-  const nodes: HTMLElement[] = [];
-  if (pinned.length) nodes.push(make("p", "list-head", "Pinned"), ...pinned.map(taskRow));
-  if (rest.length) nodes.push(...(pinned.length ? [make("p", "list-head", showArchived ? "All" : "Recent")] : []), ...rest.map(taskRow));
-  if (!nodes.length) nodes.push(make("div", "conv-empty", query ? "No matching tasks" : "No tasks yet"));
-  el("history").replaceChildren(...nodes);
-  el("recent-head").hidden = pinned.length > 0;
-  const archived = lastTasks.filter(task => task.archived).length;
-  el("show-archived").hidden = archived === 0;
-  el("show-archived").textContent = showArchived ? "Hide archived" : `Show archived (${archived})`;
+function collapsedFolders(): Set<string> {
+  try { return new Set(JSON.parse(storageGet("dikdik.folders.collapsed") ?? "[]") as string[]); } catch { return new Set(); }
 }
+function renderHistory(): void {
+  const query = ((el("task-search") as HTMLInputElement).value ?? "").trim();
+  const view = organiseTasks(lastTasks, {
+    query, tag: activeTag, sort: (select("task-sort").value || "recent") as TaskSort, sinceDays: Number(select("task-since").value) || 0,
+    showArchived, selected, now: Date.now() / 1000,
+  });
+  if (activeTag && !view.tags.includes(activeTag)) activeTag = "";
+  folderOptions = view.folderNames;
+  const closed = collapsedFolders();
+  const nodes: HTMLElement[] = [];
+  if (view.pinned.length) nodes.push(make("p", "list-head", "Pinned"), ...view.pinned.map(taskRow));
+  for (const folder of view.folders) {
+    const shut = closed.has(folder.name) && !folder.tasks.some(task => task.id === selected) && !query;
+    const head = make("button", "folder-head"); head.type = "button";
+    head.setAttribute("aria-expanded", String(!shut));
+    head.append(icon("chevron"), icon("folder"), make("span", "folder-name", folder.name), make("span", "folder-count", String(folder.tasks.length)));
+    head.onclick = () => {
+      const next = collapsedFolders();
+      if (next.has(folder.name)) next.delete(folder.name); else next.add(folder.name);
+      storageSet("dikdik.folders.collapsed", JSON.stringify([...next]));
+      renderHistory();
+    };
+    nodes.push(head);
+    if (!shut) nodes.push(...folder.tasks.map(taskRow));
+  }
+  const rest = view.recent.slice(0, listLimit);
+  if (rest.length && (view.pinned.length || view.folders.length)) nodes.push(make("p", "list-head", showArchived ? "All" : "Recent"));
+  nodes.push(...rest.map(taskRow));
+  if (view.recent.length > listLimit) {
+    const more = make("button", "ghost small show-archived", `Show more (${view.recent.length - listLimit})`); more.type = "button";
+    more.onclick = () => { listLimit += 40; renderHistory(); };
+    nodes.push(more);
+  }
+  if (view.older) {
+    const older = make("button", "ghost small show-archived", `${view.older} older hidden · show all`); older.type = "button";
+    older.onclick = () => { select("task-since").value = "0"; renderHistory(); };
+    nodes.push(older);
+  }
+  if (!nodes.length) nodes.push(make("div", "conv-empty", query || activeTag ? "No matching tasks" : "No tasks yet"));
+  el("history").replaceChildren(...nodes);
+  el("recent-head").hidden = view.pinned.length > 0 || view.folders.length > 0;
+  const chips = el("tag-chips");
+  chips.hidden = !view.tags.length;
+  chips.replaceChildren(...view.tags.map(tag => {
+    const chip = make("button", "tag-chip", tag); chip.type = "button";
+    chip.setAttribute("aria-pressed", String(tag === activeTag));
+    chip.onclick = () => { activeTag = activeTag === tag ? "" : tag; renderHistory(); };
+    return chip;
+  }));
+  el("show-archived").hidden = view.archived === 0;
+  el("show-archived").textContent = showArchived ? "Hide archived" : `Show archived (${view.archived})`;
+  el("delete-archived").hidden = !showArchived || view.archived === 0;
+  if (!deletingArchived) el("delete-archived").textContent = `Delete all archived (${view.archived})`;
+}
+let deletingArchived = false;
 async function loadHistory(): Promise<void> {
   lastTasks = await api<TaskSummary[]>("/api/tasks");
   renderHistory();
+  renderOnboarding();
 }
 
 // --- task actions menu ----------------------------------------------------
@@ -1172,6 +1342,9 @@ async function runMenuAction(action: string): Promise<void> {
     else if (action === "archive") { closeTaskMenu(); await patchTask(task, { archived: !info?.archived }); message(info?.archived ? "Task restored." : "Task archived."); }
     else if (action === "export") { closeTaskMenu(); await exportTask(task); }
     else if (action === "fork") { closeTaskMenu(); await forkTask(task); }
+    else if (action === "organise") { closeTaskMenu(); openMeta(task); }
+    else if (action === "download") { closeTaskMenu(); await downloadTask(task); }
+    else if (action === "info") { closeTaskMenu(); await showAgentInfo(); }
     else if (action === "delete") {
       if (!confirmingDelete) {
         confirmingDelete = true;
@@ -1239,6 +1412,7 @@ function startStream(id: string): void {
       selectedState = record.kind;
       renderPlanner();
       void loadHistory();
+      if (isTerminal(record.kind)) { chime(); void refreshFiles(); }
     }
     if (record.kind === "running") { el("working").hidden = false; el("working-label").textContent = "Working"; button("cancel").disabled = false; }
     else if (isTerminal(record.kind)) { el("working").hidden = true; button("cancel").disabled = true; }
@@ -1332,6 +1506,8 @@ async function connect(): Promise<void> {
   if (linked && !selected && lastTasks.some(task => task.id === linked)) selectTask(linked);
   else await composerDrafts.select(selected ?? 'home');
   void observe();
+  void loadAppSettings().catch(() => undefined);
+  routeSettings();
 }
 function showSignIn(): void {
   el("boot").hidden = true;
@@ -1626,6 +1802,7 @@ function showPane(name: string): void {
   for (const tab of dialog.querySelectorAll<HTMLElement>(".settings-tab")) tab.setAttribute("aria-selected", String(tab.dataset.pane === name));
   for (const pane of dialog.querySelectorAll<HTMLElement>(".settings-pane")) pane.hidden = pane.dataset.pane !== name;
   el("settings-pane-title").textContent = PANE_TITLES[name] ?? "Settings";
+  settingsHash(name);
   if (name === "mcp") void loadMcp();
   if (name === "automations") { void loadAutomations(); void loadAgents().catch(() => undefined); }
   if (name === "agents") { void loadAgents().catch(() => undefined); void loadAgentModels().catch(() => undefined); }
@@ -1633,7 +1810,7 @@ function showPane(name: string): void {
 }
 function openSettings(pane: string): void {
   const dialog = el("settings") as HTMLDialogElement;
-  if (typeof dialog.showModal === "function") dialog.showModal();
+  if (typeof dialog.showModal === "function" && !dialog.open) dialog.showModal();
   showPane(pane);
   closeSidebarDrawer();
   void loadAppSettings().catch(() => undefined);
@@ -1641,6 +1818,7 @@ function openSettings(pane: string): void {
 el("open-settings").addEventListener("click", () => openSettings("general"));
 el("model-pill").addEventListener("click", () => openSettings("models"));
 // Profiles or keys may have changed while settings were open.
+el("settings").addEventListener("close", () => { settingsHash(null); });
 el("settings").addEventListener("close", () => { void loadModel().catch(() => undefined); void loadAgents().catch(() => undefined); void ensureLists(true); });
 el("skill-form").addEventListener("submit", async event => {
   event.preventDefault();
@@ -1663,7 +1841,8 @@ if (typeof document.addEventListener === "function") {
   document.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && select('mode').value === 'plan' && !textarea('objective').value.trim()) { event.preventDefault(); void buildReviewedPlan(); return; }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); newTask(); }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); togglePalette(); }
+    else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "o") { event.preventDefault(); newTask(); }
     else if (event.key === "Escape" && !el("task-menu").hidden) closeTaskMenu();
     else if (event.key === "Escape" && !el("canvas").hidden && !(el("settings") as HTMLDialogElement).open) setCanvas(false);
   });
@@ -1743,6 +1922,7 @@ function syncMode(): void {
   input("execution").required = execution;
   el("execution-field").title = "Runs approved tools and tests inside restricted Docker containers.";
   el("model-pill").hidden = !policy.requiresExternal;
+  syncModelBanner();
   el("agent-profile-pill").hidden = !['agent','plan'].includes(mode) || !agentProfiles.length;
   if (policy.showEdits) setOptions(true);
   syncComposer();
@@ -2187,19 +2367,372 @@ for (const [id, action] of [["goal-stop", "stop"], ["goal-resume", "resume"]] as
 }
 // General settings: when to ask before tools run, and the automatic condenser.
 async function loadAppSettings(): Promise<void> {
-  const settings = await api<{ confirmation: string; condenser: boolean }>("/api/settings/app");
+  const settings = await api<NonNullable<typeof appSettings>>("/api/settings/app");
+  appSettings = settings;
   select("confirmation-policy").value = settings.confirmation;
   input("condenser").checked = settings.condenser;
+  input("sounds").checked = settings.sounds === true;
+  input("git-name").value = settings.git_name ?? "";
+  input("git-email").value = settings.git_email ?? "";
 }
 async function saveAppSetting(change: Record<string, unknown>): Promise<void> {
-  try { await request("/api/settings/app", "PATCH", change); message("Saved."); }
+  try { appSettings = await request<NonNullable<typeof appSettings>>("/api/settings/app", "PATCH", change); message("Saved."); }
   catch (error) { message(error instanceof Error ? error.message : "Could not save", true); void loadAppSettings().catch(() => undefined); }
 }
 select("confirmation-policy").addEventListener("change", () => { void saveAppSetting({ confirmation: select("confirmation-policy").value }); });
 input("condenser").addEventListener("change", () => { void saveAppSetting({ condenser: input("condenser").checked }); });
 
+// --- files: tree, tabs, Markdown preview, open from chat, resizable panel -------
+function treeRows(paths: string[], changed: Set<string>): HTMLElement[] {
+  return fileTree(paths, expandedDirs).map(row => {
+    const item = make("button", row.dir ? "tree-row tree-dir" : "tree-row");
+    item.type = "button";
+    item.title = row.path;
+    item.style?.setProperty?.("--depth", String(row.depth));
+    item.setAttribute("role", "treeitem");
+    if (row.dir) {
+      item.setAttribute("aria-expanded", String(row.open));
+      const chevron = icon("chevron"); chevron.setAttribute("class", "i tree-chevron");
+      item.append(chevron, icon("folder"), make("span", "tree-name", row.name));
+      item.onclick = () => { if (expandedDirs.has(row.path)) expandedDirs.delete(row.path); else expandedDirs.add(row.path); renderFileList(); };
+    } else {
+      item.setAttribute("aria-selected", String(row.path === openFile));
+      item.append(icon("file"), make("span", "tree-name", row.name));
+      if (changed.has(row.path)) item.dataset.changed = "true";
+      item.onclick = () => { void showFile(row.path, changed.has(row.path) && selected ? "candidate" : "workspace"); };
+    }
+    return item;
+  });
+}
+function renderFileTabs(): void {
+  const strip = el("file-tabs");
+  strip.hidden = !openTabs.length;
+  strip.replaceChildren(...openTabs.map(path => {
+    const tab = make("span", "file-tab");
+    tab.setAttribute("aria-selected", String(path === openFile));
+    const open = make("button", "file-tab-name", path.split("/").pop() ?? path); open.type = "button"; open.title = path;
+    open.setAttribute("role", "tab");
+    open.onclick = () => { void showFile(path, changedPaths().has(path) && selected ? "candidate" : "workspace"); };
+    const close = make("button", "ghost icon file-tab-close"); close.type = "button";
+    close.setAttribute("aria-label", `Close ${path}`); close.append(icon("x"));
+    close.onclick = () => {
+      openTabs = openTabs.filter(item => item !== path);
+      if (path === openFile) {
+        const next = openTabs[openTabs.length - 1];
+        if (next) void showFile(next, changedPaths().has(next) && selected ? "candidate" : "workspace");
+        else { openFile = null; fileText = ""; el("file-name").textContent = "Choose a file"; el("file-view").replaceChildren(); el("copy-file").hidden = true; el("file-preview").hidden = true; filePreview = false; showFilePreview(); renderFileList(); }
+      }
+      renderFileTabs();
+    };
+    tab.append(open, close);
+    return tab;
+  }));
+}
+function showFilePreview(): void {
+  el("file-view").hidden = filePreview;
+  el("file-rendered").hidden = !filePreview;
+  el("file-preview").setAttribute("aria-pressed", String(filePreview));
+  if (filePreview) el("file-rendered").replaceChildren(richText(fileText));
+}
+el("file-preview").addEventListener("click", () => { filePreview = !filePreview; showFilePreview(); });
+async function openFileFromChat(path: string, line?: number): Promise<void> {
+  openCanvas("files");
+  await showFile(path, changedPaths().has(path) && selected ? "candidate" : "workspace");
+  if (!line) return;
+  for (const span of el("file-view").querySelectorAll<HTMLElement>(".ln")) {
+    const hit = span.dataset.n === String(line);
+    setClass(span, "ln-hit", hit);
+    if (hit) span.scrollIntoView?.({ block: "center" });
+  }
+}
+/** After a run ends the workspace may have changed (Apply); refresh the inventory and the open file. */
+async function refreshFiles(): Promise<void> {
+  await project().catch(() => undefined);
+  if (canvasTab !== "files" || el("canvas").hidden) return;
+  renderFileList();
+  if (openFile) await showFile(openFile, fileVersion);
+}
+const canvasGrip = el("canvas-resize");
+let canvasDrag: number | null = null;
+function setCanvasWidth(width: number | null): void {
+  const canvas = el("canvas");
+  if (width === null) { canvas.style?.removeProperty?.("width"); storageSet("dikdik.canvas.width", ""); return; }
+  const clamped = Math.round(Math.max(320, Math.min(width, (globalThis.innerWidth || 1440) * 0.72)));
+  canvas.style?.setProperty?.("width", `${clamped}px`);
+  storageSet("dikdik.canvas.width", String(clamped));
+}
+{
+  const saved = Number(storageGet("dikdik.canvas.width"));
+  if (saved > 0) setCanvasWidth(saved);
+}
+canvasGrip.addEventListener("pointerdown", (event: PointerEvent) => { canvasDrag = event.pointerId; canvasGrip.setPointerCapture?.(event.pointerId); event.preventDefault(); });
+canvasGrip.addEventListener("pointermove", (event: PointerEvent) => { if (canvasDrag === event.pointerId) setCanvasWidth((globalThis.innerWidth || 1440) - event.clientX); });
+for (const name of ["pointerup", "pointercancel", "lostpointercapture"]) canvasGrip.addEventListener(name, () => { canvasDrag = null; });
+canvasGrip.addEventListener("keydown", (event: KeyboardEvent) => {
+  const width = el("canvas").getBoundingClientRect?.().width ?? 560;
+  if (event.key === "ArrowLeft") setCanvasWidth(width + 32);
+  else if (event.key === "ArrowRight") setCanvasWidth(width - 32);
+  else if (event.key === "Home") setCanvasWidth(null);
+  else return;
+  event.preventDefault();
+});
+canvasGrip.addEventListener("dblclick", () => setCanvasWidth(null));
+
+// --- command menu (Ctrl+K) ---------------------------------------------------------
+interface Command { label: string; keywords?: string; hint?: string; icon: string; run: () => void }
+const PANEL_TITLES: Record<string, string> = { changes: "Changes", files: "Files", terminal: "Terminal", browser: "Browser", planner: "Planner", git: "Git" };
+let paletteItems: Command[] = [], paletteIndex = 0;
+function paletteCommands(): Command[] {
+  const task = selected;
+  const actions: Command[] = [{ label: "New task", hint: "Ctrl ⇧ O", icon: "plus", keywords: "conversation start", run: newTask }];
+  if (task) {
+    actions.push(
+      { label: "Rename this conversation", icon: "pencil", run: () => startRename(task) },
+      { label: "Folder and tags…", icon: "tag", keywords: "organise move label", run: () => openMeta(task) },
+      { label: "Fork this conversation", icon: "branch", keywords: "copy branch", run: () => { void forkTask(task).catch(error => message(String(error), true)); } },
+      { label: "Condense the conversation", icon: "list", keywords: "summarise compact context", run: () => { void condenseNow().catch(error => message(error instanceof Error ? error.message : String(error), true)); } },
+      { label: "Export transcript (Markdown)", icon: "download", run: () => { void exportTask(task); } },
+      { label: "Download conversation data (.zip)", icon: "download", run: () => { void downloadTask(task); } },
+    );
+    if (!el("pause").hidden) actions.push({ label: "Pause after this step", icon: "pause", run: () => button("pause").click() });
+  }
+  actions.push(
+    { label: "Skills, hooks and tools", icon: "info", keywords: "agent capabilities subagents", run: () => { void showAgentInfo(); } },
+    ...Object.entries(PANEL_TITLES).map(([tab, title]) => ({ label: `Open ${title} panel`, icon: "sidebar", keywords: "canvas tab", run: () => openCanvas(tab) })),
+    ...Object.entries(PANE_TITLES).map(([pane, title]) => ({ label: `Settings: ${title}`, icon: "gear", keywords: "preferences options configure", run: () => openSettings(pane) })),
+    { label: el("workspace").className.includes("sidebar-collapsed") ? "Show sidebar" : "Hide sidebar", icon: "sidebar", run: () => button("toggle-sidebar").click() },
+    { label: showArchived ? "Hide archived conversations" : "Show archived conversations", icon: "archive", run: () => button("show-archived").click() },
+    ...["system", "light", "dark"].map(theme => ({ label: `Appearance: ${theme[0]!.toUpperCase()}${theme.slice(1)}`, icon: "sun", keywords: "theme dark mode", run: () => { themeSelect.value = theme; themeSelect.dispatchEvent(new Event("change")); } })),
+  );
+  const conversations = lastTasks.filter(item => item.id !== task).map(item => ({
+    label: conversationLabel(item), keywords: `${item.folder ?? ""} ${(item.tags ?? []).join(" ")} conversation`,
+    hint: item.folder || (item.archived ? "Archived" : ""), icon: "list",
+    run: () => { selectTask(item.id); void observe(); },
+  }));
+  return [...actions, ...conversations];
+}
+function renderPalette(): void {
+  const query = input("palette-input").value;
+  const all = paletteCommands();
+  paletteItems = query.trim() ? rankCommands(query, all) : all.slice(0, 40);
+  paletteIndex = Math.min(paletteIndex, Math.max(0, paletteItems.length - 1));
+  const list = el("palette-list");
+  list.replaceChildren(...paletteItems.map((item, index) => {
+    const row = make("li", "palette-item");
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", String(index === paletteIndex));
+    row.append(icon(item.icon), make("span", "palette-label", item.label));
+    if (item.hint) row.append(make("span", "palette-hint", item.hint));
+    row.addEventListener("mousedown", event => { event.preventDefault(); runPalette(index); });
+    return row;
+  }));
+  if (!paletteItems.length) list.replaceChildren(make("li", "palette-empty", "Nothing matches"));
+  list.children[paletteIndex]?.scrollIntoView?.({ block: "nearest" });
+}
+function runPalette(index: number): void {
+  const item = paletteItems[index];
+  if (!item) return;
+  (el("palette") as HTMLDialogElement).close();
+  item.run();
+}
+function togglePalette(): void {
+  const dialog = el("palette") as HTMLDialogElement;
+  if (dialog.open) { dialog.close(); return; }
+  if (typeof dialog.showModal !== "function") return;
+  input("palette-input").value = "";
+  paletteIndex = 0;
+  renderPalette();
+  dialog.showModal();
+  input("palette-input").focus();
+}
+input("palette-input").addEventListener("input", () => { paletteIndex = 0; renderPalette(); });
+input("palette-input").addEventListener("keydown", (event: KeyboardEvent) => {
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (!paletteItems.length) return;
+    paletteIndex = (paletteIndex + (event.key === "ArrowDown" ? 1 : paletteItems.length - 1)) % paletteItems.length;
+    renderPalette();
+  } else if (event.key === "Enter") { event.preventDefault(); runPalette(paletteIndex); }
+});
+el("palette").addEventListener("click", event => { if (event.target === el("palette")) (el("palette") as HTMLDialogElement).close(); });
+el("open-palette").addEventListener("click", togglePalette);
+
+// --- folders, tags, archive clean-up --------------------------------------------------
+let metaTask: string | null = null;
+function openMeta(task: string): void {
+  const info = lastTasks.find(item => item.id === task);
+  const dialog = el("meta-dialog") as HTMLDialogElement;
+  metaTask = task;
+  input("meta-folder").value = info?.folder ?? "";
+  input("meta-tags").value = (info?.tags ?? []).join(", ");
+  el("meta-error").hidden = true;
+  el("folder-options").replaceChildren(...folderOptions.map(name => { const option = make("option"); option.value = name; return option; }));
+  el("meta-title").textContent = `Folder and tags · ${info ? conversationLabel(info) : "conversation"}`;
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  input("meta-folder").focus();
+}
+el("meta-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (!metaTask) return;
+  try {
+    const tags = parseTags(input("meta-tags").value);
+    await patchTask(metaTask, { folder: input("meta-folder").value.trim() || null, tags });
+    (el("meta-dialog") as HTMLDialogElement).close();
+    message("Saved.");
+  } catch (error) {
+    el("meta-error").textContent = error instanceof Error ? error.message : "Could not save";
+    el("meta-error").hidden = false;
+  }
+});
+el("meta-cancel").addEventListener("click", () => (el("meta-dialog") as HTMLDialogElement).close());
+select("task-sort").addEventListener("change", () => { storageSet("dikdik.list.sort", select("task-sort").value); renderHistory(); });
+select("task-since").addEventListener("change", () => { storageSet("dikdik.list.since", select("task-since").value); renderHistory(); });
+select("task-sort").value = storageGet("dikdik.list.sort") || "recent";
+select("task-since").value = storageGet("dikdik.list.since") || "0";
+el("delete-archived").addEventListener("click", async () => {
+  const archived = lastTasks.filter(task => task.archived && task.id !== selected);
+  if (!deletingArchived) {
+    deletingArchived = true;
+    el("delete-archived").textContent = `Click again to delete ${archived.length} for good`;
+    setTimeout(() => { deletingArchived = false; renderHistory(); }, 4000);
+    return;
+  }
+  deletingArchived = false;
+  let failed = 0;
+  for (const task of archived) {
+    try { await request(`/api/tasks/${encodeURIComponent(task.id)}`, "DELETE"); } catch { failed++; }
+  }
+  await loadHistory();
+  message(failed ? `Deleted ${archived.length - failed}; ${failed} could not be deleted.` : `Deleted ${archived.length} archived conversations.`, failed > 0);
+});
+
+// --- conversation data, agent info ------------------------------------------------------
+async function downloadTask(task: string): Promise<void> {
+  const headers: Record<string, string> = token ? { Authorization: "Bearer " + token } : {};
+  const response = await fetch(`/api/tasks/${encodeURIComponent(task)}/download`, { headers, credentials: "same-origin" });
+  if (!response.ok) { message("Could not download this conversation", true); return; }
+  const url = URL.createObjectURL(await response.blob());
+  const info = lastTasks.find(item => item.id === task);
+  const link = make("a");
+  link.href = url;
+  link.download = `dikdik-${(info ? conversationLabel(info) : "conversation").replace(/[^\w-]+/g, "-").slice(0, 40)}-${task.slice(0, 8)}.zip`;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+interface AgentInfo {
+  tools: { name: string; description: string }[];
+  skills: { name: string; description: string; scope: string; enabled: boolean }[];
+  subagents: { name: string; description: string; source: string }[];
+  hooks: { tool: string; pattern: string; message: string }[];
+}
+async function showAgentInfo(): Promise<void> {
+  const info = await api<AgentInfo>("/api/agent-info");
+  const section = (title: string, rows: [string, string][], empty: string) => {
+    const box = make("section", "info-section");
+    box.append(make("h4", "", title));
+    if (!rows.length) box.append(make("p", "hint", empty));
+    const list = make("dl", "info-list");
+    for (const [name, text] of rows) list.append(make("dt", "", name), make("dd", "", text));
+    if (rows.length) box.append(list);
+    return box;
+  };
+  el("info-body").replaceChildren(
+    section("Tools", info.tools.map(tool => [tool.name, tool.description]), "No tools."),
+    section("Skills", info.skills.map(skill => [skill.name, `${skill.description || "No description"} · ${skill.scope}${skill.enabled ? "" : " · off"}`]), "No skills. Add them in Settings → Skills."),
+    section("Subagents", info.subagents.map(agent => [agent.name, `${agent.description} · ${agent.source}`]), "Only the built-in explorer."),
+    section("Hooks", info.hooks.map(hook => [`${hook.tool} · ${hook.pattern}`, hook.message || "Blocked"]), "No hooks. Add block rules to .dikdik/hooks.json in the workspace."),
+  );
+  const dialog = el("info-dialog") as HTMLDialogElement;
+  if (typeof dialog.showModal === "function") dialog.showModal();
+}
+el("info-close").addEventListener("click", () => (el("info-dialog") as HTMLDialogElement).close());
+
+// --- onboarding and the missing-model banner -------------------------------------------
+function fillComposer(text: string): void {
+  textarea("objective").value = text;
+  composerDrafts.update(text);
+  autosize();
+  textarea("objective").focus?.();
+}
+function renderOnboarding(): void {
+  const steps = [
+    { done: modelReady, label: "Set up a model", detail: "Add a model profile and its API key, or a local server.", action: "Open Models", run: () => openSettings("models") },
+    { done: lastTasks.length > 0, label: "Say hello", detail: "Ask Dikdik about this project.", action: "Try it", run: () => fillComposer("Hello! Give me a quick tour of this project: what it does and how it is organised.") },
+    { done: storageGet("dikdik.onboarding.applied") === "1", label: "Review and apply a change", detail: "Let Dikdik fix something, read the diff, then Apply.", action: "Try it", run: () => fillComposer("Find one small bug or rough edge in this project and fix it.") },
+  ];
+  const box = el("onboarding");
+  box.hidden = storageGet("dikdik.onboarding.dismissed") === "1" || steps.every(step => step.done);
+  el("onboarding-steps").replaceChildren(...steps.map(step => {
+    const li = make("li", step.done ? "onb-step done" : "onb-step");
+    const mark = make("span", "onb-mark"); if (step.done) mark.append(icon("check"));
+    const text = make("span", "onb-text"); text.append(make("strong", "", step.label), make("span", "", step.detail));
+    li.append(mark, text);
+    if (!step.done) { const go = make("button", "small", step.action); go.type = "button"; go.onclick = step.run; li.append(go); }
+    return li;
+  }));
+}
+el("onboarding-dismiss").addEventListener("click", () => { storageSet("dikdik.onboarding.dismissed", "1"); renderOnboarding(); });
+function syncModelBanner(): void {
+  const needsModel = parseMode(select("mode").value) !== "offline";
+  el("model-banner").hidden = modelReady || !needsModel;
+}
+el("model-banner-setup").addEventListener("click", () => openSettings("models"));
+
+// --- settings routes, Git identity, sounds -----------------------------------------------
+function settingsHash(pane: string | null): void {
+  const loc = globalThis.location;
+  if (!loc || typeof globalThis.history?.replaceState !== "function") return;
+  const wanted = pane ? `#settings/${pane}` : "";
+  if (loc.hash !== wanted && (pane || loc.hash.startsWith("#settings"))) globalThis.history.replaceState(null, "", loc.pathname + loc.search + wanted);
+}
+/** `#settings/<pane>` opens that settings page; an unknown page falls back to General. */
+function routeSettings(): void {
+  const match = /^#settings(?:\/([\w-]*))?$/.exec(globalThis.location?.hash ?? "");
+  if (!match) return;
+  const pane = match[1] ?? "";
+  if (pane && !(pane in PANE_TITLES)) message(`There is no “${pane}” settings page; showing General.`, true);
+  openSettings(pane in PANE_TITLES ? pane : "general");
+}
+el("git-identity").addEventListener("submit", event => {
+  event.preventDefault();
+  void saveAppSetting({ git_name: input("git-name").value.trim(), git_email: input("git-email").value.trim() });
+});
+input("sounds").addEventListener("change", () => { void saveAppSetting({ sounds: input("sounds").checked }); });
+function chime(): void {
+  if (!appSettings?.sounds || (globalThis.document?.hasFocus?.() && !document.hidden)) return;
+  const Context = (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
+  if (!Context) return;
+  const audio = new Context();
+  [660, 880].forEach((pitch, index) => {
+    const tone = audio.createOscillator(), gain = audio.createGain();
+    tone.frequency.value = pitch;
+    gain.gain.setValueAtTime(0.0001, audio.currentTime + index * 0.16);
+    gain.gain.exponentialRampToValueAtTime(0.15, audio.currentTime + index * 0.16 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + index * 0.16 + 0.3);
+    tone.connect(gain).connect(audio.destination);
+    tone.start(audio.currentTime + index * 0.16);
+    tone.stop(audio.currentTime + index * 0.16 + 0.32);
+  });
+  setTimeout(() => { void audio.close(); }, 1000);
+}
+function resetStop(): void {
+  if (stopArmed !== undefined) clearTimeout(stopArmed);
+  stopArmed = undefined;
+  el("cancel").replaceChildren(icon("stop"), document.createTextNode("Stop"));
+  setClass(el("cancel"), "confirming", false);
+}
+
+let stopArmed: ReturnType<typeof setTimeout> | undefined;
 button("cancel").onclick = async () => {
   if (!selected) return;
+  if (stopArmed === undefined) {
+    // A second click within three seconds confirms; the run's work so far is kept either way.
+    el("cancel").replaceChildren(icon("stop"), document.createTextNode("Stop run?"));
+    setClass(el("cancel"), "confirming", true);
+    stopArmed = setTimeout(resetStop, 3000);
+    return;
+  }
+  resetStop();
   try {
     const data = await api<{ requested: boolean }>(`/api/tasks/${selected}/cancel`, {});
     message(data.requested ? "Stopping…" : "Task has already stopped.");
@@ -2215,5 +2748,5 @@ button("refresh").onclick = async () => {
 // Poll real durable events. No simulated execution or progress percentages.
 setInterval(() => { void observe(); }, 1000);
 // Pasting the sign-in link into an already-open tab only changes the hash.
-globalThis.addEventListener?.("hashchange", () => { if (!connected) void boot(); });
+globalThis.addEventListener?.("hashchange", () => { if (!connected) void boot(); else routeSettings(); });
 void boot();

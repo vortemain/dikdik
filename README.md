@@ -47,6 +47,10 @@ autonomous engineering platform.
   `/` for commands: `/goal` (judged multi-turn loop), `/btw` (side question),
   `/model`, `/condense`, `/fork`, `/plan`, `/code` and your skills. Fork any
   conversation or branch from an earlier turn; a meter shows context use.
+- **Find and organise.** Ctrl+K opens a command menu for every action, panel,
+  settings page and conversation. File conversations in folders, tag them, sort
+  and filter the sidebar, and download a conversation as a .zip. Files has a
+  tree, tabs and Markdown preview; paths in replies open the file.
 - **Tests for several stacks** in network-less Docker containers: Python
   `unittest`, `bun test`, `npm test` and `cargo test --offline`, picked from the
   project's files. Without Docker, tasks are syntax-checked and labelled so.
@@ -66,8 +70,8 @@ autonomous engineering platform.
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
 
-**Not yet:** a command menu, model
-routing, plugins and extension apps, folders/tags,
+**Not yet:** model
+routing, plugins and extension apps,
 WebSocket and TypeScript clients, a desktop app, and any recorded run against a
 live model provider or Docker engine. See [the parity audit](docs/PARITY.md).
 

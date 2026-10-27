@@ -76,7 +76,7 @@ def info(root: Path) -> dict:
             "ahead": int(ahead) if ahead.isdigit() else None}
 
 
-def commit(root: Path, message: str, paths: list[str]) -> dict:
+def commit(root: Path, message: str, paths: list[str], identity: tuple[str, str] | None = None) -> dict:
     if not isinstance(message, str) or not message.strip() or len(message) > 2000:
         raise GitError("Commit message must contain 1–2000 characters")
     if not isinstance(paths, list) or not paths or len(paths) > 500 or not all(isinstance(p, str) and p and not p.startswith("-") for p in paths):
@@ -89,10 +89,11 @@ def commit(root: Path, message: str, paths: list[str]) -> dict:
             raise GitError(f"Path is outside the workspace: {path}")
     _git(root, "add", "--", *paths)
     try:
-        _git(root, "commit", "--no-verify", "-m", message.strip(), "--", *paths)
+        who = ["-c", f"user.name={identity[0]}", "-c", f"user.email={identity[1]}"] if identity and all(identity) else []
+        _git(root, *who, "commit", "--no-verify", "-m", message.strip(), "--", *paths)
     except GitError as exc:
         if "Please tell me who you are" in str(exc) or "user.email" in str(exc) or "empty ident" in str(exc):
-            raise GitError("Set your Git name and email first: git config --global user.name \"Your Name\" and user.email") from None
+            raise GitError("Set your Git name and email in Settings → General (or git config --global user.name and user.email)") from None
         raise
     head = _git(root, "log", "-1", "--format=%H%x1f%h%x1f%s").strip().split("\x1f")
     return {"hash": head[0], "short": head[1], "subject": head[2], "files": paths}

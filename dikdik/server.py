@@ -197,6 +197,10 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(200, engine.file_text(query.get("path", [""])[0], query.get("task", [None])[0]))
                 elif path == "/api/git":
                     self.reply(200, gitops.info(engine.root))
+                elif path == "/api/agent-info":
+                    self.reply(200, engine.agent_info())
+                elif path.startswith("/api/tasks/") and path.endswith("/download") and path.count("/") == 4:
+                    self.reply(200, engine.archive(path.split("/")[3]), "application/zip")
                 elif path.startswith("/api/tasks/"):
                     self.reply(200, engine.store.get(path.removeprefix("/api/tasks/")))
                 else:
@@ -253,7 +257,7 @@ def make_server(engine: Engine, port: int, token: str):
                         raise ValueError("Applying changes needs explicit confirmation")
                     self.reply(200, engine.apply(path.split("/")[3], body.get("files")))
                 elif path == "/api/git/commit":
-                    self.reply(200, gitops.commit(engine.root, body.get("message"), body.get("files")))
+                    self.reply(200, gitops.commit(engine.root, body.get("message"), body.get("files"), engine.git_identity()))
                 elif path.startswith("/api/tasks/") and path.endswith("/messages") and path.count("/") == 4:
                     task = path.split("/")[3]
                     self.reply(202, {"id": task, "queued": engine.send(task, body)})
