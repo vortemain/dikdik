@@ -30,9 +30,9 @@ OpenHands app map (799 sub-features) and the agent-server/SDK map
 
 | Status | First audit | After the first build phases | After the parity fix | Run control | Interface | Models | Current |
 |---|---|---|---|---|---|---|---|
-| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 327 |
+| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 329 |
 | Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 211 |
-| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 1,130 |
+| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 1,128 |
 | Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 | 61 | 61 |
 | Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 | 20 |
 | **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
@@ -120,7 +120,7 @@ against a live model provider or Docker engine.
 | F02 Shell/navigation | Partial: responsive single-workspace UI. Missing project/sidebar/command navigation. Keyboard-only task switching, small-screen navigation and meaningful errors must work. | P1 |
 | F03 Starting work | Partial: approved startup workspace and objective submission. Missing in-product workspace selection and richer launch choices. Open an approved project and start an actual objective without manual edits. | P0 |
 | F04 History/organization | Partial: durable task list. Missing folders/tags/rename/pin/archive. Persist all CRUD/default transitions without losing the selected work item. | P1 |
-| F05 Conversation/composer | Partial: objective-driven follow-ups, Enter-to-send, private scoped drafts, explicit tab conflicts, separate planning and /plan /code commands. Slash menu, attachments, side questions, judged goals, context meter, pause/resume and per-tab model choice are in. Missing dictation, a model picker on the pill and a Usage panel. | P0/P1 |
+| F05 Conversation/composer | Partial: objective-driven follow-ups, Enter-to-send, private scoped drafts, explicit tab conflicts, separate planning and /plan /code commands. Slash menu, attachments, side questions, judged goals, context meter, pause/resume and per-tab model choice are in. The pill model picker and the Usage tab are in too. Missing dictation. | P0/P1 |
 | F06 Agent lifecycle | Partial: bounded tools/repair, cancellation and persisted events. Exact resume, stuck detection and per-action confirmation are in; live model/container validation absent. Failing test → focused repair → current pass, with no post-cancellation completion. | P0 |
 | F07 Task detail/actions | Partial: actual events, checks, counters and diff. Missing export/download, conversation menus and broader controls. Export reproducible evidence, not model claims. | P1 |
 | F08 Files/Git/review | Partial: new candidate files/tests and per-file added/modified diff review implemented in this increment. Missing full file viewer, Git history/branch/status integration and deletion. Review nested/empty/Unicode additions and edits without source writes. | P0 |

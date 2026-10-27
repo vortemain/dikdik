@@ -8,7 +8,9 @@ import os
 import re
 import shutil
 import threading
+import sys
 import time
+import traceback
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -323,7 +325,9 @@ class Engine:
     def interrupt(self, task):
         """Cancel the active step and retain a transcript that can be resumed."""
         with self.lock:
-            self.store.get(task)  # distinguish an unknown task from an idle one
+            # A finished turn has nothing to interrupt, even before its worker is released.
+            if self.store.get(task)["state"] in TERMINAL:  # also 404s an unknown task
+                return False
             flag = self.active.get(task)
             if flag is None:
                 return False
@@ -736,6 +740,7 @@ class Engine:
             flag = self.active.get(task)
             if flag:
                 flag.set()
+                self.interrupting.discard(task)  # a real cancel wins over an earlier interrupt
                 # Stop means stop: queued follow-ups are dropped too.
                 dropped = len(self.pending.pop(task, []))
                 self.store.event(task, "cancellation_requested", {"dropped_messages": dropped} if dropped else {})
@@ -823,11 +828,16 @@ class Engine:
         except Exception as exc:
             # Known validation errors are safe; unexpected exceptions may embed secrets.
             error = str(exc) if isinstance(exc, ValueError) else "Internal failure; inspect local service diagnostics"
+            if not isinstance(exc, ValueError):
+                # The diagnostics the message points to: the server's own console, never the API or events.
+                print(f"Task {task} failed unexpectedly:", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
             self._finish(task, "cancelled" if cancel.is_set() else "failed", {"error": error}, cancel)
         finally:
             with self.lock:
                 self.active.pop(task, None)
                 self.pausing.pop(task, None)
+                self.interrupting.discard(task)
                 queue = self.pending.get(task)
                 if queue:
                     following = queue.pop(0)
@@ -973,10 +983,11 @@ class Engine:
             "source_modified": False, "artifact": task,
             "seconds": round(time.monotonic() - started, 3),
             "agent": {"model_calls": outcome.model_calls, "tool_calls": outcome.tool_calls,
-                      "repair_attempts": outcome.repair_attempts, "reported_usage_tokens": outcome.usage_tokens},
+                      "repair_attempts": outcome.repair_attempts, "reported_usage_tokens": outcome.usage_tokens,
+                      "usage": outcome.usage},
             "model": {k: model[k] for k in ("model", "profile", "provider_name") if k in model},
             "limitations": ("Candidate only. Tests ran in a network-less Docker sandbox; a pass is not proof of every objective." if docker
-                            else "Candidate only. Syntax checked only; no tests were run.") + " Provider usage may be unavailable; no cost claim.",
+                            else "Candidate only. Syntax checked only; no tests were run.") + " Provider usage may be unavailable; costs are shown only when the provider reports them.",
         }
         if outcome.error:
             result["error"] = outcome.error

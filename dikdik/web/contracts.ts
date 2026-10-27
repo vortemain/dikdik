@@ -300,6 +300,75 @@ export function contextUsage(events: TaskEvent[]): ContextUsage | null {
   }
   return null;
 }
+export interface TokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  totalTokens?: number;
+  reportedCost?: number;
+}
+export interface TurnUsage extends TokenUsage { turn: number; calls: number; profile: string }
+export interface UsageMetrics { context: ContextUsage | null; task: TokenUsage; turns: TurnUsage[] }
+
+function reportedUsage(value: unknown): TokenUsage {
+  if (typeof value !== "object" || value === null) return {};
+  const data = value as Record<string, unknown>, out: TokenUsage = {};
+  const fields: [keyof TokenUsage, string][] = [
+    ["inputTokens", "input_tokens"], ["outputTokens", "output_tokens"],
+    ["cacheReadTokens", "cache_read_tokens"], ["cacheWriteTokens", "cache_write_tokens"],
+    ["totalTokens", "total_tokens"], ["reportedCost", "reported_cost"],
+  ];
+  for (const [target, source] of fields) {
+    const number = numOrUndef(data[source]);
+    if (number !== undefined && number >= 0) out[target] = number;
+  }
+  return out;
+}
+function addUsage(target: TokenUsage, usage: TokenUsage): void {
+  for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "totalTokens", "reportedCost"] as const) {
+    const value = usage[key];
+    if (value !== undefined) target[key] = (target[key] ?? 0) + value;
+  }
+}
+/** Provider-reported usage grouped by run/turn. Unknown metadata is discarded. */
+export function usageMetrics(events: TaskEvent[]): UsageMetrics {
+  const task: TokenUsage = {}, turns: TurnUsage[] = [];
+  let current: TurnUsage | null = null, cumulative = 0;
+  const ensureTurn = (): TurnUsage => {
+    if (!current) {
+      current = { turn: turns.length + 1, calls: 0, profile: "" };
+      turns.push(current);
+    }
+    return current;
+  };
+  for (const event of events) {
+    const data = event.data ?? {};
+    if (event.kind === "running") {
+      current = { turn: turns.length + 1, calls: 0, profile: "" };
+      turns.push(current); cumulative = 0;
+      continue;
+    }
+    if (event.kind === "agent_started") {
+      const model = typeof data.model === "object" && data.model !== null ? data.model as Record<string, unknown> : {};
+      ensureTurn().profile = textOf(model.profile, 120) || textOf(data.profile, 120);
+      continue;
+    }
+    if (event.kind !== "agent_model" || data.phase !== "end") continue;
+    const usage = reportedUsage(data.usage);
+    const reportedTotal = numOrUndef(data.usage_tokens);
+    if (reportedTotal !== undefined && reportedTotal >= 0) {
+      // usage_tokens is a running total that stays 0 when the provider reports nothing.
+      if (usage.totalTokens === undefined && reportedTotal > cumulative) usage.totalTokens = reportedTotal - cumulative;
+      cumulative = reportedTotal;
+    }
+    if (!Object.keys(usage).length) continue;
+    const turn = ensureTurn();
+    turn.calls += 1;
+    addUsage(turn, usage); addUsage(task, usage);
+  }
+  return { context: contextUsage(events), task, turns: turns.filter(turn => turn.calls > 0) };
+}
 export interface GoalView { status: string; turns: number; maxTurns: number; objective: string; reason: string }
 export function goalState(events: TaskEvent[]): GoalView | null {
   for (let i = events.length - 1; i >= 0; i--) {

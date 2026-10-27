@@ -137,6 +137,20 @@ class ControlTests(unittest.TestCase):
         self.assertIn("Interrupted by user", resumed.seen[0][0][-2]["content"])
         self.assertFalse(self.engine.interrupt(task))
 
+    def test_interrupt_after_the_turn_finished_is_ignored(self):
+        # The worker commits the terminal state before it releases the task; a Stop in
+        # that window must not leave a flag that turns a later real cancel into a pause.
+        task = self.engine.store.create({"objective": "x", **AGENT})
+        self.engine.store.state(task, "completed", {})
+        flag = threading.Event()
+        self.engine.active[task] = flag
+        try:
+            self.assertFalse(self.engine.interrupt(task))
+            self.assertFalse(flag.is_set())
+            self.assertNotIn(task, self.engine.interrupting)
+        finally:
+            self.engine.active.pop(task, None)
+
     def test_budget_exhaustion_can_be_resumed_with_a_fresh_budget(self):
         profile = self.engine.agents.create({"name": "Tiny", "max_model_calls": 1})
         first = Script([edit(1)])

@@ -1,5 +1,5 @@
 import { browserView, buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
-import { attachmentList, contextUsage, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches } from "./contracts";
+import { attachmentList, contextUsage, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries, profilesPanel, secretsPanel, skillsPanel } from "./contracts";
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, SlashCommand, TaskRequest, DiffReview, M4Factory, M4Node, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
@@ -732,7 +732,7 @@ function setCanvas(open: boolean): void {
   el("toggle-canvas").setAttribute("aria-pressed", String(open && canvasTab === "changes"));
 }
 
-// --- canvas tabs: changes, files, git -------------------------------------
+// --- canvas tabs: changes, files, git, usage ------------------------------
 let canvasTab = "changes", projectFiles: string[] = [], openFile: string | null = null, fileVersion = "workspace";
 let applyStep: "idle" | "confirm" | "busy" | "done" = "idle", lastApplied: string[] = [];
 function openCanvas(tab: string): void {
@@ -749,6 +749,7 @@ function openCanvas(tab: string): void {
   if (tab === "browser") renderBrowser();
   if (tab === 'planner') { renderPlanner(); if (selected) void loadPlan(selected); }
   if (tab === 'tasklist') renderChecklist();
+  if (tab === "usage") renderUsage();
 }
 function changedPaths(): Set<string> { return new Set(review.files.map(file => file.path)); }
 
@@ -763,6 +764,56 @@ function renderTerminal(): void {
     ? "Waiting for runtime to start..."
     : "No terminal output yet. Commands run by the agent will appear here.";
   if (view.commands.some(command => command.running)) terminal.scrollTop = terminal.scrollHeight;
+}
+
+function usageValue(value: number | undefined): string {
+  return value === undefined ? "Not reported" : value.toLocaleString();
+}
+function renderUsage(): void {
+  const panel = el("usage-panel"), metrics = usageMetrics(liveEvents);
+  if (!metrics.turns.length) {
+    const empty = make("div", "canvas-empty usage-empty");
+    const copy = make("div");
+    copy.append(make("h3", "", "No metrics data available"),
+      make("p", "muted", "Usage appears only when the configured provider reports it. Dikdik never estimates token cost."));
+    empty.append(copy); panel.replaceChildren(empty); return;
+  }
+  const summary = make("section", "usage-card");
+  summary.append(make("h3", "", "Task token usage"));
+  const grid = make("dl", "usage-grid");
+  for (const [label, value] of [["Input", metrics.task.inputTokens], ["Cache hit", metrics.task.cacheReadTokens],
+    ["Cache write", metrics.task.cacheWriteTokens], ["Output", metrics.task.outputTokens], ["Total", metrics.task.totalTokens]] as const) {
+    grid.append(make("dt", "", label), make("dd", "", usageValue(value)));
+  }
+  summary.append(grid);
+  summary.append(make("p", "usage-cost", metrics.task.reportedCost === undefined
+    ? "Provider cost not reported — no estimate shown."
+    : `Provider-reported cost: ${metrics.task.reportedCost.toLocaleString(undefined, { maximumFractionDigits: 8 })}`));
+
+  const context = make("section", "usage-card");
+  context.append(make("h3", "", "Context"));
+  if (metrics.context) {
+    const percent = Math.round(metrics.context.ratio * 100);
+    context.append(make("p", "usage-context", `${percent}% used (${100 - percent}% left)`),
+      make("p", "muted", `${Math.round(metrics.context.bytes / 1024).toLocaleString()} of ${Math.round(metrics.context.limit / 1024).toLocaleString()} KiB in Dikdik’s bounded context.`));
+  } else context.append(make("p", "muted", "No current context measurement."));
+
+  const turns = make("section", "usage-turns");
+  turns.append(make("h3", "", "By turn"));
+  for (const turn of metrics.turns) {
+    const card = make("article", "usage-turn");
+    card.append(make("h4", "", `Turn ${turn.turn}${turn.profile ? ` · ${turn.profile}` : ""}`),
+      make("p", "muted", `${turn.calls} provider report${turn.calls === 1 ? "" : "s"}`));
+    const values = make("dl", "usage-grid compact");
+    for (const [label, value] of [["Input", turn.inputTokens], ["Cache hit", turn.cacheReadTokens], ["Cache write", turn.cacheWriteTokens], ["Output", turn.outputTokens], ["Total", turn.totalTokens]] as const) {
+      values.append(make("dt", "", label), make("dd", "", usageValue(value)));
+    }
+    card.append(values);
+    if (turn.reportedCost !== undefined) card.append(make("p", "usage-cost", `Provider-reported cost: ${turn.reportedCost.toLocaleString(undefined, { maximumFractionDigits: 8 })}`));
+    turns.append(card);
+  }
+  const note = make("p", "usage-note", "Only provider-reported values are shown. Cache fields remain ‘Not reported’ when the provider omits them; costs are never inferred from token counts.");
+  panel.replaceChildren(context, summary, turns, note);
 }
 
 function renderBrowser(): void {
@@ -1354,6 +1405,11 @@ async function runMenuAction(action: string): Promise<void> {
     else if (action === "organise") { closeTaskMenu(); openMeta(task); }
     else if (action === "download") { closeTaskMenu(); await downloadTask(task); }
     else if (action === "info") { closeTaskMenu(); await showAgentInfo(); }
+    else if (action === "usage") {
+      closeTaskMenu();
+      if (task !== selected) { selectTask(task); await observe(); }
+      openCanvas("usage");
+    }
     else if (action === "delete") {
       if (!confirmingDelete) {
         confirmingDelete = true;
@@ -1416,6 +1472,7 @@ function startStream(id: string): void {
     if (record.kind === "browser_started" || record.kind === "browser_result") renderBrowser();
     if (record.kind === 'plan_updated') void loadPlan(id);
     if (record.kind === 'task_tracker') renderChecklist();
+    if ((record.kind === "agent_model" || record.kind === "running") && canvasTab === "usage" && !el("canvas").hidden) renderUsage();
     if (record.kind === "running" || isTerminal(record.kind)) {
       setState(record.kind);
       selectedState = record.kind;
@@ -1464,6 +1521,7 @@ async function observe(force = false): Promise<void> {
     }
     renderTerminal();
     renderBrowser();
+    if (canvasTab === "usage") renderUsage();
     renderChecklist(); await loadPlan(id);
     if (id !== selected || epoch !== viewEpoch) return;
     button("cancel").disabled = isTerminal(task.state);
@@ -2497,7 +2555,7 @@ canvasGrip.addEventListener("dblclick", () => setCanvasWidth(null));
 
 // --- command menu (Ctrl+K) ---------------------------------------------------------
 interface Command { label: string; keywords?: string; hint?: string; icon: string; run: () => void }
-const PANEL_TITLES: Record<string, string> = { changes: "Changes", files: "Files", terminal: "Terminal", browser: "Browser", planner: "Planner", git: "Git" };
+const PANEL_TITLES: Record<string, string> = { changes: "Changes", files: "Files", terminal: "Terminal", browser: "Browser", planner: "Planner", usage: "Usage", git: "Git" };
 let paletteItems: Command[] = [], paletteIndex = 0;
 function paletteCommands(): Command[] {
   const task = selected;

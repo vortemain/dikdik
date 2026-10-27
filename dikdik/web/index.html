@@ -54,6 +54,7 @@
     <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 9h6v6H9zM9 9V6.5A2.5 2.5 0 1 0 6.5 9H9Zm6 0V6.5A2.5 2.5 0 1 1 17.5 9H15Zm0 6v2.5a2.5 2.5 0 1 0 2.5-2.5H15Zm-6 0v2.5A2.5 2.5 0 1 1 6.5 15H9Z"/></symbol>
     <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1.4 1.4 0 0 1 0 2L13.8 20.5a1.4 1.4 0 0 1-2 0Z"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.4"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V11m7 9V4m7 16v-6M3 20h18"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/></symbol>
     <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".6" fill="currentColor"/></symbol>
   </svg>
@@ -86,6 +87,7 @@
     <button type="button" role="menuitem" data-action="export"><svg class="i"><use href="#i-download"/></svg><span>Export transcript</span></button>
     <button type="button" role="menuitem" data-action="fork"><svg class="i"><use href="#i-branch"/></svg><span>Fork conversation</span></button>
     <button type="button" role="menuitem" data-action="download"><svg class="i"><use href="#i-download"/></svg><span>Download data (.zip)</span></button>
+    <button type="button" role="menuitem" data-action="usage"><svg class="i"><use href="#i-chart"/></svg><span>Display Usage and Cost</span></button>
     <button type="button" role="menuitem" data-action="info"><svg class="i"><use href="#i-info"/></svg><span>Skills, hooks and tools</span></button>
     <button type="button" role="menuitem" data-action="delete" class="danger-item"><svg class="i"><use href="#i-trash"/></svg><span>Delete</span></button>
   </div>
@@ -208,6 +210,7 @@
           <button class="canvas-tab" type="button" role="tab" data-tab="terminal" aria-selected="false">Terminal</button>
           <button class="canvas-tab" type="button" role="tab" data-tab="browser" aria-selected="false">Browser</button>
           <button class="canvas-tab" type="button" role="tab" data-tab="planner" aria-selected="false">Planner</button>
+          <button class="canvas-tab" type="button" role="tab" data-tab="usage" aria-selected="false">Usage</button>
           <button class="canvas-tab" type="button" role="tab" data-tab="tasklist" aria-selected="false" id="tasklist-tab" hidden>Task List</button>
           <button class="canvas-tab" type="button" role="tab" data-tab="git" aria-selected="false">Git<span id="git-count" class="tab-count"></span></button>
         </div>
@@ -273,6 +276,7 @@
         <p id="planner-note" class="browser-status">Plans are reviewed before building. Workspace files change only through Apply.</p>
         <p id="planner-empty" class="canvas-empty">There is currently no plan for this repo</p><div id="planner-content" class="planner-content" hidden></div>
       </div>
+      <div class="canvas-body usage-panel" data-pane="usage" id="usage-panel" hidden></div>
       <div class="canvas-body" data-pane="tasklist" hidden><p class="browser-status">Progress reported by the agent. This checklist is not verification evidence.</p><ol id="task-checklist" class="task-checklist"></ol></div>
     </aside>
   </div>

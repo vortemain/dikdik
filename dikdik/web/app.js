@@ -237,6 +237,73 @@
     }
     return null;
   }
+  function reportedUsage(value) {
+    if (typeof value !== "object" || value === null)
+      return {};
+    const data = value, out = {};
+    const fields = [
+      ["inputTokens", "input_tokens"],
+      ["outputTokens", "output_tokens"],
+      ["cacheReadTokens", "cache_read_tokens"],
+      ["cacheWriteTokens", "cache_write_tokens"],
+      ["totalTokens", "total_tokens"],
+      ["reportedCost", "reported_cost"]
+    ];
+    for (const [target, source] of fields) {
+      const number = numOrUndef(data[source]);
+      if (number !== undefined && number >= 0)
+        out[target] = number;
+    }
+    return out;
+  }
+  function addUsage(target, usage) {
+    for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "totalTokens", "reportedCost"]) {
+      const value = usage[key];
+      if (value !== undefined)
+        target[key] = (target[key] ?? 0) + value;
+    }
+  }
+  function usageMetrics(events) {
+    const task = {}, turns = [];
+    let current = null, cumulative = 0;
+    const ensureTurn = () => {
+      if (!current) {
+        current = { turn: turns.length + 1, calls: 0, profile: "" };
+        turns.push(current);
+      }
+      return current;
+    };
+    for (const event of events) {
+      const data = event.data ?? {};
+      if (event.kind === "running") {
+        current = { turn: turns.length + 1, calls: 0, profile: "" };
+        turns.push(current);
+        cumulative = 0;
+        continue;
+      }
+      if (event.kind === "agent_started") {
+        const model = typeof data.model === "object" && data.model !== null ? data.model : {};
+        ensureTurn().profile = textOf(model.profile, 120) || textOf(data.profile, 120);
+        continue;
+      }
+      if (event.kind !== "agent_model" || data.phase !== "end")
+        continue;
+      const usage = reportedUsage(data.usage);
+      const reportedTotal = numOrUndef(data.usage_tokens);
+      if (reportedTotal !== undefined && reportedTotal >= 0) {
+        if (usage.totalTokens === undefined && reportedTotal > cumulative)
+          usage.totalTokens = reportedTotal - cumulative;
+        cumulative = reportedTotal;
+      }
+      if (!Object.keys(usage).length)
+        continue;
+      const turn = ensureTurn();
+      turn.calls += 1;
+      addUsage(turn, usage);
+      addUsage(task, usage);
+    }
+    return { context: contextUsage(events), task, turns: turns.filter((turn) => turn.calls > 0) };
+  }
   function goalState(events) {
     for (let i = events.length - 1;i >= 0; i--) {
       const event = events[i];
@@ -2811,6 +2878,8 @@ ${c.output}` : "";
     }
     if (tab === "tasklist")
       renderChecklist();
+    if (tab === "usage")
+      renderUsage();
   }
   function changedPaths() {
     return new Set(review.files.map((file) => file.path));
@@ -2825,6 +2894,57 @@ ${c.output}` : "";
     empty.textContent = selectedState && (!isTerminal(selectedState) || selectedState === "failed") ? "Waiting for runtime to start..." : "No terminal output yet. Commands run by the agent will appear here.";
     if (view.commands.some((command) => command.running))
       terminal.scrollTop = terminal.scrollHeight;
+  }
+  function usageValue(value) {
+    return value === undefined ? "Not reported" : value.toLocaleString();
+  }
+  function renderUsage() {
+    const panel = el("usage-panel"), metrics = usageMetrics(liveEvents);
+    if (!metrics.turns.length) {
+      const empty = make("div", "canvas-empty usage-empty");
+      const copy = make("div");
+      copy.append(make("h3", "", "No metrics data available"), make("p", "muted", "Usage appears only when the configured provider reports it. Dikdik never estimates token cost."));
+      empty.append(copy);
+      panel.replaceChildren(empty);
+      return;
+    }
+    const summary = make("section", "usage-card");
+    summary.append(make("h3", "", "Task token usage"));
+    const grid = make("dl", "usage-grid");
+    for (const [label, value] of [
+      ["Input", metrics.task.inputTokens],
+      ["Cache hit", metrics.task.cacheReadTokens],
+      ["Cache write", metrics.task.cacheWriteTokens],
+      ["Output", metrics.task.outputTokens],
+      ["Total", metrics.task.totalTokens]
+    ]) {
+      grid.append(make("dt", "", label), make("dd", "", usageValue(value)));
+    }
+    summary.append(grid);
+    summary.append(make("p", "usage-cost", metrics.task.reportedCost === undefined ? "Provider cost not reported — no estimate shown." : `Provider-reported cost: ${metrics.task.reportedCost.toLocaleString(undefined, { maximumFractionDigits: 8 })}`));
+    const context = make("section", "usage-card");
+    context.append(make("h3", "", "Context"));
+    if (metrics.context) {
+      const percent = Math.round(metrics.context.ratio * 100);
+      context.append(make("p", "usage-context", `${percent}% used (${100 - percent}% left)`), make("p", "muted", `${Math.round(metrics.context.bytes / 1024).toLocaleString()} of ${Math.round(metrics.context.limit / 1024).toLocaleString()} KiB in Dikdik’s bounded context.`));
+    } else
+      context.append(make("p", "muted", "No current context measurement."));
+    const turns = make("section", "usage-turns");
+    turns.append(make("h3", "", "By turn"));
+    for (const turn of metrics.turns) {
+      const card = make("article", "usage-turn");
+      card.append(make("h4", "", `Turn ${turn.turn}${turn.profile ? ` · ${turn.profile}` : ""}`), make("p", "muted", `${turn.calls} provider report${turn.calls === 1 ? "" : "s"}`));
+      const values = make("dl", "usage-grid compact");
+      for (const [label, value] of [["Input", turn.inputTokens], ["Cache hit", turn.cacheReadTokens], ["Cache write", turn.cacheWriteTokens], ["Output", turn.outputTokens], ["Total", turn.totalTokens]]) {
+        values.append(make("dt", "", label), make("dd", "", usageValue(value)));
+      }
+      card.append(values);
+      if (turn.reportedCost !== undefined)
+        card.append(make("p", "usage-cost", `Provider-reported cost: ${turn.reportedCost.toLocaleString(undefined, { maximumFractionDigits: 8 })}`));
+      turns.append(card);
+    }
+    const note = make("p", "usage-note", "Only provider-reported values are shown. Cache fields remain ‘Not reported’ when the provider omits them; costs are never inferred from token counts.");
+    panel.replaceChildren(context, summary, turns, note);
   }
   function renderBrowser() {
     const view = browserView(liveEvents);
@@ -3614,6 +3734,13 @@ ${c.output}` : "";
       } else if (action === "info") {
         closeTaskMenu();
         await showAgentInfo();
+      } else if (action === "usage") {
+        closeTaskMenu();
+        if (task !== selected) {
+          selectTask(task);
+          await observe();
+        }
+        openCanvas("usage");
       } else if (action === "delete") {
         if (!confirmingDelete) {
           confirmingDelete = true;
@@ -3694,6 +3821,8 @@ ${c.output}` : "";
         loadPlan(id);
       if (record.kind === "task_tracker")
         renderChecklist();
+      if ((record.kind === "agent_model" || record.kind === "running") && canvasTab === "usage" && !el("canvas").hidden)
+        renderUsage();
       if (record.kind === "running" || isTerminal(record.kind)) {
         setState(record.kind);
         selectedState = record.kind;
@@ -3768,6 +3897,8 @@ ${c.output}` : "";
       }
       renderTerminal();
       renderBrowser();
+      if (canvasTab === "usage")
+        renderUsage();
       renderChecklist();
       await loadPlan(id);
       if (id !== selected || epoch !== viewEpoch)
@@ -5227,7 +5358,7 @@ ${c.output}` : "";
     event.preventDefault();
   });
   canvasGrip.addEventListener("dblclick", () => setCanvasWidth(null));
-  var PANEL_TITLES = { changes: "Changes", files: "Files", terminal: "Terminal", browser: "Browser", planner: "Planner", git: "Git" };
+  var PANEL_TITLES = { changes: "Changes", files: "Files", terminal: "Terminal", browser: "Browser", planner: "Planner", usage: "Usage", git: "Git" };
   var paletteItems = [];
   var paletteIndex = 0;
   function paletteCommands() {

@@ -125,6 +125,47 @@ def usage_counts(data: dict) -> dict:
     return {k: v for k, v in usage.items() if k in {"prompt_tokens", "completion_tokens", "total_tokens"} and type(v) is int and v >= 0} if isinstance(usage, dict) else {}
 
 
+def usage_breakdown(data: dict) -> dict:
+    """Return only bounded numeric usage fields; provider metadata is never retained."""
+    usage = data.get("usage", {})
+    if not isinstance(usage, dict):
+        return {}
+
+    def token(*names):
+        for name in names:
+            value = usage.get(name)
+            if type(value) is int and value >= 0:
+                return value
+        return None
+
+    input_tokens = token("input_tokens", "prompt_tokens")
+    output_tokens = token("output_tokens", "completion_tokens")
+    cache_read = token("cache_read_tokens", "cache_read_input_tokens")
+    details = usage.get("prompt_tokens_details")
+    if cache_read is None and isinstance(details, dict):
+        cached = details.get("cached_tokens")
+        if type(cached) is int and cached >= 0:
+            cache_read = cached
+    cache_write = token("cache_write_tokens", "cache_creation_input_tokens")
+    total = token("total_tokens")
+    component_total = (input_tokens or 0) + (output_tokens or 0)
+    if component_total or total is not None:
+        total = max(total or 0, component_total)
+
+    result = {}
+    for key, value in (("input_tokens", input_tokens), ("output_tokens", output_tokens),
+                       ("cache_read_tokens", cache_read), ("cache_write_tokens", cache_write),
+                       ("total_tokens", total)):
+        if value is not None:
+            result[key] = value
+    for name in ("cost_usd", "cost"):
+        cost = usage.get(name)
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and 0 <= cost < float("inf"):
+            result["reported_cost"] = float(cost)
+            break
+    return result
+
+
 def propose(request: dict, files: dict[str, str], resolve: Callable[[], ModelConfig] = from_environment, guidance: str = "") -> tuple[list, dict]:
     if request["mode"] == "offline":
         return request["edits"], {"provider": "offline_explicit_edits", "model_calls": 0, "note": "User-specified edits, not model reasoning"}

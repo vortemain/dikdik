@@ -80,10 +80,23 @@ def make_server(engine: Engine, port: int, token: str):
             # Cookies are not port-scoped, so each local instance gets its own name.
             return f"dikdik_session_{self.server.server_port}"
 
+        def refuse(self, status, data):
+            # Read a small unread body first: on Windows, closing a socket with unread
+            # bytes resets it, and the client can lose the refusal before reading it.
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = 0
+            if 0 < length <= 65536:
+                self.rfile.read(length)
+            else:
+                self.close_connection = True
+            self.reply(status, data)
+
         def same_origin(self):
             host = f"127.0.0.1:{self.server.server_port}"
             if self.headers.get("Host") != host or self.headers.get("Origin", "http://" + host) != "http://" + host:
-                self.reply(403, {"error": "Invalid host or origin"})
+                self.refuse(403, {"error": "Invalid host or origin"})
                 return False
             return True
 
@@ -101,7 +114,7 @@ def make_server(engine: Engine, port: int, token: str):
             # SameSite=Strict session cookie, so nobody has to paste a token.
             supplied = self.headers.get("Authorization", "") or ("Bearer " + self.session_cookie())
             if not hmac.compare_digest(supplied.encode("utf-8"), expected):
-                self.reply(401, {"error": "Not signed in. Open the link printed in the Dikdik terminal."})
+                self.refuse(401, {"error": "Not signed in. Open the link printed in the Dikdik terminal."})
                 return False
             return True
 

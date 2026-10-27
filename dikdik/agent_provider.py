@@ -5,7 +5,7 @@ from typing import Callable
 
 from .agent import ModelResponse, ToolCall
 from .model_config import ModelConfig, from_environment
-from .providers import chat_completion, usage_counts
+from .providers import chat_completion, usage_breakdown
 
 
 class CompatibleAgentModel:
@@ -51,8 +51,8 @@ class CompatibleAgentModel:
                 calls.append(ToolCall(identity, name, parsed))
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             raise ValueError("Provider returned an invalid or incomplete tool-call response") from None
-        usage = usage_counts(data)
-        reported = max(usage.get("total_tokens", 0), usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0))
+        usage = usage_breakdown(data)
+        reported = usage.get("total_tokens", 0)
         thinking = message.get("reasoning_content") or message.get("reasoning") or ""
         return ModelResponse(content=content, tool_calls=calls, usage_tokens=reported,
-                             reasoning=thinking[:16000] if isinstance(thinking, str) else "")
+                             reasoning=thinking[:16000] if isinstance(thinking, str) else "", usage=usage)

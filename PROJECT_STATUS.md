@@ -18,11 +18,11 @@ control (interrupt/exact resume, pause-at-boundary, per-action confirmation, hoo
 attachments, slash commands, side questions, condensing, judged goals, forks);
 an organised interface (command menu, folders and tags, file tree, onboarding);
 and model management (connections, routing, a model picker, sandbox secrets).
-The parity audit (docs/PARITY.md) moved from 89 to 327 fully matched OpenHands sub-features
+The parity audit (docs/PARITY.md) moved from 89 to 329 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **306 passed, 2 live-runtime tests skipped**; Bun
-**87 passed / 429 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-27): Python **309 passed, 2 live-runtime tests skipped**; Bun
+**89 passed / 436 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -55,6 +55,11 @@ Test status (2026-10-27): Python **306 passed, 2 live-runtime tests skipped**; B
   menu, `/btw` side questions, manual/automatic condensing, a context meter,
   judged goal loops, fork/branch and Copy. Checked in real Chrome with a local
   model stand-in; not run against a live provider or Docker.
+- Added a Usage tab: provider-reported input, cache, output and total tokens per
+  task and per turn, and cost only when a provider reports one. Fixed a race where
+  a Stop arriving as a turn finished could turn a later cancel into a pause, and
+  unexpected task errors are now printed to the server console as the error
+  message promised.
 - Added the interface phase: Ctrl+K command menu, Get started card, a banner and
   blocked Send without a model, folders/tags/sort/age filter, grouped steps,
   Thinking rows, Markdown tables and alerts, clickable workspace paths, a file
@@ -75,8 +80,8 @@ Test status (2026-10-27): Python **306 passed, 2 live-runtime tests skipped**; B
 
 ## Test status
 
-- Python: **306 passed, 2 live-runtime tests skipped** (308 total).
-- Bun: **87 passed / 429 assertions**; strict TypeScript check and browser build passed.
+- Python: **309 passed, 2 live-runtime tests skipped** (311 total).
+- Bun: **89 passed / 436 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit

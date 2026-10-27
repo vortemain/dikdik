@@ -23,6 +23,7 @@ class ModelResponse:
     tool_calls: list[ToolCall]
     usage_tokens: int = 0
     reasoning: str = ""  # provider-reported "thinking"; shown, never trusted or replayed
+    usage: dict | None = None  # narrow numeric breakdown; arbitrary provider metadata is discarded
 
 
 class AgentModel(Protocol):
@@ -48,6 +49,7 @@ class AgentOutcome:
     tool_calls: int
     repair_attempts: int
     usage_tokens: int
+    usage: dict
     error: str | None
     transcript: dict | None = None  # everything needed to resume this run exactly
 
@@ -199,6 +201,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
     recent: list[str] = []  # successful calls, for loop detection
     checks: list[dict] = []
     model_calls = tool_calls = repairs = tokens = 0
+    usage_totals: dict[str, int | float] = {}
     verified: dict[str, str] | None = None
     failed_candidate: dict[str, str] | None = None
     needs_repair = False
@@ -267,7 +270,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
     def outcome(state: str, error: str | None) -> AgentOutcome:
         return AgentOutcome(state, dict(candidate), list(checks),
                             verify is not None and state == "completed" and verified == candidate and candidate != baseline,
-                            model_calls, tool_calls, repairs, tokens, error, json.loads(_json(transcript())))
+                            model_calls, tool_calls, repairs, tokens, dict(usage_totals), error, json.loads(_json(transcript())))
 
     def interrupted() -> AgentOutcome | None:
         if cancel.is_set():
@@ -312,8 +315,22 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
         if len(_json(response.content).encode()) > 16384:
             return outcome("failed", "Model text exceeds size limit")
         tokens += response.usage_tokens
+        reported: dict[str, int | float] = {}
+        if isinstance(response.usage, dict):
+            for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "total_tokens"):
+                value = response.usage.get(key)
+                if type(value) is int and value >= 0:
+                    reported[key] = value
+            cost = response.usage.get("reported_cost")
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool) and 0 <= cost < float("inf"):
+                reported["reported_cost"] = float(cost)
+        if response.usage_tokens and "total_tokens" not in reported:
+            reported["total_tokens"] = response.usage_tokens
+        for key, value in reported.items():
+            usage_totals[key] = usage_totals.get(key, 0) + value
         event("model", {"phase": "end", "model_calls": model_calls,
-                        "usage_tokens": tokens, "requested_tools": len(response.tool_calls)})
+                        "usage_tokens": tokens, "usage": reported,
+                        "requested_tools": len(response.tool_calls)})
         if tokens > budget.max_total_tokens:
             return outcome("failed", "Token budget exceeded")
         if isinstance(response.reasoning, str) and response.reasoning.strip():
