@@ -37,7 +37,7 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   };
   const nodes = new Map<string, Node>();
-  for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url", "attach-input", "condenser", "palette-input", "meta-folder", "meta-tags", "sounds", "git-name", "git-email"]) nodes.set(id, new Input());
+  for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url", "attach-input", "condenser", "palette-input", "meta-folder", "meta-tags", "sounds", "git-name", "git-email", "secrets-approval", "agent-critic", "agent-memory", "agent-secrets"]) nodes.set(id, new Input());
   for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-external-empty", "planner-create", "planner-build", "pause"]) nodes.set(id, new Button());
   for (const id of ["mode", "verification", "confirmation-policy", "task-sort", "task-since"]) nodes.set(id, new Select());
   for (const id of ["edits", "objective"]) nodes.set(id, new Textarea());
@@ -64,6 +64,9 @@ test("actual polling retains file selection and control nodes, with safe fallbac
       if (url.startsWith('/api/drafts/')) return Response.json({ scope: url.split('/').at(-1), content: '', revision: 0, updated: 0 });
       if (url.endsWith('/planner')) return Response.json({ task_id: 'a'.repeat(32), planner_id: null, content: '', revision: 0, built_revision: 0 });
       if (url === "/api/tasks") return Response.json([{ id: "task-1", state }]);
+      if (url === "/api/connections") return Response.json([]);
+      if (url === "/api/routers") return Response.json({ routers: [], strategies: {} });
+      if (url === "/api/model-catalog") return Response.json({ default_provider: "anthropic", providers: {} });
       if (url === "/api/settings/app") return Response.json({ confirmation: "never", condenser: true, git_name: "", git_email: "", sounds: false });
       if (url === '/api/tasks/task-1/messages') { state = 'running'; result = null; return Response.json({ queued: false }); }
       if (url === "/api/profiles" || url === "/api/secrets" || url === "/api/skills" || url === "/api/automations" || url === "/api/agent-profiles") return Response.json([]);

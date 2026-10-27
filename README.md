@@ -51,6 +51,11 @@ autonomous engineering platform.
   settings page and conversation. File conversations in folders, tag them, sort
   and filter the sidebar, and download a conversation as a .zip. Files has a
   tree, tabs and Markdown preview; paths in replies open the file.
+- **Models and keys.** Provider connections share one key across profiles;
+  profiles can be renamed, duplicated, tuned and tested with one click; a router
+  can send first messages to a strong model and follow-ups to a fast one; the
+  composer pill switches models. Keys can be rotated with undo, renamed, and
+  (only when a task allows it) exposed to sandbox commands, redacted from output.
 - **Tests for several stacks** in network-less Docker containers: Python
   `unittest`, `bun test`, `npm test` and `cargo test --offline`, picked from the
   project's files. Without Docker, tasks are syntax-checked and labelled so.
@@ -70,7 +75,7 @@ autonomous engineering platform.
   repository indexer loaded automatically when built.
 - Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
 
-**Not yet:** model
+**Not yet:** classifier-based
 routing, plugins and extension apps,
 WebSocket and TypeScript clients, a desktop app, and any recorded run against a
 live model provider or Docker engine. See [the parity audit](docs/PARITY.md).

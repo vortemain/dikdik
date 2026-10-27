@@ -3,6 +3,7 @@ import { attachmentList, contextUsage, goalState, isResumable, openConfirmations
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries, profilesPanel, secretsPanel, skillsPanel } from "./contracts";
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, SlashCommand, TaskRequest, DiffReview, M4Factory, M4Node, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
+import { keysPane, modelsPane } from "./models-pane";
 import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, workspacePath } from "./organise";
 import type { TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
@@ -41,6 +42,7 @@ let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsEleme
 let showAllMessages = false, projectFileSet = new Set<string>();
 const expandedDirs = new Set<string>();
 let openTabs: string[] = [], fileText = "", filePreview = false;
+let exposedSecrets = 0;  // keys the user exposed to the sandbox; the composer offers them only then
 const composerSize = new ComposerSize();
 
 // --- small DOM helpers ----------------------------------------------------
@@ -291,6 +293,9 @@ function stepLabel(msg: ChatMessage): StepLabel {
     case "recovery_cleanup": return { icon: "alert", title: "Recovered after restart", arg: detailField(details, "warning") };
     case "hook_blocked": return { icon: "shield", title: "Blocked by a project hook", arg: msg.body ?? "" };
     case "agent_thinking": return { icon: "sparkle", title: "Thinking", arg: "" };
+    case "model_routed": return { icon: "cpu", title: msg.title ?? "Routed", arg: msg.body ?? "" };
+    case "critic": return { icon: msg.title === "Critic: looks done" ? "check" : "alert", title: msg.title ?? "Critic", arg: (msg.body ?? "").split("\n")[0] ?? "" };
+    case "sandbox_secrets": return { icon: "key", title: "Sandbox secrets available", arg: msg.body ?? "" };
     case "confirmation_resolved": return { icon: msg.title === "Approved" ? "check" : "x", title: `${msg.title} · ${detailField(details, "id") ? "action" : ""}`.replace(/ · $/, ""), arg: detailField(details, "reason") };
     case "subagent": return { icon: "sparkle", title: msg.title ?? "Subagent", arg: (msg.body ?? "").split("\n")[0] ?? "" };
     case "condensed": return { icon: "list", title: msg.title ?? "Condensed", arg: "" };
@@ -463,6 +468,9 @@ function usageText(details: unknown): string {
   const count = (key: string) => typeof agent[key] === "number" ? agent[key] as number : 0;
   const parts = [`${count("model_calls")} model call${count("model_calls") === 1 ? "" : "s"}`, `${count("tool_calls")} tool call${count("tool_calls") === 1 ? "" : "s"}`];
   if (count("reported_usage_tokens")) parts.push(`${count("reported_usage_tokens").toLocaleString()} tokens reported`);
+  const model = (details as { model?: { profile?: unknown; model?: unknown } }).model;
+  const name = typeof model?.profile === "string" && model.profile ? model.profile : typeof model?.model === "string" ? model.model : "";
+  if (name) parts.push(name);
   return parts.join(" · ");
 }
 function isLatestTurn(msg: ChatMessage): boolean {
@@ -1496,8 +1504,8 @@ async function connect(): Promise<void> {
   if (!connected) {
     connected = true;
     refreshPanels = {
-      models: mountPanel("panel-profiles", profilesPanel),
-      secrets: mountPanel("panel-secrets", secretsPanel),
+      models: modelsPane(el("panel-profiles"), paneDeps),
+      secrets: keysPane(el("panel-secrets"), paneDeps),
       skills: mountPanel("panel-skills", skillsPanel),
     };
   }
@@ -1507,6 +1515,7 @@ async function connect(): Promise<void> {
   else await composerDrafts.select(selected ?? 'home');
   void observe();
   void loadAppSettings().catch(() => undefined);
+  void loadExposedSecrets();
   routeSettings();
 }
 function showSignIn(): void {
@@ -1816,7 +1825,7 @@ function openSettings(pane: string): void {
   void loadAppSettings().catch(() => undefined);
 }
 el("open-settings").addEventListener("click", () => openSettings("general"));
-el("model-pill").addEventListener("click", () => openSettings("models"));
+el("model-pill").addEventListener("click", event => { event.stopPropagation(); void openModelMenu(); });
 // Profiles or keys may have changed while settings were open.
 el("settings").addEventListener("close", () => { settingsHash(null); });
 el("settings").addEventListener("close", () => { void loadModel().catch(() => undefined); void loadAgents().catch(() => undefined); void ensureLists(true); });
@@ -1917,6 +1926,8 @@ function syncMode(): void {
   el("browser-field").hidden = mode !== "agent";
   input("browser-approval").disabled = mode !== "agent";
   const execution = policy.requiresExecution || (mode === "agent" && input("browser-approval").checked);
+  el("secrets-field").hidden = !(mode === "agent" && execution && exposedSecrets > 0);
+  input("secrets-approval").disabled = el("secrets-field").hidden === true;
   (el("execution-field") as HTMLElement).hidden = !execution;
   input("execution").disabled = !execution;
   input("execution").required = execution;
@@ -1964,6 +1975,7 @@ function composerRequest(text: string, goalMaxTurns?: number) {
     approveExecution: input("execution").checked, approveExternal: input("external").checked,
     approveBrowser: input("browser-approval").checked,
     agentProfile: (el("agent-profile") as HTMLSelectElement).value ?? "",
+    approveSecrets: input("secrets-approval").checked,
   });
 }
 
@@ -2020,6 +2032,9 @@ function fillAgentForm(profile: AgentProfile | null): void {
   field("agent-browser").checked = profile?.allow_browser ?? true;
   field("agent-mcp").checked = profile?.use_mcp ?? true;
   field("agent-skills").checked = profile?.use_skills ?? true;
+  field("agent-critic").checked = profile?.critic ?? false;
+  field("agent-memory").checked = profile?.memory ?? false;
+  field("agent-secrets").value = profile?.secret_refs == null ? "" : profile.secret_refs.length ? profile.secret_refs.join(", ") : "none";
   el("agent-save").textContent = profile ? "Save changes" : "Add agent";
   el("agent-cancel").hidden = !profile;
 }
@@ -2042,6 +2057,7 @@ el("agent-form").addEventListener("submit", async event => {
     model_profile_id: (el("agent-model") as HTMLSelectElement).value || null,
     max_model_calls: number("agent-steps"), deadline_seconds: number("agent-minutes"),
     allow_shell: field("agent-shell").checked, allow_browser: field("agent-browser").checked, use_mcp: field("agent-mcp").checked, use_skills: field("agent-skills").checked,
+    critic: field("agent-critic").checked, memory: field("agent-memory").checked, secret_refs: secretRefsField(field("agent-secrets").value),
   };
   const id = field("agent-id").value;
   try {
@@ -2720,6 +2736,72 @@ function resetStop(): void {
   stopArmed = undefined;
   el("cancel").replaceChildren(icon("stop"), document.createTextNode("Stop"));
   setClass(el("cancel"), "confirming", false);
+}
+
+// --- models: settings panes, the model picker on the pill, sandbox secrets ----------------
+const paneDeps = {
+  request: <T>(path: string, method: string, body?: unknown) => request<T>(path, method, body),
+  make, message,
+  changed: () => { void loadModel().catch(() => undefined); void loadExposedSecrets(); void ensureLists(true); },
+};
+/** Agent-profile sandbox secrets: blank → every exposed key (null), "none" → [], else the listed names. */
+function secretRefsField(text: string): string[] | null {
+  const value = text.trim();
+  if (!value) return null;
+  if (value.toLowerCase() === "none") return [];
+  return [...new Set(value.split(",").map(item => item.trim()).filter(Boolean))];
+}
+async function loadExposedSecrets(): Promise<void> {
+  try {
+    const keys = await api<{ env: string }[]>("/api/secrets");
+    exposedSecrets = keys.filter(key => key.env).length;
+  } catch { exposedSecrets = 0; }
+  syncMode();
+}
+function closeModelMenu(): void { el("model-menu").hidden = true; }
+async function openModelMenu(): Promise<void> {
+  const menu = el("model-menu");
+  if (!menu.hidden) { closeModelMenu(); return; }
+  let profiles: { id: string; name: string; model: string; is_default: boolean }[] = [];
+  try { profiles = await api<typeof profiles>("/api/profiles"); } catch { /* the menu still offers Manage models */ }
+  const pick = (choice: { id: string; name: string } | null) => {
+    modelOverride = choice;
+    closeModelMenu();
+    message(choice ? `Using ${choice.name} for your next messages in this tab.` : "Back to the default model.");
+    void loadModel().catch(() => undefined);
+  };
+  const item = (label: string, detail: string, checked: boolean, run: () => void) => {
+    const node = make("button", "model-item"); node.type = "button";
+    node.setAttribute("role", "menuitemradio");
+    node.setAttribute("aria-checked", String(checked));
+    const mark = make("span", "model-check"); if (checked) mark.append(icon("check"));
+    node.append(mark, make("span", "model-name", label));
+    if (detail) node.append(make("span", "model-detail", detail));
+    node.onclick = run;
+    return node;
+  };
+  const fallback = profiles.find(profile => profile.is_default);
+  const manage = make("button"); manage.type = "button"; manage.setAttribute("role", "menuitem");
+  manage.append(icon("gear"), make("span", "", "Manage models…"));
+  manage.onclick = () => { closeModelMenu(); openSettings("models"); };
+  menu.replaceChildren(
+    item("Default", fallback ? `${fallback.name} · ${fallback.model}` : "from settings", modelOverride === null, () => pick(null)),
+    ...profiles.map(profile => item(profile.name, profile.model, modelOverride?.id === profile.id, () => pick({ id: profile.id, name: profile.name }))),
+    make("hr"), manage,
+  );
+  const box = el("model-pill").getBoundingClientRect();
+  menu.hidden = false;
+  const width = menu.offsetWidth, height = menu.offsetHeight;
+  menu.style.left = `${Math.max(8, Math.min(box.left, innerWidth - width - 8))}px`;
+  menu.style.top = `${box.top - height - 6 > 8 ? box.top - height - 6 : box.bottom + 6}px`;
+  menu.querySelector<HTMLButtonElement>("[aria-checked=true]")?.focus();
+}
+if (typeof document.addEventListener === "function") {
+  document.addEventListener("click", event => {
+    const menu = el("model-menu");
+    if (!menu.hidden && event.target instanceof Node && !menu.contains(event.target)) closeModelMenu();
+  });
+  document.addEventListener("keydown", (event: KeyboardEvent) => { if (event.key === "Escape" && !el("model-menu").hidden) closeModelMenu(); });
 }
 
 let stopArmed: ReturnType<typeof setTimeout> | undefined;

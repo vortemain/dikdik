@@ -45,7 +45,7 @@ class SecretsTests(unittest.TestCase):
         store.set("ai_key", b"MAGIC_PLAINTEXT_BUT_ONLY_A_TEST_DUMMY_KEY")
         listing = store.list()
         self.assertEqual([r["ref"] for r in listing], ["ai_key"])
-        self.assertEqual(set(listing[0]), {"ref", "set_at"})
+        self.assertEqual(set(listing[0]), {"ref", "set_at", "env", "previous_set_at"})
         self.assertNotIn("plaintext", listing[0])
         blob = (self.data / "secrets.bin").read_text()
         self.assertNotIn("MAGIC_PLAINTEXT", blob)  # only ciphertext at rest
@@ -161,7 +161,7 @@ class SecretsTests(unittest.TestCase):
         status, rows = self.routes("GET", "/api/secrets", None)
         self.assertEqual(status, 200)
         self.assertEqual([r["ref"] for r in rows], ["k"])
-        self.assertEqual(set(rows[0]), {"ref", "set_at"})
+        self.assertEqual(set(rows[0]), {"ref", "set_at", "env", "previous_set_at"})
         self.assertNotIn("value", str(rows))
         self.assertNotIn("ciphertext", str(rows))
         self.assertEqual(self.routes("DELETE", "/api/secrets/k", {})[0], 200)

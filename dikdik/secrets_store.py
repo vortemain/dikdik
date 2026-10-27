@@ -27,6 +27,7 @@ import hmac
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -35,6 +36,17 @@ ALG = "dikdik-enc-mac-v1"
 VERSION = 1
 KEY_SIZE = 32
 MAX_VALUE = 65536
+ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
+RESERVED_ENV = {"HOME", "PATH", "CI", "PWD", "USER", "SHELL", "TMPDIR", "CARGO_TARGET_DIR", "BUN_INSTALL_CACHE_DIR", "npm_config_cache"}
+
+
+def _next_counter(document: dict, ref: str) -> int:
+    """Counters per name only grow, even across deletes and undone rotations, so a keystream is never reused."""
+    record = document["records"].get(ref) or {}
+    seen = document.setdefault("counters", {})
+    counter = max(int(seen.get(ref, 0)), int(record.get("counter", 0)), int(record.get("max_counter", 0))) + 1
+    seen[ref] = counter
+    return counter
 
 
 class SecretsError(Exception):
@@ -193,11 +205,85 @@ class SecretsStore:
         except Exception:
             raise SecretsError("Local encryption key could not be recovered; nothing was changed") from None
         records = document["records"]
-        counter = int(records.get(ref, {}).get("counter", 0)) + 1
+        old = records.get(ref)
+        counter = _next_counter(document, ref)
         header, cipher, tag = _encrypt_record(key, ref, counter, plaintext)
-        records[ref] = {"ref": ref, "set_at": time.time(), "counter": counter, "header": header.hex(), "data": cipher.hex(), "tag": tag.hex()}
+        record = {"ref": ref, "set_at": time.time(), "counter": counter, "header": header.hex(), "data": cipher.hex(), "tag": tag.hex()}
+        if old:
+            # Keep the value being replaced (still sealed) so a bad rotation can be undone.
+            record["previous"] = {k: old[k] for k in ("ref", "set_at", "counter", "header", "data", "tag")}
+            if old.get("env"):
+                record["env"] = old["env"]
+        records[ref] = record
         self._save(document)  # atomic replace
-        return records[ref]["set_at"]
+        return record["set_at"]
+
+    def restore_previous(self, ref: str):
+        """Undo the last rotation: the previous value becomes current again."""
+        self._validate_ref(ref)
+        document = self._document() if self.path.exists() else None
+        record = (document or {}).get("records", {}).get(ref)
+        if record is None:
+            raise KeyError(ref)
+        if not record.get("previous"):
+            raise ValueError("There is no previous value to restore")
+        restored = {**record["previous"], "max_counter": max(int(record["counter"]), int(record.get("max_counter", 0))),
+                    **({"env": record["env"]} if record.get("env") else {})}
+        _decrypt_record(self._key(document), restored)  # integrity check before switching
+        document["records"][ref] = restored
+        self._save(document)
+
+    def rename(self, ref: str, new: str):
+        """Values are bound to their name when sealed, so renaming re-seals them under the new one."""
+        self._validate_ref(ref)
+        self._validate_ref(new)
+        document = self._document() if self.path.exists() else None
+        records = (document or {}).get("records", {})
+        if ref not in records:
+            raise KeyError(ref)
+        if new in records:
+            raise ValueError("A secret with that name already exists")
+        key = self._key(document)
+        old = records[ref]
+        value = _decrypt_record(key, old)
+        counter = _next_counter(document, new)
+        header, cipher, tag = _encrypt_record(key, new, counter, value)
+        records[new] = {"ref": new, "set_at": old["set_at"], "counter": counter, "header": header.hex(), "data": cipher.hex(), "tag": tag.hex(),
+                        **({"env": old["env"]} if old.get("env") else {})}
+        del records[ref]
+        self._save(document)
+
+    def set_env(self, ref: str, env):
+        """The variable name a sandbox sees this secret as (None: never exposed)."""
+        self._validate_ref(ref)
+        if env is not None and (not isinstance(env, str) or not ENV_NAME.fullmatch(env) or env in RESERVED_ENV):
+            raise ValueError("Variable name must be 1–64 of A–Z, 0–9 and _, not starting with a digit, and not a reserved name")
+        document = self._document() if self.path.exists() else None
+        records = (document or {}).get("records", {})
+        if ref not in records:
+            raise KeyError(ref)
+        if env and any(r.get("env") == env and name != ref for name, r in records.items()):
+            raise ValueError(f"Another secret already uses {env}")
+        if env:
+            records[ref]["env"] = env
+        else:
+            records[ref].pop("env", None)
+        self._save(document)
+
+    def sandbox_values(self, refs=None) -> dict[str, str]:
+        """{VARIABLE: value} for secrets exposed to the sandbox, optionally limited to refs. In-process only."""
+        if not self.path.exists():
+            return {}
+        document = self._document()
+        key = self._key(document)
+        out = {}
+        for name, record in document["records"].items():
+            if record.get("env") and (refs is None or name in refs):
+                try:
+                    out[record["env"]] = _decrypt_record(key, record).decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+        return out
 
     def delete(self, ref: str):
         self._validate_ref(ref)
@@ -212,7 +298,8 @@ class SecretsStore:
             return []
         document = self._document()
         self._key(document)  # availability check only; values stay sealed
-        return [dict(ref=r["ref"], set_at=r["set_at"]) for r in sorted(document["records"].values(), key=lambda r: r["ref"])]
+        return [dict(ref=r["ref"], set_at=r["set_at"], env=r.get("env") or "", previous_set_at=(r.get("previous") or {}).get("set_at"))
+                for r in sorted(document["records"].values(), key=lambda r: r["ref"])]
 
     def reveal(self, ref: str) -> bytes:
         """Decrypt one value for an in-process provider call. Never route this."""

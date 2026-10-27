@@ -28,14 +28,14 @@ OpenHands app map (799 sub-features) and the agent-server/SDK map
 (`upstream/software-agent-sdk/.agents/skills/verify-agent-server/references/feature-map`,
 950 sub-features). The full list is in [`parity-audit.csv`](parity-audit.csv).
 
-| Status | First audit | After the first build phases | After the parity fix | Run control | Now (interface) |
-|---|---|---|---|---|---|
-| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 |
-| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 |
-| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 |
-| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 |
-| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 |
-| **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
+| Status | First audit | After the first build phases | After the parity fix | Run control | Interface | Now (models) |
+|---|---|---|---|---|---|---|
+| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 |
+| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 |
+| Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 |
+| Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 | 61 |
+| Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 |
+| **Total** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** | **1,749** |
 
 Correction (2026-10-27): earlier versions of this table counted 1,801 rows. 51 of
 them were usage notes from the reference maps' "Gotchas" sections that the first
@@ -89,13 +89,24 @@ panel, `#settings/<page>` links, Git identity and a finish chime, a Skills/hooks
 tools dialog, a conversation .zip download and a confirming Stop. Stuck detection
 now follows OpenHands (four identical actions in a row, or an A/B pair three
 times). Checked in real Chrome against a local model stand-in.
+The models phase adds provider connections (one sealed key shared by several
+profiles; rotate, rename, delete guarded while profiles use them), a full profile
+editor (rename, duplicate, catalog suggestions, key-help links, temperature/top P/
+token limits, an explicit Test button that sends one tiny request), rule-based
+model routers with a per-turn "Routed to" record, a model picker on the composer
+pill, API keys with undo of the last change, rename that updates every reference,
+and opt-in sandbox variables passed to Docker by name only and redacted from
+output, plus per-agent-profile critic review, project memory and secret scoping.
+Secret counters now never repeat across deletes or undone rotations. Checked in
+real Chrome against a local OpenAI-compatible stand-in; no live provider or
+Docker run was made.
 
 Gaps the first audit found in features that looked present, all fixed: unused
 model profiles and keys, unused skills, the unloaded Rust indexer, automations
 granting consent on their own, real agent tool events missing from the chat,
 and automation runs never listing (`task_id`/`id` mismatch).
 
-Largest remaining gaps: live browser execution, model routing, plugins and extension apps, automation Git sync and templates,
+Largest remaining gaps: live browser execution, classifier-based routing, plugins and extension apps, automation Git sync and templates,
 WebSocket and TypeScript clients, VS Code serving, onboarding, and any recorded run
 against a live model provider or Docker engine.
 

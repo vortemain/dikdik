@@ -18,7 +18,11 @@ LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
 # Additive, defensive hook for the agent-layer whitelist; profiles carry no
 # permission semantics, but a shared referral prevents accidental key reuse.
-NON_PATCHABLE_KEYS = {"name", "provider", "id", "credential_secret_ref"}
+NON_PATCHABLE_KEYS = {"id"}
+PATCHABLE = {"name", "provider", "model", "endpoint", "timeout_seconds", "is_default", "credential_secret_ref",
+             "connection_id", "temperature", "top_p", "max_output_tokens"}
+# Columns added after the first release; migrated in place.
+EXTRA_COLUMNS = (("connection_id", "TEXT"), ("temperature", "REAL"), ("top_p", "REAL"), ("max_output_tokens", "INTEGER"))
 
 
 class ApiError(Exception):
@@ -54,28 +58,61 @@ CREATE TABLE IF NOT EXISTS profiles (
 """
 
 
+def migrate(db) -> None:
+    db.execute(SCHEMA)
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(profiles)")}
+    for name, kind in EXTRA_COLUMNS:
+        if name not in columns:
+            db.execute(f"ALTER TABLE profiles ADD COLUMN {name} {kind}")
+
+
 class ProfileStore:
     """All state lives in the shared Store; instances are stateless."""
 
     def __init__(self, store):
         self.store = store
+        with store.connect() as db:
+            migrate(db)
 
     # --- validation ----------------------------------------------------
     def _validate(self, body, *, require_core: bool):
         if not isinstance(body, dict):
             raise ApiError(400, "Body must be a JSON object")
         out = {}
-        if require_core:
+        if require_core or "name" in body:
             name = body.get("name")
-            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 64:
-                raise ApiError(400, "Name must contain 1–64 characters")
+            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 64 or any(ord(c) < 32 for c in name):
+                raise ApiError(400, "Name must contain 1–64 characters on one line")
+            out["name"] = name.strip()
+        if require_core or "provider" in body:
             provider = body.get("provider")
             if provider not in PROVIDERS:
                 raise ApiError(400, "Provider must be one of openai, anthropic, azure, local")
+            out["provider"] = provider
+        if require_core or "model" in body:
             model = body.get("model")
             if not isinstance(model, str) or not 1 <= len(model.strip()) <= 128:
                 raise ApiError(400, "Model must contain 1–128 characters")
-            out.update(name=name.strip(), provider=provider, model=model.strip())
+            out["model"] = model.strip()
+        for key, low, high, label in (("temperature", 0, 2, "Temperature must be 0–2"), ("top_p", 0, 1, "Top P must be 0–1")):
+            if key in body:
+                value = body[key]
+                if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high):
+                    raise ApiError(400, label)
+                out[key] = value
+        if "max_output_tokens" in body:
+            value = body["max_output_tokens"]
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 32000):
+                raise ApiError(400, "Max output tokens must be a whole number of 1–32000")
+            out["max_output_tokens"] = value
+        if "connection_id" in body:
+            connection = body["connection_id"] or None
+            if connection is not None:
+                with self.store.connect() as db:
+                    db.execute("CREATE TABLE IF NOT EXISTS connections (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, provider TEXT NOT NULL, endpoint TEXT, created REAL NOT NULL)")
+                    if not isinstance(connection, str) or db.execute("SELECT 1 FROM connections WHERE id=?", (connection,)).fetchone() is None:
+                        raise ApiError(400, "That provider connection no longer exists")
+            out["connection_id"] = connection
         if "endpoint" in body:
             endpoint = body["endpoint"]
             if endpoint is not None and not _endpoint_valid(endpoint):
@@ -108,18 +145,39 @@ class ProfileStore:
                 raise ApiError(400, "A profile with this name already exists")
             default = 0 if db.execute("SELECT 1 FROM profiles LIMIT 1").fetchone() else 1
             db.execute(
-                "INSERT INTO profiles(id,name,provider,model,endpoint,timeout_seconds,credential_secret_ref,is_default,created) VALUES(?,?,?,?,?,?,?,?,?)",
-                (profile_id, fields["name"], fields["provider"], fields["model"], fields.get("endpoint"), fields.get("timeout_seconds"), fields.get("credential_secret_ref"), default, time.time()),
+                "INSERT INTO profiles(id,name,provider,model,endpoint,timeout_seconds,credential_secret_ref,is_default,created,connection_id,temperature,top_p,max_output_tokens) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (profile_id, fields["name"], fields["provider"], fields["model"], fields.get("endpoint"), fields.get("timeout_seconds"), fields.get("credential_secret_ref"), default, time.time(),
+                 fields.get("connection_id"), fields.get("temperature"), fields.get("top_p"), fields.get("max_output_tokens")),
             )
         return 201, {"id": profile_id}
+
+    def duplicate(self, profile_id: str):
+        """A copy named `<name>-copy` (then `-copy-1`, …) with the same model, key and settings; never the default."""
+        with self.store.connect() as db:
+            row = db.execute("SELECT * FROM profiles WHERE id=?", (profile_id,)).fetchone()
+            if row is None:
+                raise ApiError(404, "Profile not found")
+            names = {r[0] for r in db.execute("SELECT name FROM profiles")}
+            base = row["name"][:58]
+            name, n = f"{base}-copy", 0
+            while name in names:
+                n += 1
+                name = f"{base}-copy-{n}"
+            new = uuid.uuid4().hex
+            db.execute("INSERT INTO profiles(id,name,provider,model,endpoint,timeout_seconds,credential_secret_ref,is_default,created,connection_id,temperature,top_p,max_output_tokens) VALUES(?,?,?,?,?,?,?,0,?,?,?,?,?)",
+                       (new, name, row["provider"], row["model"], row["endpoint"], row["timeout_seconds"], row["credential_secret_ref"], time.time(),
+                        row["connection_id"], row["temperature"], row["top_p"], row["max_output_tokens"]))
+        return 201, {"id": new, "name": name}
 
     def list_profiles(self):
         with self.store.connect() as db:
             db.execute(SCHEMA)
-            rows = db.execute("SELECT id,name,provider,model,endpoint,timeout_seconds,is_default FROM profiles ORDER BY created").fetchall()
+            rows = db.execute("SELECT * FROM profiles ORDER BY created").fetchall()
         # Normalize nulls to the contract's documented defaults so the response shape
         # is stable: endpoint defaults to "" (no override), timeout to 60s.
-        return 200, [{"id": r["id"], "name": r["name"], "provider": r["provider"], "model": r["model"], "endpoint": r["endpoint"] or "", "timeout_seconds": r["timeout_seconds"] if r["timeout_seconds"] is not None else 60, "is_default": bool(r["is_default"])} for r in rows]
+        return 200, [{"id": r["id"], "name": r["name"], "provider": r["provider"], "model": r["model"], "endpoint": r["endpoint"] or "", "timeout_seconds": r["timeout_seconds"] if r["timeout_seconds"] is not None else 60, "is_default": bool(r["is_default"]),
+                     "connection_id": r["connection_id"] or "", "key_ref": r["credential_secret_ref"] or "",
+                     "temperature": r["temperature"], "top_p": r["top_p"], "max_output_tokens": r["max_output_tokens"]} for r in rows]
 
     def patch(self, profile_id: str, body):
         if not isinstance(body, dict):
@@ -129,9 +187,9 @@ class ProfileStore:
             row = db.execute("SELECT id FROM profiles WHERE id=?", (profile_id,)).fetchone()
             if row is None:
                 raise ApiError(404, "Profile not found")
-        unknown = set(body) - {"model", "endpoint", "timeout_seconds", "is_default", "credential_secret_ref"}
+        unknown = set(body) - PATCHABLE
         if unknown:
-            raise ApiError(400, "Only model, endpoint, timeout_seconds, is_default and the secret reference are patchable here")
+            raise ApiError(400, "Unknown profile fields: " + ", ".join(sorted(unknown)))
         fields = self._validate(body, require_core=False)
         if not fields:
             raise ApiError(400, "Nothing to update")
@@ -141,6 +199,8 @@ class ProfileStore:
             row = db.execute("SELECT id FROM profiles WHERE id=?", (profile_id,)).fetchone()
             if row is None:
                 raise ApiError(404, "Profile not found")
+            if "name" in fields and db.execute("SELECT 1 FROM profiles WHERE name=? AND id<>?", (fields["name"], profile_id)).fetchone():
+                raise ApiError(409, f"Profile '{fields['name']}' already exists")
             for key, value in fields.items():
                 db.execute(f"UPDATE profiles SET {key}=? WHERE id=?", (int(value) if key == "is_default" else value, profile_id))
             if fields.get("is_default"):

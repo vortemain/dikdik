@@ -49,8 +49,36 @@ def detect_runners(files: dict[str, str]) -> list[dict]:
     return runners
 
 
+class Redactor:
+    """Replaces secret values in command output, including values split across streamed chunks."""
+
+    def __init__(self, values: dict[str, str]):
+        self.pairs = sorted(((value, f"[redacted {name}]") for name, value in values.items() if len(value) >= 3),
+                            key=lambda pair: -len(pair[0]))
+        self.hold = max((len(value) for value, _ in self.pairs), default=1) - 1
+        self.buffer = ""
+
+    def clean(self, text: str) -> str:
+        for value, mark in self.pairs:
+            text = text.replace(value, mark)
+        return text
+
+    def feed(self, chunk: str) -> str:
+        """Cleaned text that is safe to show now; a short tail waits for the next chunk."""
+        text = self.clean(self.buffer + chunk)
+        if self.hold <= 0:
+            self.buffer = ""
+            return text
+        self.buffer = text[-self.hold:]
+        return text[:-self.hold]
+
+    def flush(self) -> str:
+        text, self.buffer = self.clean(self.buffer), ""
+        return text
+
+
 def container_command(workspace: Path, name: str, image: str, argv: list[str], *, writable: bool = False,
-                      memory: str = "512m", tmp: str = "256m") -> list[str]:
+                      memory: str = "512m", tmp: str = "256m", env_names: tuple[str, ...] = ()) -> list[str]:
     # `sh` prints a marker first, so a non-zero exit can be told apart from Docker failing to start.
     return [
         "docker", "run", "--name", name, "--rm", "--pull=never",
@@ -62,6 +90,8 @@ def container_command(workspace: Path, name: str, image: str, argv: list[str], *
         "--mount", f"type=bind,source={workspace},target=/workspace{'' if writable else ',readonly'}",
         "--workdir=/workspace", "--env=HOME=/tmp", "--env=CARGO_TARGET_DIR=/tmp/target",
         "--env=BUN_INSTALL_CACHE_DIR=/tmp/bun", "--env=npm_config_cache=/tmp/npm", "--env=CI=1",
+        # Approved secrets: only the names appear here; Docker reads the values from its own environment.
+        *[f"--env={name}" for name in env_names],
         image, "sh", "-c", f'echo {STARTED}; exec "$@"', "sh", *argv,
     ]
 
@@ -72,11 +102,20 @@ def bounded(argv: list[str], seconds: float) -> list[str]:
 
 
 def run_container(command: list[str], name: str, cancel: threading.Event, timeout: float,
-                  limit: int = OUTPUT_LIMIT, on_chunk: Callable[[str], None] | None = None) -> dict:
+                  limit: int = OUTPUT_LIMIT, on_chunk: Callable[[str], None] | None = None,
+                  env: dict[str, str] | None = None) -> dict:
     started = time.monotonic()
     output, truncated = bytearray(), threading.Event()
+    redactor = Redactor(env) if env else None
+    if redactor is not None and on_chunk is not None:
+        raw_chunk = on_chunk
+        def on_chunk(text, _send=raw_chunk):
+            cleaned = redactor.feed(text)
+            if cleaned:
+                _send(cleaned)
     try:
-        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, shell=False)
+        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, shell=False,
+                                env={**os.environ, **env} if env else None)
     except OSError:
         return {"status": "blocked", "error": "Docker CLI unavailable", "exit_code": None, "output": "", "seconds": 0.0}
 
@@ -126,6 +165,11 @@ def run_container(command: list[str], name: str, cancel: threading.Event, timeou
     if reason is None:
         reason = ("blocked" if STARTED not in text or code in {125, 126, 127} else "passed" if code == 0 else "failed")
     text = text.replace(STARTED + "\n", "", 1).replace(STARTED + "\r\n", "", 1)
+    if redactor is not None:
+        text = redactor.clean(text)
+        tail = redactor.flush()
+        if tail and on_chunk is not None:
+            raw_chunk(tail)
     if cleanup and reason == "passed":
         reason = "inconclusive"
     return {"status": reason, "exit_code": code, "output": text, "output_truncated": truncated.is_set(),
@@ -164,7 +208,7 @@ def run_project_tests(snapshot: Path, files: dict[str, str], cancel: threading.E
 def run_shell(workdir: Path, files: dict[str, str], command: str, cancel: threading.Event, *,
               image: str = "python", timeout: float = 60, name: str | None = None,
               on_chunk: Callable[[str], None] | None = None,
-              output_limit: int = SHELL_OUTPUT_LIMIT) -> dict:
+              output_limit: int = SHELL_OUTPUT_LIMIT, env: dict[str, str] | None = None) -> dict:
     """Run one shell command on a throwaway copy of the candidate; report changed text files."""
     if image not in IMAGES:
         raise ValueError(f"Image must be one of {', '.join(sorted(IMAGES))}")
@@ -184,9 +228,11 @@ def run_shell(workdir: Path, files: dict[str, str], command: str, cancel: thread
             if item.is_file():
                 item.chmod(0o666)
     name = _name(name)
-    args = (container_command(workdir, name, IMAGES[image], bounded(["sh", "-c", command], timeout), writable=True),
+    args = (container_command(workdir, name, IMAGES[image], bounded(["sh", "-c", command], timeout), writable=True,
+                              env_names=tuple(sorted(env or {}))),
             name, cancel, timeout + 10, output_limit)
-    result = run_container(*args, on_chunk=on_chunk) if on_chunk is not None else run_container(*args)
+    extra = {"env": env} if env else {}
+    result = run_container(*args, on_chunk=on_chunk, **extra) if on_chunk is not None else run_container(*args, **extra)
     changed: dict[str, str] = {}
     deleted: list[str] = []
     try:

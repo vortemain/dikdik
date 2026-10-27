@@ -766,3 +766,23 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
   .step-group { margin-left: 0; }
   .canvas-resize { display: none; }
 }
+
+/* Models and keys panes. */
+.pane-block { margin: 18px 0 8px; }
+.pane-block + .pane-block { padding-top: 18px; border-top: 1px solid var(--line); }
+.block-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.block-head h4 { font-size: 14.5px; margin: 0; }
+.pane-block > .hint { margin: 4px 0 0; max-width: 64ch; }
+.warn-badge { background: var(--warn-soft); color: var(--warn); }
+.test-result { font-family: var(--mono); font-size: 12px; }
+.advanced > summary { cursor: pointer; font-size: 13px; color: var(--muted); padding: 2px 0; }
+.advanced[open] > summary { margin-bottom: 10px; }
+.env-input { width: 170px; height: 28px; padding: 2px 8px; font: 500 12px var(--mono); }
+.m4-mono { font-family: var(--mono); }
+.model-item { display: flex; align-items: center; gap: 8px; }
+.model-check { display: inline-grid; place-items: center; width: 16px; flex: 0 0 auto; color: var(--accent); }
+.model-check .i { width: 14px; height: 14px; }
+.model-name { flex: 0 1 auto; }
+.model-detail { margin-left: auto; padding-left: 16px; color: var(--faint); font: 400 12px var(--mono); }
+#model-menu { min-width: 260px; }
+#model-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }

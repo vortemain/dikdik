@@ -73,7 +73,9 @@ def chat_completion(messages: list[dict], tools: list[dict] | None = None, max_t
     config = config or from_environment()
     if context_size(messages) > 128000:  # attached images count as a fixed weight
         raise ValueError("Model context exceeds 128KB; use a smaller approved workspace")
-    body = {"model": config.model, "max_tokens": max_tokens, "messages": messages}
+    options = config.options or {}
+    body = {"model": config.model, "max_tokens": min(max_tokens, options.get("max_output_tokens") or max_tokens), "messages": messages,
+            **{k: options[k] for k in ("temperature", "top_p") if options.get(k) is not None}}
     if tools is not None:
         body["tools"] = tools
         body["tool_choice"] = "auto"

@@ -7,17 +7,26 @@ return `(status, dict)` with clean 400/404/409 semantics. Nothing here logs
 bodies or secret material.
 """
 
+import json
+import sqlite3
+import time
 import urllib.parse
 
 from .agent_profiles import AgentProfiles
 from .automation import validate_schedule
 from .drafts import DraftConflict, Drafts
 from .mcp import McpStore, test_server
+from .connections import ConnectionStore
+from .model_catalog import catalog
 from .profiles import ApiError, ProfileStore
+from .providers import chat_completion
+from .routing import STRATEGIES, RouterStore
 from .secrets_store import SecretsError, SecretsStore
 from .skills import SkillIndex
 
-ROUTE_PREFIXES = ("/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts")
+ROUTE_PREFIXES = ("/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts",
+                  "/api/connections", "/api/routers", "/api/model-catalog")
+MANAGED_PREFIX = "conn."  # keys owned by provider connections; managed there, hidden from API keys
 
 
 def build_routes(engine_or_stores):
@@ -27,6 +36,8 @@ def build_routes(engine_or_stores):
     skills = SkillIndex(stores.store, stores.data / "skills", stores.root / ".dikdik" / "skills")
     automations = stores.automation
     drafts = Drafts(stores.store)
+    connections = ConnectionStore(stores.store, secrets)
+    routers = getattr(stores, "routers", None) or RouterStore(stores.store)
 
     def draft_routes(method, parts, body, query):
         if len(parts) != 3:
@@ -49,15 +60,77 @@ def build_routes(engine_or_stores):
             return profiles.patch(parts[2], body)
         if method == "DELETE" and len(parts) == 3:
             return profiles.delete(parts[2], query.get("confirm_default") in {"1", "true"})
+        if method == "POST" and len(parts) == 4 and parts[3] == "duplicate":
+            return profiles.duplicate(parts[2])
+        if method == "POST" and len(parts) == 4 and parts[3] == "test":
+            return 200, test_profile(parts[2])
         return None
+
+    def test_profile(profile_id: str) -> dict:
+        """One tiny request, only when the user clicks Test. No repository content is sent."""
+        resolver = getattr(stores, "models", None)
+        if resolver is None:
+            raise ValueError("Model testing is unavailable here")
+        config = resolver.resolve(profile_id)
+        started = time.monotonic()
+        data = chat_completion([{"role": "user", "content": "Reply with the single word OK."}], None, max_tokens=16, config=config)
+        try:
+            reply = str(data["choices"][0]["message"].get("content") or "")[:200]
+        except (KeyError, IndexError, TypeError, AttributeError):
+            raise ValueError("The provider answered, but not in the chat-completions format") from None
+        return {"ok": True, "model": config.model, "seconds": round(time.monotonic() - started, 2), "reply": reply}
+
+    def connection_routes(method, parts, body, query):
+        if method == "GET" and len(parts) == 2:
+            return 200, connections.list()
+        if method == "POST" and len(parts) == 2:
+            return 201, connections.create(body)
+        if method == "PATCH" and len(parts) == 3:
+            return 200, connections.update(parts[2], body)
+        if method == "DELETE" and len(parts) == 3:
+            return 200, connections.delete(parts[2])
+        return None
+
+    def router_routes(method, parts, body, query):
+        if method == "GET" and len(parts) == 2:
+            return 200, {"routers": routers.list(), "strategies": STRATEGIES}
+        if method == "POST" and len(parts) == 2:
+            return 201, routers.create(body)
+        if method == "PATCH" and len(parts) == 3:
+            return 200, routers.update(parts[2], body)
+        if method == "DELETE" and len(parts) == 3:
+            return 200, routers.delete(parts[2])
+        return None
+
+    def catalog_routes(method, parts, body, query):
+        return (200, catalog()) if method == "GET" and len(parts) == 2 else None
 
     def secrets_routes(method: str, parts: list[str], body: dict, query: dict):
         if method == "GET" and len(parts) == 2:
-            return 200, secrets.list()
+            return 200, [item for item in secrets.list() if not item["ref"].startswith(MANAGED_PREFIX)]
+        if len(parts) >= 3 and parts[2].startswith(MANAGED_PREFIX):
+            raise ValueError("This key belongs to a provider connection; change it there")
+        if method == "POST" and len(parts) == 4 and parts[3] == "restore":
+            secrets.restore_previous(parts[2])
+            return 200, {"ref": parts[2], "restored": True}
+        if method == "POST" and len(parts) == 4 and parts[3] == "rename":
+            new = body.get("to")
+            if not ref_valid(new) or new.startswith(MANAGED_PREFIX):
+                raise ValueError("Secret reference must be 1–64 characters of letters, digits, '.', '_' or '-'")
+            secrets.rename(parts[2], new)
+            rename_references(parts[2], new)
+            return 200, {"ref": new}
+        if method == "PATCH" and len(parts) == 3:
+            if set(body) != {"env"}:
+                raise ValueError("Only env (the sandbox variable name, or null) can be changed")
+            secrets.set_env(parts[2], body["env"] or None)
+            return 200, {"ref": parts[2], "env": body["env"] or ""}
         if method == "POST" and len(parts) == 2:
             ref, plaintext = body.get("ref"), body.get("plaintext")
-            if not ref_valid(ref):
+            if not ref_valid(ref) or ref.startswith(MANAGED_PREFIX):
                 raise ValueError("Secret reference must be 1–64 characters of letters, digits, '.', '_' or '-'")
+            if not isinstance(plaintext, str) or not plaintext.strip():
+                raise ValueError("A secret cannot be empty; delete it instead")
             secrets.set(ref, plaintext if isinstance(plaintext, bytes) else (plaintext or "").encode("utf-8"))
             return 201, {"ref": ref, "set": True}
         if method == "DELETE" and len(parts) == 3:
@@ -125,7 +198,24 @@ def build_routes(engine_or_stores):
             return 200, agents.delete(parts[2])
         return None
 
+    def rename_references(old: str, new: str) -> None:
+        """Model profiles, MCP servers and agent profiles keep pointing at a renamed key."""
+        with stores.store.connect() as db:
+            tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "profiles" in tables:
+                db.execute("UPDATE profiles SET credential_secret_ref=? WHERE credential_secret_ref=?", (new, old))
+            if "mcp_servers" in tables:
+                db.execute("UPDATE mcp_servers SET secret_ref=? WHERE secret_ref=?", (new, old))
+            if "agent_profiles" in tables and "secret_refs" in {r["name"] for r in db.execute("PRAGMA table_info(agent_profiles)")}:
+                for row in db.execute("SELECT id, secret_refs FROM agent_profiles WHERE secret_refs IS NOT NULL").fetchall():
+                    refs = json.loads(row["secret_refs"])
+                    if old in refs:
+                        db.execute("UPDATE agent_profiles SET secret_refs=? WHERE id=?", (json.dumps([new if r == old else r for r in refs]), row["id"]))
+
     TABLE = {
+        "/api/connections": connection_routes,
+        "/api/routers": router_routes,
+        "/api/model-catalog": catalog_routes,
         '/api/drafts': draft_routes,
         "/api/profiles": profiles_routes,
         "/api/secrets": secrets_routes,
@@ -153,8 +243,10 @@ def build_routes(engine_or_stores):
             result = handler(method, parts, body, query)
         except ApiError as exc:
             return exc.status, {"error": exc.error}
-        except SecretsError:
-            return 500, {"error": "Secret store unavailable; the change was not applied"}
+        except SecretsError as exc:
+            return 500, {"error": str(exc) or "Secret store unavailable; the change was not applied"}
+        except sqlite3.OperationalError:
+            return 503, {"error": "The settings store is busy; try again in a moment"}
         except (ValueError, TypeError) as exc:
             return 400, {"error": str(exc)}
         except KeyError:

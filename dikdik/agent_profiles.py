@@ -5,6 +5,8 @@ within the built-in bounds, and tool switches can only narrow what a task's
 approvals already allow, never widen it.
 """
 
+import json
+import re
 import time
 import uuid
 
@@ -19,7 +21,8 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
 );
 """
 LIMITS = {"max_model_calls": (1, 60), "max_tool_calls": (1, 200), "deadline_seconds": (30, 1800)}
-FLAGS = ("allow_shell", "allow_browser", "use_mcp", "use_skills")
+FLAGS = ("allow_shell", "allow_browser", "use_mcp", "use_skills", "critic", "memory")
+REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 MAX_PROFILES = 50
 
 
@@ -31,16 +34,21 @@ class AgentProfiles:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_profiles)")}
             if "allow_browser" not in columns:
                 db.execute("ALTER TABLE agent_profiles ADD COLUMN allow_browser INTEGER NOT NULL DEFAULT 1")
+            # critic: judge each finished turn; memory: read .dikdik/memory.md; secret_refs: sandbox secrets it may use.
+            for name, kind in (("critic", "INTEGER NOT NULL DEFAULT 0"), ("memory", "INTEGER NOT NULL DEFAULT 0"), ("secret_refs", "TEXT")):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE agent_profiles ADD COLUMN {name} {kind}")
 
     @staticmethod
     def _row(row) -> dict:
         return {"id": row["id"], "name": row["name"], "instructions": row["instructions"], "model_profile_id": row["model_profile_id"] or "",
-                **{key: row[key] for key in LIMITS}, **{flag: bool(row[flag]) for flag in FLAGS}}
+                **{key: row[key] for key in LIMITS}, **{flag: bool(row[flag]) for flag in FLAGS},
+                "secret_refs": json.loads(row["secret_refs"]) if row["secret_refs"] else None}
 
     def _validate(self, body: dict, creating: bool) -> dict:
         if not isinstance(body, dict):
             raise ValueError("Body must be a JSON object")
-        unknown = set(body) - {"name", "instructions", "model_profile_id", *LIMITS, *FLAGS}
+        unknown = set(body) - {"name", "instructions", "model_profile_id", "secret_refs", *LIMITS, *FLAGS}
         if unknown:
             raise ValueError(f"Unknown fields: {', '.join(sorted(unknown))}")
         out = {}
@@ -75,6 +83,11 @@ class AgentProfiles:
                 if not isinstance(body[flag], bool):
                     raise ValueError(f"{flag.replace('_', ' ')} must be true or false")
                 out[flag] = int(body[flag])
+        if "secret_refs" in body:
+            refs = body["secret_refs"]
+            if refs is not None and (not isinstance(refs, list) or len(refs) > 50 or not all(isinstance(r, str) and REF.fullmatch(r) for r in refs)):
+                raise ValueError("Sandbox secrets must be a list of secret names, or null for every exposed secret")
+            out["secret_refs"] = json.dumps(sorted(set(refs))) if refs is not None else None
         return out
 
     def list(self) -> list[dict]:

@@ -16,12 +16,13 @@ profiles; streamed replies over server-sent events; automations with stored
 approvals; a Python client/CLI; the Rust indexer loaded by default; and run
 control (pause/exact resume, per-action confirmation, hooks, subagents,
 attachments, slash commands, side questions, condensing, judged goals, forks);
-and an organised interface (command menu, folders and tags, file tree, onboarding).
-The parity audit (docs/PARITY.md) moved from 89 to 283 fully matched OpenHands sub-features
+an organised interface (command menu, folders and tags, file tree, onboarding);
+and model management (connections, routing, a model picker, sandbox secrets).
+The parity audit (docs/PARITY.md) moved from 89 to 325 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **294 passed, 2 live-runtime tests skipped**; Bun
-**83 passed**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-27): Python **305 passed, 2 live-runtime tests skipped**; Bun
+**87 passed**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -57,6 +58,11 @@ Test status (2026-10-27): Python **294 passed, 2 live-runtime tests skipped**; B
   Thinking rows, Markdown tables and alerts, clickable workspace paths, a file
   tree with tabs and preview, a resizable panel, settings links, Git identity,
   a finish chime, an agent-info dialog, .zip download and a confirming Stop.
+- Added the models phase: provider connections, profile rename/duplicate/test and
+  request settings, rule-based routers, a pill model picker, key undo/rename,
+  opt-in redacted sandbox variables, and per-profile critic, memory and secret
+  scope. Fixed secret counters so a keystream is never reused after a delete or
+  an undone rotation.
 - Independent review findings fixed: early-exit verification bypass, finalization
   cancellation race, component-token undercount; reviewer reran regressions.
 - Built wheel offline, inspected its 22 entries (no upstream/Python runtime deps),
@@ -67,8 +73,8 @@ Test status (2026-10-27): Python **294 passed, 2 live-runtime tests skipped**; B
 
 ## Test status
 
-- Python: **294 passed, 2 live-runtime tests skipped** (296 total).
-- Bun: **83 passed / 413 assertions**; strict TypeScript check and browser build passed.
+- Python: **305 passed, 2 live-runtime tests skipped** (307 total).
+- Bun: **87 passed / 428 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit

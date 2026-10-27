@@ -10,7 +10,8 @@ import os
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from .profiles import LOOPBACK_HOSTS, SCHEMA as PROFILE_SCHEMA
+from .connections import SCHEMA as CONNECTION_SCHEMA, secret_ref as connection_ref
+from .profiles import LOOPBACK_HOSTS, migrate as migrate_profiles
 from .secrets_store import SecretsError
 
 # Providers whose public API speaks the chat-completions protocol at a known base URL.
@@ -27,6 +28,7 @@ class ModelConfig:
     auth: str  # "bearer", "api-key" (Azure) or "none" (keyless local server)
     timeout: float
     public: dict  # safe to persist and show: never contains the key
+    options: dict = field(default_factory=dict)  # temperature, top_p, max_output_tokens
 
     def __post_init__(self):
         if self.auth != "none" and (not self.key or any(ord(char) < 33 or ord(char) > 126 for char in self.key)):
@@ -72,18 +74,31 @@ class ModelResolver:
     def _default_profile(self, profile_id: str | None = None) -> dict | None:
         """The chosen model profile (from an agent profile), else the default one."""
         with self.store.connect() as db:
-            db.execute(PROFILE_SCHEMA)
+            migrate_profiles(db)
+            db.execute(CONNECTION_SCHEMA)
             if profile_id:
                 row = db.execute("SELECT * FROM profiles WHERE id=?", (profile_id,)).fetchone()
                 if row is None:
                     raise ValueError("The model profile this agent profile uses was deleted. Pick another in Settings → Agents")
-                return dict(row)
+                return self._linked(db, dict(row))
             row = db.execute("SELECT * FROM profiles WHERE is_default=1 ORDER BY created LIMIT 1").fetchone()
-        return dict(row) if row else None
+            return self._linked(db, dict(row)) if row else None
+
+    @staticmethod
+    def _linked(db, profile: dict) -> dict:
+        """A profile linked to a provider connection takes its provider, endpoint and key from it."""
+        if not profile.get("connection_id"):
+            return profile
+        connection = db.execute("SELECT * FROM connections WHERE id=?", (profile["connection_id"],)).fetchone()
+        if connection is None:
+            raise ValueError(f"The provider connection for model profile “{profile['name']}” was deleted. Edit the profile to link another")
+        return {**profile, "provider": connection["provider"], "endpoint": profile["endpoint"] or connection["endpoint"],
+                "credential_secret_ref": connection_ref(connection["id"]), "connection_name": connection["name"]}
 
     @staticmethod
     def _public(profile: dict, base: str) -> dict:
-        return {"source": "profile", "profile": profile["name"], "provider": profile["provider"],
+        return {"source": "profile", "profile": profile["name"], "profile_id": profile["id"], "provider": profile["provider"],
+                **({"connection": profile["connection_name"]} if profile.get("connection_name") else {}),
                 "provider_name": PROVIDER_NAMES.get(profile["provider"], profile["provider"]),
                 "model": profile["model"], "host": urlsplit(base).hostname or ""}
 
@@ -132,4 +147,5 @@ class ModelResolver:
         else:
             raise ValueError(f"Model profile “{profile['name']}” has no API key. Add one under Settings → API keys and select it on the profile")
         timeout = profile["timeout_seconds"] or PROFILE_TIMEOUT
-        return ModelConfig(chat_url(base), profile["model"], key, auth, timeout, self._public(profile, base))
+        options = {k: profile.get(k) for k in ("temperature", "top_p", "max_output_tokens") if profile.get(k) is not None}
+        return ModelConfig(chat_url(base), profile["model"], key, auth, timeout, self._public(profile, base), options)

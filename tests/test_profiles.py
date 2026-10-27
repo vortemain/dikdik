@@ -48,7 +48,7 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(set(row), {"id", "name", "provider", "model", "endpoint", "timeout_seconds", "is_default"})
+        self.assertEqual(set(row), {"id", "name", "provider", "model", "endpoint", "timeout_seconds", "is_default", "connection_id", "key_ref", "temperature", "top_p", "max_output_tokens"})
         self.assertEqual(row["is_default"], True)  # first profile becomes default
         self.assertNotIn("credential_secret_ref", json.dumps(rows))  # never returns credentials/refs
 
@@ -74,10 +74,22 @@ class ProfileStoreTests(unittest.TestCase):
 
     def test_patch_rejects_forbidden_fields(self):
         _, created = self.create()
-        for field in ({"name": "x"}, {"provider": "anthropic"}, {"credential_secret_ref": "..."}):
+        for field in ({"id": "x"}, {"name": ""}, {"provider": "nope"}, {"credential_secret_ref": "..."}, {"temperature": 3}, {"top_p": -1}, {"max_output_tokens": 0}):
             with self.assertRaises(ApiError) as ctx:
                 self.store.patch(created["id"], field)
             self.assertEqual(ctx.exception.status, 400)
+
+    def test_rename_duplicate_and_settings(self):
+        _, created = self.create()
+        self.assertEqual(self.store.patch(created["id"], {"name": "Fast", "temperature": 0.2, "max_output_tokens": 800})[0], 200)
+        _, copy = self.store.duplicate(created["id"])
+        _, again = self.store.duplicate(created["id"])
+        self.assertEqual((copy["name"], again["name"]), ("Fast-copy", "Fast-copy-1"))
+        rows = {r["name"]: r for r in self.store.list_profiles()[1]}
+        self.assertEqual((rows["Fast-copy"]["temperature"], rows["Fast-copy"]["max_output_tokens"], rows["Fast-copy"]["is_default"]), (0.2, 800, False))
+        with self.assertRaises(ApiError) as ctx:
+            self.store.patch(copy["id"], {"name": "Fast"})
+        self.assertEqual((ctx.exception.status, ctx.exception.error), (409, "Profile 'Fast' already exists"))
 
     def test_patch_unknown_404(self):
         with self.assertRaises(ApiError) as ctx:
@@ -138,7 +150,7 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(status, 200)
         # JSON round-trip keeps the contract shape and loses no credential field
         again = json.loads(json.dumps(rows))
-        self.assertEqual(set(again[0]), {"id", "name", "provider", "model", "endpoint", "timeout_seconds", "is_default"})
+        self.assertEqual(set(again[0]), {"id", "name", "provider", "model", "endpoint", "timeout_seconds", "is_default", "connection_id", "key_ref", "temperature", "top_p", "max_output_tokens"})
         profile_id = rows[0]["id"]
         self.assertEqual(self.routes("PATCH", f"/api/profiles/{profile_id}", {"timeout_seconds": 5})[0], 200)
         self.assertEqual(self.routes("DELETE", f"/api/profiles/{profile_id}?confirm_default=1", {})[0], 200)

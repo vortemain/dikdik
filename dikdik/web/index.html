@@ -77,6 +77,7 @@
   </div>
 
   <p id="message" role="status" aria-live="polite"></p>
+  <div id="model-menu" class="menu" role="menu" aria-label="Model" hidden></div>
   <div id="task-menu" class="menu" role="menu" aria-label="Task actions" hidden>
     <button type="button" role="menuitem" data-action="rename"><svg class="i"><use href="#i-pencil"/></svg><span>Rename</span></button>
     <button type="button" role="menuitem" data-action="organise"><svg class="i"><use href="#i-tag"/></svg><span>Folder and tags…</span></button>
@@ -178,6 +179,7 @@
               <span class="approvals-label">Allow for this task</span>
               <label id="external-field" class="toggle" title="Sends the objective, bounded repository text and tool output to your configured model provider."><input id="external" type="checkbox">Share code with model</label>
               <label id="execution-field" class="toggle" title="Runs approved tools and tests inside restricted Docker containers." hidden><input id="execution" type="checkbox">Run tools in Docker</label>
+              <label id="secrets-field" class="toggle" title="Agent commands in Docker can read the keys you exposed to the sandbox (Settings → API keys) as environment variables. Their values are redacted from output." hidden><input id="secrets-approval" type="checkbox">Use sandbox secrets</label>
               <label id="browser-field" class="toggle" title="Allows public web GET requests for this task. Pages run in Docker and may be sent to the model as untrusted text."><input id="browser-approval" type="checkbox">Browse public web</label>
             </div>
             <div class="composer-controls">
@@ -299,7 +301,7 @@
         <div class="setting-row"><div><h4>Workspace</h4><p>The only folder Dikdik may read. Candidates are written to the private data directory.</p></div></div>
         <dl class="kv"><dt>Project</dt><dd id="settings-project">—</dd><dt>Inventory</dt><dd id="settings-inventory">—</dd><dt>Indexer</dt><dd id="settings-indexer">—</dd><dt>Network</dt><dd>Loopback only (127.0.0.1)</dd><dt>Sign-in</dt><dd>Remembered in this browser for 30 days. Restart with <code>--rotate-token</code> to sign out everywhere.</dd></dl>
       </section>
-      <section class="settings-pane" data-pane="models" role="tabpanel" hidden><p class="lead">Profiles choose the provider and model the agent uses. Keys live under API keys and are referenced by name.</p><div id="panel-profiles" class="m4-panel-mount"></div></section>
+      <section class="settings-pane" data-pane="models" role="tabpanel" hidden><p class="lead">Connections hold a provider key, profiles pick a model, and a router can choose a model per message.</p><div id="panel-profiles" class="m4-panel-mount"></div></section>
       <section class="settings-pane" data-pane="agents" role="tabpanel" hidden>
         <p class="lead">Agent profiles are ready-made setups you pick in the composer: your instructions, which model to use, how long it may work, and which tools it may use. Tool switches only narrow what a task's approvals allow.</p>
         <form id="agent-form" class="skill-form">
@@ -310,19 +312,22 @@
             <label for="agent-model">Model</label><select id="agent-model"><option value="">Default model profile</option></select>
             <label for="agent-steps">Max model calls</label><input id="agent-steps" type="number" min="1" max="60" placeholder="12">
             <label for="agent-minutes">Time limit (seconds)</label><input id="agent-minutes" type="number" min="30" max="1800" placeholder="180">
+            <label for="agent-secrets">Sandbox secrets</label><input id="agent-secrets" placeholder="Blank: every key exposed to the sandbox · or names, comma-separated · or none" autocomplete="off">
             <span>Tools</span>
             <div class="agent-flags">
               <label class="check"><input id="agent-shell" type="checkbox" checked>Shell in Docker</label>
               <label class="check"><input id="agent-browser" type="checkbox" checked>Browser in Docker</label>
               <label class="check"><input id="agent-mcp" type="checkbox" checked>MCP servers</label>
               <label class="check"><input id="agent-skills" type="checkbox" checked>Skills</label>
+              <label class="check" title="After each finished turn, ask the model whether the request looks done. Shown as a note; never counts as verification."><input id="agent-critic" type="checkbox">Critic review</label>
+              <label class="check" title="Read .dikdik/memory.md from the workspace into every turn, marked as untrusted data."><input id="agent-memory" type="checkbox">Project memory</label>
             </div>
           </div>
           <div class="row"><button id="agent-save" type="submit" class="primary small">Add agent</button><button id="agent-cancel" type="button" class="ghost small" hidden>Cancel edit</button></div>
         </form>
         <ol id="agent-list" class="m4-list"></ol>
       </section>
-      <section class="settings-pane" data-pane="secrets" role="tabpanel" hidden><p class="lead">Store provider keys encrypted on this machine. Values are never shown again after saving.</p><div id="panel-secrets" class="m4-panel-mount"></div></section>
+      <section class="settings-pane" data-pane="secrets" role="tabpanel" hidden><p class="lead">Keys and tokens are encrypted on this machine and never shown again after saving. Profiles, MCP servers and (when you allow it) sandbox commands use them by name.</p><div id="panel-secrets" class="m4-panel-mount"></div></section>
       <section class="settings-pane" data-pane="skills" role="tabpanel" hidden>
         <p class="lead">Reusable guidance the agent reads at the start of every task: conventions, how to run things, what to avoid. Project skills live in <code>.dikdik/skills/</code>; personal ones stay on this machine.</p>
         <form id="skill-form" class="skill-form">

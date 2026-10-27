@@ -182,6 +182,7 @@
       ...["agent", "plan"].includes(input.mode) && input.agentProfile ? { agent_profile: input.agentProfile } : {},
       ...input.mode !== "offline" && input.modelProfile ? { model_profile: input.modelProfile } : {},
       ...input.attachments?.length ? { attachments: input.attachments } : {},
+      ...input.mode === "agent" && input.approveSecrets && input.approveExecution && (policy.requiresExecution || browsing) ? { approve_secrets: true } : {},
       ...input.goalMaxTurns ? goalTurns(input.mode, input.goalMaxTurns) : {}
     };
   }
@@ -399,6 +400,20 @@
         return [{ ...base, role: "system", title: "Pausing after this step" }];
       case "forked":
         return [{ ...base, role: "system", title: "Forked from another conversation", details: { from_task: textOf(d.from_task, 64), from_seq: numOrUndef(d.from_seq) } }];
+      case "model_routed":
+        return [{ ...base, role: "system", title: `Routed to ${textOf(d.profile, 64) || "a model"}`, body: textOf(d.reason, 200), details: { router: textOf(d.router, 64) } }];
+      case "critic":
+        return [{
+          ...base,
+          role: "system",
+          title: d.error ? "Critic unavailable" : d.achieved === true ? "Critic: looks done" : "Critic: not done yet",
+          body: textOf(d.error ?? [d.reason, d.next].filter((item) => typeof item === "string" && item).join(`
+`), 2000)
+        }];
+      case "sandbox_secrets": {
+        const names = Array.isArray(d.names) ? d.names.filter((n) => typeof n === "string") : [];
+        return [{ ...base, role: "system", title: "Sandbox secrets available", body: names.join(", ") }];
+      }
       case "goal_status": {
         const turns = numOrUndef(d.turns) ?? 0, max = numOrUndef(d.max_turns) ?? 0;
         const titles = { active: "Goal in progress", achieved: "Goal achieved", capped: "Goal stopped at its turn limit", stopped: "Goal stopped", error: "Goal check failed" };
@@ -630,7 +645,6 @@ ${c.output}` : "";
     return out.join(`
 `);
   }
-  var PROFILE_PROVIDERS = ["openai", "anthropic", "azure", "local"];
   var M4_TEXT = {
     contractStatus: "tested: contract",
     contractNote: "Contract-tested only; until a live run is recorded in docs/VERIFICATION.md, no provider has been verified against the real API.",
@@ -676,93 +690,6 @@ ${c.output}` : "";
   function apiUrl(base, ...segments) {
     safeUrlSegment(base, "endpoint base");
     return `${base}/${segments.map((segment) => safeUrlSegment(segment)).join("/")}`;
-  }
-  function deleteProfileUrl(id, confirmDefault) {
-    return apiUrl("/api/profiles", id) + (confirmDefault ? "?confirm_default=1" : "");
-  }
-  var FIXED_API_ENDPOINTS = ["https://api.openai.com/v1", "https://api.anthropic.com/v1", "https://mojave.cloud/v1"];
-  var LOOPBACK_ENDPOINT = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/;
-  function validateEndpoint(value) {
-    let parsed;
-    try {
-      parsed = new URL(value);
-    } catch {
-      throw new Error("Endpoint must be an absolute http(s) URL.");
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-      throw new Error("Endpoint must use http or https.");
-    if (FIXED_API_ENDPOINTS.includes(value.replace(/\/+$/, "")))
-      return value;
-    if (!LOOPBACK_ENDPOINT.test(value))
-      throw new Error("Endpoint must be a loopback URL or one of the known provider API bases.");
-    return value;
-  }
-  function parseTimeoutSeconds(value) {
-    if (value === undefined || value === "")
-      return;
-    const seconds = typeof value === "number" ? value : Number(String(value).trim());
-    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 600)
-      throw new Error(M4_TEXT.timeoutRule);
-    return seconds;
-  }
-  var SECRET_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-  function buildProfileCreate(input) {
-    const name = input.name.trim();
-    if (!name)
-      throw new Error("Enter a profile name.");
-    if (!PROFILE_PROVIDERS.includes(input.provider))
-      throw new Error("Choose a supported provider.");
-    const model = input.model.trim();
-    if (!model)
-      throw new Error("Enter a model name.");
-    const endpoint = (input.endpoint ?? "").trim();
-    if (endpoint)
-      validateEndpoint(endpoint);
-    const timeout_seconds = parseTimeoutSeconds(input.timeoutSeconds);
-    const credential_secret_ref = (input.credentialSecretRef ?? "").trim();
-    if (credential_secret_ref && !SECRET_REF_PATTERN.test(credential_secret_ref))
-      throw new Error(M4_TEXT.secretRefRule);
-    const body = { name, provider: input.provider, model, ...endpoint ? { endpoint } : {}, ...timeout_seconds !== undefined ? { timeout_seconds } : {}, ...credential_secret_ref ? { credential_secret_ref } : {} };
-    return body;
-  }
-  function buildProfilePatch(input) {
-    const patch = {};
-    if (input.model !== undefined) {
-      const model = input.model.trim();
-      if (!model)
-        throw new Error("Enter a model name to save.");
-      patch.model = model;
-    }
-    if (input.endpoint !== undefined) {
-      const endpoint = input.endpoint.trim();
-      if (endpoint)
-        validateEndpoint(endpoint);
-      patch.endpoint = endpoint;
-    }
-    const timeout = parseTimeoutSeconds(input.timeoutSeconds);
-    if (timeout !== undefined)
-      patch.timeout_seconds = timeout;
-    if (input.isDefault !== undefined)
-      patch.is_default = input.isDefault;
-    const ref = input.credentialSecretRef?.trim();
-    if (ref) {
-      if (!SECRET_REF_PATTERN.test(ref))
-        throw new Error(M4_TEXT.secretRefRule);
-      patch.credential_secret_ref = ref;
-    }
-    if (Object.keys(patch).length === 0)
-      throw new Error("Nothing to update for this profile.");
-    return patch;
-  }
-  function buildSecretInput(input) {
-    const ref = input.ref.trim();
-    if (!SECRET_REF_PATTERN.test(ref))
-      throw new Error(M4_TEXT.secretRefRule);
-    if (input.plaintext === "")
-      throw new Error(M4_TEXT.plaintextRequired);
-    if (input.plaintext.length > 64 * 1024)
-      throw new Error("Secret exceeds the 64KB request limit.");
-    return { ref, plaintext: input.plaintext };
   }
   function buildAutomation(input) {
     const name = input.name.trim();
@@ -815,42 +742,6 @@ ${c.output}` : "";
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
   var safeText = (value) => typeof value === "string" && value !== "" && !CONTROL_CHARS.test(value) ? value : "";
-  function parseProfiles(value) {
-    if (!Array.isArray(value))
-      throw new Error("Profile list response did not match the expected shape.");
-    const profiles = [];
-    for (const item of value) {
-      if (!isRecord(item))
-        continue;
-      const id = safeText(item.id), name = safeText(item.name), model = safeText(item.model);
-      const endpoint = item.endpoint === null ? "" : item.endpoint;
-      const timeout = item.timeout_seconds === null ? 60 : item.timeout_seconds;
-      const isDefault = item.is_default;
-      if (!id || !name || !model || typeof endpoint !== "string" || typeof timeout !== "number" || !Number.isInteger(timeout) || typeof isDefault !== "boolean")
-        continue;
-      if (!PROFILE_PROVIDERS.includes(item.provider))
-        continue;
-      profiles.push({ id, name, provider: item.provider, model, endpoint, timeout_seconds: timeout, is_default: isDefault });
-    }
-    return profiles;
-  }
-  function parseSecretRefs(value) {
-    if (!Array.isArray(value))
-      throw new Error("Secret list response did not match the expected shape.");
-    const refs = [];
-    for (const item of value) {
-      if (!isRecord(item))
-        continue;
-      const ref = safeText(item.ref);
-      if (!ref)
-        continue;
-      const setAt = item.set_at;
-      if (setAt !== null && typeof setAt !== "number" && typeof setAt !== "string")
-        continue;
-      refs.push({ ref, set_at: setAt });
-    }
-    return refs;
-  }
   var SKILL_SCOPES = ["personal", "project"];
   function parseSkills(value) {
     if (!Array.isArray(value))
@@ -919,74 +810,11 @@ ${c.output}` : "";
     }
     return runs;
   }
-  function parseCreatedId(value) {
-    if (!isRecord(value) || typeof value.id !== "string" || value.id === "" || CONTROL_CHARS.test(value.id)) {
-      throw new Error("The server did not return a usable id for the new record.");
-    }
-    return { id: value.id };
-  }
-  function parseSecretSet(value) {
-    if (!isRecord(value) || typeof value.ref !== "string" || value.ref === "" || value.set !== true) {
-      throw new Error("The server did not confirm the secret was stored; treat it as not set.");
-    }
-    return { ref: value.ref, set: true };
-  }
-  function sanitizeSecretError(error, plaintext) {
-    const message = error instanceof Error && error.message ? error.message : M4_TEXT.genericFailure;
-    return plaintext.length >= 4 && message.includes(plaintext) ? M4_TEXT.secretHiddenReply : message;
-  }
-  function displayTimestamp(value) {
-    if (value === null || value === undefined || value === "")
-      return "—";
-    if (typeof value === "number" && Number.isFinite(value)) {
-      try {
-        return new Date(value < 1000000000000 ? value * 1000 : value).toISOString().replace("T", " ").replace(".000Z", " UTC");
-      } catch {
-        return String(value);
-      }
-    }
-    if (typeof value === "string")
-      return value;
-    return String(value);
-  }
   function m4el(create, tag, className = "", text = "") {
     const node = create(tag);
     node.className = className;
     node.textContent = text;
     return node;
-  }
-  function m4focus(node) {
-    if (typeof node.focus === "function")
-      node.focus();
-  }
-  function m4input(create, container, kind, labelText, type, required) {
-    const id = `m4-${kind}-${(m4FieldCounter++).toString(36)}`;
-    const label = m4el(create, "label");
-    label.setAttribute("for", id);
-    label.textContent = labelText;
-    const input = m4el(create, "input");
-    input.type = type;
-    input.required = required;
-    input.setAttribute("id", id);
-    container.append(label, input);
-    return input;
-  }
-  function m4select(create, container, kind, labelText, options, selected) {
-    const id = `m4-${kind}-${(m4FieldCounter++).toString(36)}`;
-    const label = m4el(create, "label");
-    label.setAttribute("for", id);
-    label.textContent = labelText;
-    const select = m4el(create, "select");
-    select.setAttribute("id", id);
-    const nodes = options.map((option) => {
-      const node = m4el(create, "option", "", option);
-      node.value = option;
-      return node;
-    });
-    select.append(...nodes);
-    select.value = selected;
-    container.append(label, select);
-    return select;
   }
   function m4button(create, container, labelText, type) {
     const button = m4el(create, "button", type === "submit" ? "" : "secondary", labelText);
@@ -1001,337 +829,6 @@ ${c.output}` : "";
     box.checked = checked;
     container.append(box);
     return box;
-  }
-  var m4FieldCounter = 0;
-  function profilesPanel({ root, create, request }) {
-    let profiles = [];
-    let confirmId = null, editId = null, loading = false;
-    const note = m4el(create, "p", "hint", M4_TEXT.credentialsNote);
-    const verify = m4el(create, "p", "hint m4-mono", `${M4_TEXT.contractStatus} — ${M4_TEXT.contractNote}`);
-    const form = m4el(create, "form");
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      submitCreate();
-    });
-    const nameField = m4input(create, form, "profile-name", "Name", "text", true);
-    const providerField = m4select(create, form, "profile-provider", "Provider", PROFILE_PROVIDERS, "openai");
-    const modelField = m4input(create, form, "profile-model", "Model", "text", true);
-    const endpointField = m4input(create, form, "profile-endpoint", "Endpoint (optional)", "text", false);
-    endpointField.setAttribute("placeholder", "https://api.openai.com/v1");
-    const timeoutField = m4input(create, form, "profile-timeout", "Timeout seconds (optional, 1–600)", "number", false);
-    const secretRefField = m4input(create, form, "profile-secret-ref", "API key name from API keys (optional for local)", "text", false);
-    m4button(create, form, M4_TEXT.createProfile, "submit");
-    const actions = m4el(create, "p", "row");
-    const refreshButton = m4button(create, actions, M4_TEXT.refreshProfiles, "button");
-    const statusLine = m4el(create, "p", "hint");
-    statusLine.setAttribute("role", "status");
-    statusLine.setAttribute("aria-live", "polite");
-    const errorLine = m4el(create, "p", "error");
-    errorLine.setAttribute("role", "alert");
-    const list = m4el(create, "ol", "m4-list");
-    root.append(note, verify, form, actions, statusLine, errorLine, list);
-    const failMessage = (error) => error instanceof Error && error.message ? error.message : M4_TEXT.genericFailure;
-    const showStatus = (message) => {
-      statusLine.textContent = message;
-      statusLine.hidden = false;
-    };
-    const showError = (message) => {
-      errorLine.textContent = message;
-      errorLine.hidden = false;
-    };
-    const clearFeedback = () => {
-      statusLine.hidden = true;
-      showErrorReset();
-    };
-    const showErrorReset = () => {
-      errorLine.hidden = true;
-    };
-    const refresh = async () => {
-      if (loading)
-        return;
-      loading = true;
-      refreshButton.disabled = true;
-      clearFeedback();
-      try {
-        profiles = parseProfiles(await request("/api/profiles", "GET"));
-        confirmId = null;
-        editId = null;
-        renderList();
-        if (!profiles.length)
-          showStatus(M4_TEXT.emptyProfiles);
-      } catch (error) {
-        showError(failMessage(error));
-      } finally {
-        loading = false;
-        refreshButton.disabled = false;
-      }
-    };
-    refreshButton.onclick = () => void refresh();
-    const submitCreate = async () => {
-      clearFeedback();
-      try {
-        const created = parseCreatedId(await request("/api/profiles", "POST", buildProfileCreate({
-          name: nameField.value,
-          provider: providerField.value,
-          model: modelField.value,
-          endpoint: endpointField.value,
-          timeoutSeconds: timeoutField.value,
-          credentialSecretRef: secretRefField.value
-        })));
-        nameField.value = "";
-        modelField.value = "";
-        endpointField.value = "";
-        timeoutField.value = "";
-        secretRefField.value = "";
-        providerField.value = "openai";
-        editId = null;
-        confirmId = null;
-        showStatus(`${M4_TEXT.profileCreated} (${created.id.slice(0, 8)})`);
-        renderList();
-        await refresh();
-      } catch (error) {
-        showError(failMessage(error));
-      }
-    };
-    const saveEdit = async (id, model, endpoint, timeout, isDefault, secretRef) => {
-      clearFeedback();
-      try {
-        const patch = buildProfilePatch({ model, endpoint, timeoutSeconds: timeout, isDefault, credentialSecretRef: secretRef });
-        const local = profiles.find((profile) => profile.id === id);
-        if (local) {
-          if (patch.model !== undefined)
-            local.model = patch.model;
-          if (patch.endpoint !== undefined)
-            local.endpoint = patch.endpoint;
-          if (patch.timeout_seconds !== undefined)
-            local.timeout_seconds = patch.timeout_seconds;
-          if (patch.is_default !== undefined)
-            local.is_default = patch.is_default;
-        }
-        editId = null;
-        confirmId = null;
-        renderList();
-        await request(apiUrl("/api/profiles", id), "PATCH", patch);
-        showStatus(M4_TEXT.profileSaved);
-        await refresh();
-      } catch (error) {
-        editId = null;
-        showError(failMessage(error));
-        await refresh();
-      }
-    };
-    const removeProfile = async (id, isDefault) => {
-      clearFeedback();
-      try {
-        await request(deleteProfileUrl(id, isDefault), "DELETE");
-        profiles = profiles.filter((profile) => profile.id !== id);
-        confirmId = null;
-        renderList();
-        showStatus(M4_TEXT.profileDeleted);
-        await refresh();
-      } catch (error) {
-        confirmId = null;
-        renderList();
-        showError(failMessage(error));
-      }
-    };
-    function renderList() {
-      const rows = [];
-      for (const profile of profiles) {
-        const row = m4el(create, "li", "m4-row");
-        const head = m4el(create, "p", "m4-title");
-        const title = m4el(create, "span", "m4-strong", `${profile.name} · ${profile.provider} · ${profile.model}`);
-        head.append(title, m4el(create, "span", profile.is_default ? "m4-badge" : "m4-badge m4-dim", profile.is_default ? M4_TEXT.defaultBadge : ""));
-        row.append(head);
-        const meta = m4el(create, "p", "m4-meta", `${profile.endpoint || "no endpoint override"} · timeout ${profile.timeout_seconds}s`);
-        row.append(meta, m4el(create, "span", "m4-status", M4_TEXT.contractStatus));
-        const actionsRow = m4el(create, "span", "m4-actions");
-        const editButton = m4el(create, "button", "secondary", M4_TEXT.edit);
-        editButton.type = "button";
-        editButton.onclick = () => {
-          editId = profile.id;
-          confirmId = null;
-          renderList();
-        };
-        const deleteButton = m4el(create, "button", confirmId === profile.id ? "danger" : "secondary", confirmId === profile.id ? M4_TEXT.deleteConfirm : M4_TEXT.delete);
-        deleteButton.type = "button";
-        deleteButton.setAttribute("aria-pressed", String(confirmId === profile.id));
-        deleteButton.onclick = () => {
-          if (confirmId !== profile.id) {
-            confirmId = profile.id;
-            editId = null;
-            renderList();
-          } else
-            removeProfile(profile.id, profile.is_default);
-        };
-        actionsRow.append(editButton, deleteButton);
-        if (confirmId === profile.id) {
-          const keepButton = m4el(create, "button", "secondary", M4_TEXT.keep);
-          keepButton.type = "button";
-          keepButton.onclick = () => {
-            confirmId = null;
-            renderList();
-          };
-          actionsRow.append(keepButton);
-          m4focus(deleteButton);
-        }
-        row.append(actionsRow);
-        if (editId === profile.id) {
-          const editor = m4el(create, "form", "m4-editor");
-          const modelEdit = m4input(create, editor, "edit-model", "Model", "text", true);
-          modelEdit.value = profile.model;
-          const endpointEdit = m4input(create, editor, "edit-endpoint", "Endpoint", "text", false);
-          endpointEdit.value = profile.endpoint;
-          const timeoutEdit = m4input(create, editor, "edit-timeout", "Timeout seconds", "number", false);
-          timeoutEdit.value = String(profile.timeout_seconds);
-          const keyEdit = m4input(create, editor, "edit-secret-ref", "API key name (leave blank to keep the current key)", "text", false);
-          const defaultToggle = m4toggler(create, editor, "Set as default profile", profile.is_default);
-          const saveButton = m4el(create, "button", "", M4_TEXT.save);
-          saveButton.type = "submit";
-          const cancelButton = m4el(create, "button", "secondary", M4_TEXT.cancelEdit);
-          cancelButton.type = "button";
-          cancelButton.onclick = () => {
-            editId = null;
-            renderList();
-          };
-          editor.append(saveButton, cancelButton);
-          editor.addEventListener("submit", (event) => {
-            event.preventDefault();
-            saveEdit(profile.id, modelEdit.value, endpointEdit.value, timeoutEdit.value, defaultToggle.checked, keyEdit.value);
-          });
-          row.append(editor);
-          m4focus(modelEdit);
-        }
-        rows.push(row);
-      }
-      list.replaceChildren(...rows);
-    }
-    return { refresh };
-  }
-  function secretsPanel({ root, create, request }) {
-    let refs = [];
-    let confirmId = null, loading = false;
-    const note = m4el(create, "p", "hint", M4_TEXT.secretsNote);
-    const form = m4el(create, "form");
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      submitSet();
-    });
-    const refField = m4input(create, form, "secret-ref", "Ref (letters, digits, . _ -)", "text", true);
-    const plaintextField = m4input(create, form, "secret-value", "Secret value", "password", true);
-    plaintextField.setAttribute("autocomplete", "new-password");
-    m4button(create, form, M4_TEXT.setSecret, "submit");
-    const actions = m4el(create, "p", "row");
-    const refreshButton = m4button(create, actions, M4_TEXT.refreshSecrets, "button");
-    const statusLine = m4el(create, "p", "hint");
-    statusLine.setAttribute("role", "status");
-    statusLine.setAttribute("aria-live", "polite");
-    const errorLine = m4el(create, "p", "error");
-    errorLine.setAttribute("role", "alert");
-    const list = m4el(create, "ol", "m4-list");
-    root.append(note, form, actions, statusLine, errorLine, list);
-    const failMessage = (error) => error instanceof Error && error.message ? error.message : M4_TEXT.genericFailure;
-    const showStatus = (message) => {
-      statusLine.textContent = message;
-      statusLine.hidden = false;
-    };
-    const showError = (message) => {
-      errorLine.textContent = message;
-      errorLine.hidden = false;
-    };
-    const clearFeedback = () => {
-      statusLine.hidden = true;
-      errorLine.hidden = true;
-    };
-    const refresh = async () => {
-      if (loading)
-        return;
-      loading = true;
-      refreshButton.disabled = true;
-      clearFeedback();
-      try {
-        refs = parseSecretRefs(await request("/api/secrets", "GET"));
-        confirmId = null;
-        renderList();
-        if (!refs.length)
-          showStatus(M4_TEXT.emptySecrets);
-      } catch (error) {
-        showError(failMessage(error));
-      } finally {
-        loading = false;
-        refreshButton.disabled = false;
-      }
-    };
-    refreshButton.onclick = () => void refresh();
-    const submitSet = async () => {
-      clearFeedback();
-      let input;
-      try {
-        input = buildSecretInput({ ref: refField.value, plaintext: plaintextField.value });
-      } catch (error) {
-        showError(failMessage(error));
-        return;
-      }
-      const attemptedValue = plaintextField.value;
-      plaintextField.value = "";
-      try {
-        const result = parseSecretSet(await request("/api/secrets", "POST", input));
-        showStatus(`${M4_TEXT.secretSetConfirmation} (ref: ${result.ref}, set: ${String(result.set)})`);
-        refField.value = "";
-        await refresh();
-      } catch (error) {
-        showError(sanitizeSecretError(error, attemptedValue));
-      }
-    };
-    const removeRef = async (ref) => {
-      clearFeedback();
-      try {
-        await request(apiUrl("/api/secrets", ref), "DELETE");
-        refs = refs.filter((entry) => entry.ref !== ref);
-        confirmId = null;
-        renderList();
-        showStatus(M4_TEXT.secretDeleted);
-      } catch (error) {
-        confirmId = null;
-        renderList();
-        showError(failMessage(error));
-      }
-    };
-    function renderList() {
-      const rows = [];
-      for (const entry of refs) {
-        const row = m4el(create, "li", "m4-row");
-        const head = m4el(create, "p", "m4-title", entry.ref);
-        head.className = "m4-title m4-mono";
-        row.append(head, m4el(create, "span", "m4-meta", `set at: ${displayTimestamp(entry.set_at)}`));
-        const actionsRow = m4el(create, "span", "m4-actions");
-        const deleteButton = m4el(create, "button", confirmId === entry.ref ? "danger" : "secondary", confirmId === entry.ref ? M4_TEXT.deleteConfirm : M4_TEXT.delete);
-        deleteButton.type = "button";
-        deleteButton.setAttribute("aria-pressed", String(confirmId === entry.ref));
-        deleteButton.onclick = () => {
-          if (confirmId !== entry.ref) {
-            confirmId = entry.ref;
-            renderList();
-          } else
-            removeRef(entry.ref);
-        };
-        actionsRow.append(deleteButton);
-        if (confirmId === entry.ref) {
-          const keepButton = m4el(create, "button", "secondary", M4_TEXT.keep);
-          keepButton.type = "button";
-          keepButton.onclick = () => {
-            confirmId = null;
-            renderList();
-          };
-          actionsRow.append(keepButton);
-          m4focus(deleteButton);
-        }
-        row.append(actionsRow);
-        rows.push(row);
-      }
-      list.replaceChildren(...rows);
-    }
-    return { refresh };
   }
   function skillsPanel({ root, create, request }) {
     let skills = [];
@@ -1626,6 +1123,541 @@ ${c.output}` : "";
     }
   }
 
+  // dikdik/web/models-pane.ts
+  var PROVIDERS = ["anthropic", "openai", "azure", "local"];
+  function optionalNumber(value, label, integer = false) {
+    const text = value.trim();
+    if (!text)
+      return null;
+    const number = Number(text);
+    if (!Number.isFinite(number) || integer && !Number.isInteger(number))
+      throw new Error(`${label} must be ${integer ? "a whole number" : "a number"}.`);
+    return number;
+  }
+  function profileBody(fields) {
+    if (!fields.name.trim())
+      throw new Error("Give the profile a name.");
+    if (!fields.model.trim())
+      throw new Error("Choose or type a model.");
+    const temperature = optionalNumber(fields.temperature, "Temperature"), topP = optionalNumber(fields.topP, "Top P");
+    if (temperature !== null && (temperature < 0 || temperature > 2))
+      throw new Error("Temperature must be 0–2.");
+    if (topP !== null && (topP < 0 || topP > 1))
+      throw new Error("Top P must be 0–1.");
+    const maxTokens = optionalNumber(fields.maxTokens, "Max output tokens", true);
+    if (maxTokens !== null && (maxTokens < 1 || maxTokens > 32000))
+      throw new Error("Max output tokens must be 1–32000.");
+    const timeout = optionalNumber(fields.timeout, "Timeout", true);
+    return {
+      name: fields.name.trim(),
+      provider: fields.provider,
+      model: fields.model.trim(),
+      endpoint: fields.endpoint.trim() || null,
+      ...timeout !== null ? { timeout_seconds: timeout } : {},
+      connection_id: fields.connection || null,
+      credential_secret_ref: fields.connection ? null : fields.keyRef || null,
+      temperature,
+      top_p: topP,
+      max_output_tokens: maxTokens
+    };
+  }
+  function when(seconds) {
+    if (!seconds)
+      return "";
+    return new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  }
+  function modelsPane(root, deps) {
+    const { request, make, message } = deps;
+    let connections = [], profiles = [], routers = [], keys = [];
+    let strategies = {}, catalog = { default_provider: "anthropic", providers: {} }, activeRouter = "";
+    let editingConnection = null, editingProfile = null, confirming = "";
+    const tests = new Map;
+    const fail = (error) => message(error instanceof Error ? error.message : "Something went wrong", true);
+    const button = (label, className = "secondary", onclick) => {
+      const node = make("button", className, label);
+      node.type = "button";
+      if (onclick)
+        node.onclick = onclick;
+      return node;
+    };
+    const labelled = (grid, text, control, id) => {
+      const label = make("label", "", text);
+      label.htmlFor = id;
+      control.id = id;
+      grid.append(label, control);
+      return control;
+    };
+    const input = (value = "", placeholder = "", type = "text") => {
+      const node = make("input");
+      node.type = type;
+      node.value = value;
+      node.placeholder = placeholder;
+      node.autocomplete = "off";
+      return node;
+    };
+    const choice = (options, value) => {
+      const node = make("select");
+      for (const [key, text] of options) {
+        const option = make("option", "", text);
+        option.value = key;
+        node.append(option);
+      }
+      node.value = value;
+      return node;
+    };
+    const section = (title, hint, action) => {
+      const box = make("section", "pane-block");
+      const head = make("div", "block-head");
+      head.append(make("h4", "", title));
+      if (action)
+        head.append(action);
+      box.append(head);
+      if (hint)
+        box.append(make("p", "hint", hint));
+      return box;
+    };
+    async function refresh() {
+      try {
+        const [c, p, r, k, cat, settings] = await Promise.all([
+          request("/api/connections", "GET"),
+          request("/api/profiles", "GET"),
+          request("/api/routers", "GET"),
+          request("/api/secrets", "GET").catch(() => []),
+          request("/api/model-catalog", "GET"),
+          request("/api/settings/app", "GET")
+        ]);
+        connections = c;
+        profiles = p;
+        routers = r.routers;
+        strategies = r.strategies;
+        keys = k;
+        catalog = cat;
+        activeRouter = settings.router ?? "";
+        render();
+      } catch (error) {
+        root.replaceChildren(make("p", "error-text", `Could not load model settings: ${error instanceof Error ? error.message : "unknown error"}`));
+      }
+    }
+    async function act(work, done) {
+      try {
+        await work();
+        if (done)
+          message(done);
+        confirming = "";
+        await refresh();
+        deps.changed?.();
+      } catch (error) {
+        fail(error);
+      }
+    }
+    function connectionForm(current) {
+      const form = make("form", "skill-form");
+      const grid = make("div", "skill-fields");
+      const name = labelled(grid, "Name", input(current?.name ?? "", "Work Anthropic account"), "conn-name");
+      const provider = labelled(grid, "Provider", choice(PROVIDERS.map((p) => [p, catalog.providers[p]?.name ?? p]), current?.provider ?? catalog.default_provider), "conn-provider");
+      provider.disabled = current !== null;
+      const key = labelled(grid, "API key", input("", current ? "Leave blank to keep the current key" : "Paste the key", "password"), "conn-key");
+      const endpoint = labelled(grid, "Endpoint", input(current?.endpoint ?? "", "Optional: a local server, e.g. http://127.0.0.1:8080/v1"), "conn-endpoint");
+      const help = make("p", "hint");
+      const syncHelp = () => {
+        const url = catalog.providers[provider.value]?.key_help;
+        help.replaceChildren();
+        if (url) {
+          const link = make("a", "", "Where do I find my API key?");
+          link.href = url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          help.append(link);
+        }
+      };
+      provider.onchange = syncHelp;
+      syncHelp();
+      const row = make("div", "row");
+      row.append(button(current ? "Save connection" : "Add connection", "primary small"), button("Cancel", "ghost small", () => {
+        editingConnection = null;
+        render();
+      }));
+      row.firstChild.type = "submit";
+      form.append(grid, help, row);
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        const body = current ? { name: name.value, endpoint: endpoint.value.trim() || null, ...key.value ? { api_key: key.value } : {} } : { name: name.value, provider: provider.value, api_key: key.value, endpoint: endpoint.value.trim() || null };
+        act(async () => {
+          await request(current ? `/api/connections/${current.id}` : "/api/connections", current ? "PATCH" : "POST", body);
+          editingConnection = null;
+        }, current ? key.value ? "Connection saved and key rotated." : "Connection saved." : `Connection “${name.value.trim()}” created.`);
+      };
+      setTimeout(() => name.focus(), 0);
+      return form;
+    }
+    function connectionsBlock() {
+      const box = section("Provider connections", "Share one API key across several model profiles. Keys are encrypted on this machine and never shown again.", button("Add connection", "small", () => {
+        editingConnection = "new";
+        render();
+      }));
+      if (editingConnection === "new")
+        box.append(connectionForm(null));
+      const list = make("ul", "m4-list");
+      for (const item of connections) {
+        const row = make("li", "m4-row");
+        const head = make("p", "m4-title");
+        head.append(make("span", "m4-strong", item.name), make("span", item.key_set ? "m4-badge" : "m4-badge warn-badge", item.key_set ? "Key set" : "No key"));
+        row.append(head, make("span", "m4-meta", `${catalog.providers[item.provider]?.name ?? item.provider} · ${item.models} model${item.models === 1 ? "" : "s"}${item.endpoint ? ` · ${item.endpoint}` : ""}`));
+        const actions = make("span", "m4-actions");
+        actions.append(button("Edit", "secondary", () => {
+          editingConnection = item.id;
+          render();
+        }));
+        const confirmKey = `conn:${item.id}`;
+        actions.append(button(confirming === confirmKey ? "Delete for good" : "Delete", confirming === confirmKey ? "danger" : "secondary", () => {
+          if (confirming !== confirmKey) {
+            confirming = confirmKey;
+            render();
+            return;
+          }
+          act(() => request(`/api/connections/${item.id}`, "DELETE"), "Connection deleted.");
+        }));
+        row.append(actions);
+        if (editingConnection === item.id)
+          row.append(connectionForm(item));
+        list.append(row);
+      }
+      if (!connections.length && editingConnection !== "new")
+        list.append(make("li", "hint", "No connections yet. Profiles can also use a key from API keys directly."));
+      box.append(list);
+      return box;
+    }
+    function profileForm(current) {
+      const form = make("form", "skill-form");
+      const grid = make("div", "skill-fields");
+      const provider = choice(PROVIDERS.map((p) => [p, catalog.providers[p]?.name ?? p]), current?.provider ?? catalog.default_provider);
+      const firstModel = () => catalog.providers[provider.value]?.models[0] ?? "";
+      const name = labelled(grid, "Name", input(current?.name ?? "", "Letters, digits, . _ - (up to 64)"), "prof-name");
+      labelled(grid, "Provider", provider, "prof-provider");
+      const list = make("datalist");
+      list.id = "prof-models";
+      const model = labelled(grid, "Model", input(current?.model ?? firstModel(), "Pick a suggestion or type any model name"), "prof-model");
+      model.setAttribute("list", "prof-models");
+      const connection = labelled(grid, "Connection", choice([["", "None — use an API key below"], ...connections.map((c) => [c.id, `${c.name} (${catalog.providers[c.provider]?.name ?? c.provider})`])], current?.connection_id ?? ""), "prof-connection");
+      const keyRef = labelled(grid, "API key", choice([["", provider.value === "local" ? "None (keyless local server)" : "Choose a stored key"], ...keys.map((k) => [k.ref, k.ref])], current?.key_ref ?? ""), "prof-key");
+      const endpoint = labelled(grid, "Endpoint", input(current?.endpoint ?? "", "Optional override"), "prof-endpoint");
+      const advanced = make("details", "advanced");
+      advanced.append(make("summary", "", "Advanced"));
+      const more = make("div", "skill-fields");
+      const timeout = labelled(more, "Timeout (s)", input(current ? String(current.timeout_seconds) : "", "60", "number"), "prof-timeout");
+      const temperature = labelled(more, "Temperature", input(current?.temperature?.toString() ?? "", "Provider default (0–2)", "number"), "prof-temperature");
+      temperature.step = "0.1";
+      const topP = labelled(more, "Top P", input(current?.top_p?.toString() ?? "", "Provider default (0–1)", "number"), "prof-top-p");
+      topP.step = "0.05";
+      const maxTokens = labelled(more, "Max output tokens", input(current?.max_output_tokens?.toString() ?? "", "Task default", "number"), "prof-max-tokens");
+      advanced.append(more);
+      if (current && (current.temperature !== null || current.top_p !== null || current.max_output_tokens !== null))
+        advanced.open = true;
+      const help = make("p", "hint");
+      const sync = (providerChanged) => {
+        list.replaceChildren(...(catalog.providers[provider.value]?.models ?? []).map((m) => {
+          const option = make("option");
+          option.value = m;
+          return option;
+        }));
+        if (providerChanged && !current)
+          model.value = firstModel();
+        keyRef.disabled = connection.value !== "";
+        const url = catalog.providers[provider.value]?.key_help;
+        help.replaceChildren();
+        if (url && !connection.value) {
+          const link = make("a", "", "Don’t know your API key? Here is where to find it.");
+          link.href = url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          help.append(link);
+        }
+      };
+      provider.onchange = () => sync(true);
+      connection.onchange = () => {
+        const linked = connections.find((c) => c.id === connection.value);
+        if (linked)
+          provider.value = linked.provider;
+        sync(true);
+      };
+      sync(false);
+      const row = make("div", "row");
+      const save = button(current ? "Save profile" : "Add profile", "primary small");
+      save.type = "submit";
+      row.append(save, button("Cancel", "ghost small", () => {
+        editingProfile = null;
+        render();
+      }));
+      form.append(grid, list, advanced, help, row);
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        let body;
+        try {
+          body = profileBody({ name: name.value, provider: provider.value, model: model.value, endpoint: endpoint.value, timeout: timeout.value, connection: connection.value, keyRef: keyRef.value, temperature: temperature.value, topP: topP.value, maxTokens: maxTokens.value });
+        } catch (error) {
+          fail(error);
+          return;
+        }
+        if (!current) {
+          for (const key of ["temperature", "top_p", "max_output_tokens", "connection_id", "credential_secret_ref", "endpoint"])
+            if (body[key] === null)
+              delete body[key];
+        }
+        act(async () => {
+          await request(current ? `/api/profiles/${current.id}` : "/api/profiles", current ? "PATCH" : "POST", body);
+          editingProfile = null;
+        }, current ? "Profile saved." : `Profile “${name.value.trim()}” added.`);
+      };
+      setTimeout(() => name.focus(), 0);
+      return form;
+    }
+    function profilesBlock() {
+      const box = section("Model profiles", "Each profile is a model with its key. The default is used unless a conversation, agent profile or router picks another.", button("Add profile", "small", () => {
+        editingProfile = "new";
+        render();
+      }));
+      if (editingProfile === "new")
+        box.append(profileForm(null));
+      const list = make("ul", "m4-list");
+      for (const item of profiles) {
+        const row = make("li", "m4-row");
+        const head = make("p", "m4-title");
+        head.append(make("span", "m4-strong", item.name));
+        if (item.is_default)
+          head.append(make("span", "m4-badge", "Default"));
+        const link = connections.find((c) => c.id === item.connection_id);
+        if (item.connection_id && !link)
+          head.append(make("span", "m4-badge warn-badge", "Broken link"));
+        row.append(head);
+        const via = link ? `via ${link.name}` : item.key_ref ? `key ${item.key_ref}` : item.provider === "local" ? "no key" : "no key set";
+        const extras = [item.temperature !== null ? `temperature ${item.temperature}` : "", item.top_p !== null ? `top P ${item.top_p}` : "", item.max_output_tokens ? `≤${item.max_output_tokens} tokens` : ""].filter(Boolean).join(" · ");
+        row.append(make("span", "m4-meta", `${catalog.providers[item.provider]?.name ?? item.provider} · ${item.model} · ${via}${extras ? " · " + extras : ""}`));
+        if (tests.has(item.id))
+          row.append(make("span", "m4-meta test-result", tests.get(item.id) ?? ""));
+        const actions = make("span", "m4-actions");
+        const test = button("Test", "secondary", () => {
+          test.disabled = true;
+          test.textContent = "Testing…";
+          request(`/api/profiles/${item.id}/test`, "POST", {}).then((result) => tests.set(item.id, `✓ ${result.model} answered in ${result.seconds}s: “${result.reply.trim().slice(0, 60)}”`)).catch((error) => tests.set(item.id, `✗ ${error instanceof Error ? error.message : "Test failed"}`)).finally(render);
+        });
+        test.title = "Sends one tiny request (“Reply with OK”) with this profile’s key. Nothing from your workspace is sent.";
+        actions.append(test, button("Edit", "secondary", () => {
+          editingProfile = item.id;
+          render();
+        }), button("Duplicate", "secondary", () => {
+          act(() => request(`/api/profiles/${item.id}/duplicate`, "POST", {}), "Profile duplicated.");
+        }));
+        if (!item.is_default)
+          actions.append(button("Set as default", "secondary", () => {
+            act(() => request(`/api/profiles/${item.id}`, "PATCH", { is_default: true }), `${item.name} is now the default.`);
+          }));
+        const confirmKey = `prof:${item.id}`;
+        actions.append(button(confirming === confirmKey ? "Delete for good" : "Delete", confirming === confirmKey ? "danger" : "secondary", () => {
+          if (confirming !== confirmKey) {
+            confirming = confirmKey;
+            render();
+            return;
+          }
+          act(() => request(`/api/profiles/${item.id}${item.is_default ? "?confirm_default=1" : ""}`, "DELETE"), "Profile deleted.");
+        }));
+        row.append(actions);
+        if (editingProfile === item.id)
+          row.append(profileForm(item));
+        list.append(row);
+      }
+      if (!profiles.length && editingProfile !== "new")
+        list.append(make("li", "hint", "No profiles yet. Without one, the server's DIKDIK_MODEL_* environment variables are used if set."));
+      box.append(list);
+      return box;
+    }
+    function routingBlock() {
+      const box = section("Model routing", "A router picks a model per message when nothing else chose one. Each turn records the model it used, so you can compare; nothing here claims one model is better.");
+      const activeRow = make("div", "skill-fields");
+      const active = labelled(activeRow, "Active router", choice([["", "Off — use the default profile"], ...routers.map((r) => [r.id, r.name])], activeRouter), "router-active");
+      active.onchange = () => {
+        act(() => request("/api/settings/app", "PATCH", { router: active.value }), active.value ? "Router on." : "Routing off.");
+      };
+      box.append(activeRow);
+      const list = make("ul", "m4-list");
+      for (const item of routers) {
+        const row = make("li", "m4-row");
+        const head = make("p", "m4-title");
+        head.append(make("span", "m4-strong", item.name));
+        if (item.id === activeRouter)
+          head.append(make("span", "m4-badge", "Active"));
+        if (item.broken)
+          head.append(make("span", "m4-badge warn-badge", "Profile missing"));
+        row.append(head, make("span", "m4-meta", `${strategies[item.strategy] ?? item.strategy}${item.threshold ? ` (${item.threshold})` : ""}. Strong: ${item.strong_name || "missing"} · Fast: ${item.fast_name || "missing"}`));
+        const confirmKey = `router:${item.id}`;
+        const actions = make("span", "m4-actions");
+        actions.append(button(confirming === confirmKey ? "Delete for good" : "Delete", confirming === confirmKey ? "danger" : "secondary", () => {
+          if (confirming !== confirmKey) {
+            confirming = confirmKey;
+            render();
+            return;
+          }
+          act(() => request(`/api/routers/${item.id}`, "DELETE"), "Router deleted.");
+        }));
+        row.append(actions);
+        list.append(row);
+      }
+      box.append(list);
+      if (profiles.length >= 2) {
+        const form = make("form", "skill-form");
+        const grid = make("div", "skill-fields");
+        const name = labelled(grid, "Name", input("", "Strong first, fast after"), "router-name");
+        const strategy = labelled(grid, "Rule", choice(Object.entries(strategies), "first_turn"), "router-strategy");
+        const options = profiles.map((p) => [p.id, `${p.name} (${p.model})`]);
+        const strong = labelled(grid, "Strong model", choice(options, profiles[0].id), "router-strong");
+        const fast = labelled(grid, "Fast model", choice(options, profiles[1].id), "router-fast");
+        const threshold = labelled(grid, "Length threshold", input("400", "characters", "number"), "router-threshold");
+        const sync = () => {
+          threshold.disabled = strategy.value !== "long_message";
+        };
+        strategy.onchange = sync;
+        sync();
+        const save = button("Add router", "small");
+        save.type = "submit";
+        form.append(grid, save);
+        form.onsubmit = (event) => {
+          event.preventDefault();
+          const body = { name: name.value, strategy: strategy.value, strong_profile_id: strong.value, fast_profile_id: fast.value, ...strategy.value === "long_message" ? { threshold: Number(threshold.value) } : {} };
+          act(() => request("/api/routers", "POST", body), `Router “${name.value.trim()}” added. Turn it on above.`);
+        };
+        box.append(form);
+      } else
+        box.append(make("p", "hint", "Add at least two model profiles to build a router."));
+      return box;
+    }
+    function render() {
+      root.replaceChildren(connectionsBlock(), profilesBlock(), routingBlock());
+    }
+    return refresh;
+  }
+  function keysPane(root, deps) {
+    const { request, make, message } = deps;
+    let keys = [], confirming = "", renaming = "";
+    const button = (label, className = "secondary", onclick) => {
+      const node = make("button", className, label);
+      node.type = "button";
+      if (onclick)
+        node.onclick = onclick;
+      return node;
+    };
+    async function act(work, done) {
+      try {
+        await work();
+        message(done);
+        confirming = "";
+        renaming = "";
+        await refresh();
+        deps.changed?.();
+      } catch (error) {
+        message(error instanceof Error ? error.message : "Something went wrong", true);
+      }
+    }
+    async function refresh() {
+      try {
+        keys = await request("/api/secrets", "GET");
+        render();
+      } catch (error) {
+        root.replaceChildren(make("p", "error-text", `Could not open the key store: ${error instanceof Error ? error.message : "unknown error"}`));
+      }
+    }
+    function render() {
+      const form = make("form", "skill-form");
+      const grid = make("div", "skill-fields");
+      const nameLabel = make("label", "", "Name");
+      nameLabel.htmlFor = "key-name";
+      const name = make("input");
+      name.id = "key-name";
+      name.placeholder = "anthropic-work";
+      name.autocomplete = "off";
+      name.maxLength = 64;
+      const valueLabel = make("label", "", "Value");
+      valueLabel.htmlFor = "key-value";
+      const value = make("input");
+      value.id = "key-value";
+      value.type = "password";
+      value.placeholder = "Paste the key or token";
+      value.autocomplete = "off";
+      grid.append(nameLabel, name, valueLabel, value);
+      const save = button("Save key", "small");
+      save.type = "submit";
+      form.append(grid, make("p", "hint", "Saving under an existing name replaces its value; the old value is kept once so you can undo."), save);
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        if (!value.value.trim()) {
+          message("A key cannot be empty; delete it instead.", true);
+          return;
+        }
+        act(() => request("/api/secrets", "POST", { ref: name.value.trim(), plaintext: value.value }), `Saved “${name.value.trim()}”.`);
+      };
+      const list = make("ul", "m4-list");
+      for (const item of keys) {
+        const row = make("li", "m4-row");
+        const head = make("p", "m4-title");
+        head.append(make("span", "m4-strong m4-mono", item.ref));
+        if (item.env)
+          head.append(make("span", "m4-badge", `Sandbox: ${item.env}`));
+        row.append(head, make("span", "m4-meta", `Saved ${when(item.set_at)}${item.previous_set_at ? ` · previous value from ${when(item.previous_set_at)} kept` : ""}`));
+        const actions = make("span", "m4-actions");
+        if (item.previous_set_at)
+          actions.append(button("Undo last change", "secondary", () => {
+            act(() => request(`/api/secrets/${encodeURIComponent(item.ref)}/restore`, "POST", {}), "Previous value restored.");
+          }));
+        actions.append(button("Rename", "secondary", () => {
+          renaming = item.ref;
+          render();
+        }));
+        const env = make("input");
+        env.className = "env-input";
+        env.value = item.env;
+        env.placeholder = "VARIABLE_NAME";
+        env.setAttribute("aria-label", `Sandbox variable for ${item.ref}`);
+        const envSave = button(item.env ? "Update variable" : "Expose to sandbox", "secondary", () => {
+          act(() => request(`/api/secrets/${encodeURIComponent(item.ref)}`, "PATCH", { env: env.value.trim() || null }), env.value.trim() ? `Tasks that allow it will see ${env.value.trim()}.` : "No longer exposed to the sandbox.");
+        });
+        envSave.title = "Agent commands in Docker can read this as an environment variable, only in tasks where you allow sandbox secrets. Output is redacted.";
+        actions.append(env, envSave);
+        const confirmKey = `key:${item.ref}`;
+        actions.append(button(confirming === confirmKey ? "Delete for good" : "Delete", confirming === confirmKey ? "danger" : "secondary", () => {
+          if (confirming !== confirmKey) {
+            confirming = confirmKey;
+            render();
+            return;
+          }
+          act(() => request(`/api/secrets/${encodeURIComponent(item.ref)}`, "DELETE"), "Key deleted.");
+        }));
+        row.append(actions);
+        if (renaming === item.ref) {
+          const rename = make("form", "m4-actions");
+          const to = make("input");
+          to.value = item.ref;
+          to.setAttribute("aria-label", "New name");
+          to.maxLength = 64;
+          const go = button("Save name", "small");
+          go.type = "submit";
+          rename.append(to, go, button("Cancel", "ghost small", () => {
+            renaming = "";
+            render();
+          }));
+          rename.onsubmit = (event) => {
+            event.preventDefault();
+            act(() => request(`/api/secrets/${encodeURIComponent(item.ref)}/rename`, "POST", { to: to.value.trim() }), "Renamed. Profiles and MCP servers that used it now use the new name.");
+          };
+          row.append(rename);
+          setTimeout(() => to.focus(), 0);
+        }
+        list.append(row);
+      }
+      if (!keys.length)
+        list.append(make("li", "hint", "No keys stored yet."));
+      root.replaceChildren(form, list);
+    }
+    return refresh;
+  }
+
   // dikdik/web/organise.ts
   function taskTitle(task) {
     return (task.title || task.objective || "").trim();
@@ -1842,6 +1874,7 @@ ${c.output}` : "";
   var openTabs = [];
   var fileText = "";
   var filePreview = false;
+  var exposedSecrets = 0;
   var composerSize = new ComposerSize;
   function make(tag, className = "", text = "") {
     const node = document.createElement(tag);
@@ -2183,6 +2216,13 @@ ${c.output}` : "";
         return { icon: "shield", title: "Blocked by a project hook", arg: msg.body ?? "" };
       case "agent_thinking":
         return { icon: "sparkle", title: "Thinking", arg: "" };
+      case "model_routed":
+        return { icon: "cpu", title: msg.title ?? "Routed", arg: msg.body ?? "" };
+      case "critic":
+        return { icon: msg.title === "Critic: looks done" ? "check" : "alert", title: msg.title ?? "Critic", arg: (msg.body ?? "").split(`
+`)[0] ?? "" };
+      case "sandbox_secrets":
+        return { icon: "key", title: "Sandbox secrets available", arg: msg.body ?? "" };
       case "confirmation_resolved":
         return { icon: msg.title === "Approved" ? "check" : "x", title: `${msg.title} · ${detailField(details, "id") ? "action" : ""}`.replace(/ · $/, ""), arg: detailField(details, "reason") };
       case "subagent":
@@ -2393,6 +2433,10 @@ ${c.output}` : "";
     const parts = [`${count("model_calls")} model call${count("model_calls") === 1 ? "" : "s"}`, `${count("tool_calls")} tool call${count("tool_calls") === 1 ? "" : "s"}`];
     if (count("reported_usage_tokens"))
       parts.push(`${count("reported_usage_tokens").toLocaleString()} tokens reported`);
+    const model = details.model;
+    const name = typeof model?.profile === "string" && model.profile ? model.profile : typeof model?.model === "string" ? model.model : "";
+    if (name)
+      parts.push(name);
     return parts.join(" · ");
   }
   function isLatestTurn(msg) {
@@ -3777,8 +3821,8 @@ ${c.output}` : "";
     if (!connected) {
       connected = true;
       refreshPanels = {
-        models: mountPanel("panel-profiles", profilesPanel),
-        secrets: mountPanel("panel-secrets", secretsPanel),
+        models: modelsPane(el("panel-profiles"), paneDeps),
+        secrets: keysPane(el("panel-secrets"), paneDeps),
         skills: mountPanel("panel-skills", skillsPanel)
       };
     }
@@ -3792,6 +3836,7 @@ ${c.output}` : "";
     loadAppSettings().catch(() => {
       return;
     });
+    loadExposedSecrets();
     routeSettings();
   }
   function showSignIn() {
@@ -4226,7 +4271,10 @@ ${c.output}` : "";
     });
   }
   el("open-settings").addEventListener("click", () => openSettings("general"));
-  el("model-pill").addEventListener("click", () => openSettings("models"));
+  el("model-pill").addEventListener("click", (event) => {
+    event.stopPropagation();
+    openModelMenu();
+  });
   el("settings").addEventListener("close", () => {
     settingsHash(null);
   });
@@ -4371,6 +4419,8 @@ ${c.output}` : "";
     el("browser-field").hidden = mode !== "agent";
     input("browser-approval").disabled = mode !== "agent";
     const execution = policy.requiresExecution || mode === "agent" && input("browser-approval").checked;
+    el("secrets-field").hidden = !(mode === "agent" && execution && exposedSecrets > 0);
+    input("secrets-approval").disabled = el("secrets-field").hidden === true;
     el("execution-field").hidden = !execution;
     input("execution").disabled = !execution;
     input("execution").required = execution;
@@ -4433,7 +4483,8 @@ ${c.output}` : "";
       approveExecution: input("execution").checked,
       approveExternal: input("external").checked,
       approveBrowser: input("browser-approval").checked,
-      agentProfile: el("agent-profile").value ?? ""
+      agentProfile: el("agent-profile").value ?? "",
+      approveSecrets: input("secrets-approval").checked
     });
   }
   async function loadAgents() {
@@ -4496,6 +4547,9 @@ ${c.output}` : "";
     field("agent-browser").checked = profile?.allow_browser ?? true;
     field("agent-mcp").checked = profile?.use_mcp ?? true;
     field("agent-skills").checked = profile?.use_skills ?? true;
+    field("agent-critic").checked = profile?.critic ?? false;
+    field("agent-memory").checked = profile?.memory ?? false;
+    field("agent-secrets").value = profile?.secret_refs == null ? "" : profile.secret_refs.length ? profile.secret_refs.join(", ") : "none";
     el("agent-save").textContent = profile ? "Save changes" : "Add agent";
     el("agent-cancel").hidden = !profile;
   }
@@ -4526,7 +4580,10 @@ ${c.output}` : "";
       allow_shell: field("agent-shell").checked,
       allow_browser: field("agent-browser").checked,
       use_mcp: field("agent-mcp").checked,
-      use_skills: field("agent-skills").checked
+      use_skills: field("agent-skills").checked,
+      critic: field("agent-critic").checked,
+      memory: field("agent-memory").checked,
+      secret_refs: secretRefsField(field("agent-secrets").value)
     };
     const id = field("agent-id").value;
     try {
@@ -5462,6 +5519,98 @@ ${c.output}` : "";
     stopArmed = undefined;
     el("cancel").replaceChildren(icon("stop"), document.createTextNode("Stop"));
     setClass(el("cancel"), "confirming", false);
+  }
+  var paneDeps = {
+    request: (path, method, body) => request(path, method, body),
+    make,
+    message,
+    changed: () => {
+      loadModel().catch(() => {
+        return;
+      });
+      loadExposedSecrets();
+      ensureLists(true);
+    }
+  };
+  function secretRefsField(text) {
+    const value = text.trim();
+    if (!value)
+      return null;
+    if (value.toLowerCase() === "none")
+      return [];
+    return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+  }
+  async function loadExposedSecrets() {
+    try {
+      const keys = await api("/api/secrets");
+      exposedSecrets = keys.filter((key) => key.env).length;
+    } catch {
+      exposedSecrets = 0;
+    }
+    syncMode();
+  }
+  function closeModelMenu() {
+    el("model-menu").hidden = true;
+  }
+  async function openModelMenu() {
+    const menu = el("model-menu");
+    if (!menu.hidden) {
+      closeModelMenu();
+      return;
+    }
+    let profiles = [];
+    try {
+      profiles = await api("/api/profiles");
+    } catch {}
+    const pick = (choice) => {
+      modelOverride = choice;
+      closeModelMenu();
+      message(choice ? `Using ${choice.name} for your next messages in this tab.` : "Back to the default model.");
+      loadModel().catch(() => {
+        return;
+      });
+    };
+    const item = (label, detail, checked, run) => {
+      const node = make("button", "model-item");
+      node.type = "button";
+      node.setAttribute("role", "menuitemradio");
+      node.setAttribute("aria-checked", String(checked));
+      const mark = make("span", "model-check");
+      if (checked)
+        mark.append(icon("check"));
+      node.append(mark, make("span", "model-name", label));
+      if (detail)
+        node.append(make("span", "model-detail", detail));
+      node.onclick = run;
+      return node;
+    };
+    const fallback = profiles.find((profile) => profile.is_default);
+    const manage = make("button");
+    manage.type = "button";
+    manage.setAttribute("role", "menuitem");
+    manage.append(icon("gear"), make("span", "", "Manage models…"));
+    manage.onclick = () => {
+      closeModelMenu();
+      openSettings("models");
+    };
+    menu.replaceChildren(item("Default", fallback ? `${fallback.name} · ${fallback.model}` : "from settings", modelOverride === null, () => pick(null)), ...profiles.map((profile) => item(profile.name, profile.model, modelOverride?.id === profile.id, () => pick({ id: profile.id, name: profile.name }))), make("hr"), manage);
+    const box = el("model-pill").getBoundingClientRect();
+    menu.hidden = false;
+    const { offsetWidth: width, offsetHeight: height } = menu;
+    menu.style.left = `${Math.max(8, Math.min(box.left, innerWidth - width - 8))}px`;
+    menu.style.top = `${box.top - height - 6 > 8 ? box.top - height - 6 : box.bottom + 6}px`;
+    menu.querySelector("[aria-checked=true]")?.focus();
+  }
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("click", (event) => {
+      const menu = el("model-menu");
+      if (!menu.hidden && event.target instanceof Node && !menu.contains(event.target))
+        closeModelMenu();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !el("model-menu").hidden)
+        closeModelMenu();
+    });
   }
   var stopArmed;
   button("cancel").onclick = async () => {

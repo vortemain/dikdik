@@ -15,6 +15,7 @@ export interface TaskRequest {
   confirmation?: ConfirmationPolicy;
   attachments?: string[];
   goal_max_turns?: number;
+  approve_secrets?: boolean;
 }
 export type ConfirmationPolicy = "never" | "risky" | "always";
 export interface AttachmentMeta { id: string; name: string; type: string; size: number }
@@ -22,6 +23,7 @@ export interface AgentProfile {
   id: string; name: string; instructions: string; model_profile_id: string;
   max_model_calls: number | null; max_tool_calls: number | null; deadline_seconds: number | null;
   allow_shell: boolean; allow_browser: boolean; use_mcp: boolean; use_skills: boolean;
+  critic?: boolean; memory?: boolean; secret_refs?: string[] | null;
 }
 export interface Project {
   name: string;
@@ -213,7 +215,7 @@ export function parseVerification(value: string): Verification {
 export function buildTaskRequest(input: {
   objective: string; mode: Mode; verification: Verification;
   approveExecution: boolean; approveExternal: boolean; approveBrowser?: boolean; edits: string; agentProfile?: string;
-  modelProfile?: string | undefined; attachments?: string[]; goalMaxTurns?: number | undefined;
+  modelProfile?: string | undefined; attachments?: string[]; goalMaxTurns?: number | undefined; approveSecrets?: boolean;
 }): TaskRequest {
   const policy = modePolicy(input.mode, input.verification);
   if (!input.objective.trim()) throw new Error("Enter an objective.");
@@ -241,6 +243,7 @@ export function buildTaskRequest(input: {
     ...(["agent", "plan"].includes(input.mode) && input.agentProfile ? { agent_profile: input.agentProfile } : {}),
     ...(input.mode !== "offline" && input.modelProfile ? { model_profile: input.modelProfile } : {}),
     ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+    ...(input.mode === "agent" && input.approveSecrets && input.approveExecution && (policy.requiresExecution || browsing) ? { approve_secrets: true } : {}),
     ...(input.goalMaxTurns ? goalTurns(input.mode, input.goalMaxTurns) : {}),
   };
 }
@@ -461,6 +464,15 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [{ ...base, role: "system", title: "Pausing after this step" }];
     case "forked":
       return [{ ...base, role: "system", title: "Forked from another conversation", details: { from_task: textOf(d.from_task, 64), from_seq: numOrUndef(d.from_seq) } }];
+    case "model_routed":
+      return [{ ...base, role: "system", title: `Routed to ${textOf(d.profile, 64) || "a model"}`, body: textOf(d.reason, 200), details: { router: textOf(d.router, 64) } }];
+    case "critic":
+      return [{ ...base, role: "system", title: d.error ? "Critic unavailable" : d.achieved === true ? "Critic: looks done" : "Critic: not done yet",
+        body: textOf(d.error ?? [d.reason, d.next].filter(item => typeof item === "string" && item).join("\n"), 2000) }];
+    case "sandbox_secrets": {
+      const names = Array.isArray(d.names) ? d.names.filter((n): n is string => typeof n === "string") : [];
+      return [{ ...base, role: "system", title: "Sandbox secrets available", body: names.join(", ") }];
+    }
     case "goal_status": {
       const turns = numOrUndef(d.turns) ?? 0, max = numOrUndef(d.max_turns) ?? 0;
       const titles: Record<string, string> = { active: "Goal in progress", achieved: "Goal achieved", capped: "Goal stopped at its turn limit", stopped: "Goal stopped", error: "Goal check failed" };
