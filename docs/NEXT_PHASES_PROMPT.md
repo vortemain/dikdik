@@ -1,5 +1,8 @@
 # Brief for the coding agent: finish Dikdik's remaining features
 
+> **Superseded (2026-10-27):** phases A–C are done. Start from
+> [`CODEX_HANDOFF.md`](CODEX_HANDOFF.md), which has the current state, baseline and remaining work.
+
 You are continuing work on **Dikdik**, an original, local-first AI coding agent
 (Python backend, Bun/TypeScript web UI, Rust components). Your job is to build every
 remaining feature that OpenHands offers **except OpenHands Cloud**, to the same
