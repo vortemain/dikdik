@@ -241,10 +241,17 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(data["state"], "completed")
 
     def test_goal_capped_and_stopped(self):
-        with patch("dikdik.engine.CompatibleAgentModel", side_effect=[Script([ModelResponse("Try.", [])])]), \
-                patch("dikdik.control.chat_completion", return_value=answer('{"achieved": false, "reason": "no"}')):
-            task = self.engine.submit({"objective": "Impossible", **AGENT, "goal_max_turns": 1})
-            data = self.idle(task)
+        # This is a goal-state unit test.  The preceding test covers the complete
+        # asynchronous worker loop; waiting on that worker here made this assertion
+        # depend on machine load and occasionally exhausted the 20-second test wait.
+        request = self.engine._validate({"objective": "Impossible", **AGENT, "goal_max_turns": 1})
+        task = self.engine.store.create(request)
+        self.engine._record_extras(task, request)
+        self.engine.store.event(task, "agent_message", {"content": "Try."})
+        self.engine.store.state(task, "completed", {"changed_files": []})
+        with patch("dikdik.control.chat_completion", return_value=answer('{"achieved": false, "reason": "no"}')):
+            self.engine._after_goal_turn(task, request, "completed")
+        data = self.engine.store.get(task)
         self.assertEqual(self.kinds(data, "goal_status")[-1]["status"], "capped")
         self.assertEqual(self.engine.goal_control(task, "stop"), {"status": "stopped"})
         with self.assertRaisesRegex(ValueError, "1–20 turns"):
