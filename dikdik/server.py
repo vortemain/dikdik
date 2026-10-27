@@ -75,7 +75,7 @@ def make_server(engine: Engine, port: int, token: str):
     expected = ("Bearer " + token).encode("utf-8")
     started_at = time.monotonic()
     activity = {"last": time.monotonic()}
-    state = ServerState(ready=not os.environ.get("DIKDIK_DORMANT", ""))
+    server_state = ServerState(ready=not os.environ.get("DIKDIK_DORMANT", ""))
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -266,7 +266,7 @@ def make_server(engine: Engine, port: int, token: str):
                 self.reply(200, {"status": "ok"})
                 return
             if path == "/ready":
-                if state.dormant:
+                if server_state.dormant:
                     self.reply(503, {"status": "dormant", "error": "Server is not initialized; POST /api/init first"})
                 else:
                     self.reply(200, {"status": "ready"})
@@ -278,14 +278,14 @@ def make_server(engine: Engine, port: int, token: str):
                                  "rust_indexer": INDEXER, "port": self.server.server_port,
                                  "uptime": round(now - started_at, 3),
                                  "idle_time": round(now - activity["last"], 3),
-                                 **state.info()})
+                                 **server_state.info()})
                 return
             if path == "/openapi.json" or path == "/api/openapi":
                 self.reply(200, openapi_document())
                 return
             if not self.authorized():
                 return
-            if state.dormant:
+            if server_state.dormant:
                 self.reply(503, {"error": "Server is dormant; POST /api/init to initialize"})
                 return
             answer = gateway.route("GET", path, {})
@@ -325,6 +325,13 @@ def make_server(engine: Engine, port: int, token: str):
                     return
                 if path == "/api/workspaces":
                     self.reply(200, {"workspaces": engine.workspaces.list()})
+                    return
+                if path == "/api/tasks/count":
+                    with engine.store.connect() as db:
+                        total = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+                        by_state = {row["state"]: row["count"] for row in
+                                    db.execute("SELECT state, COUNT(*) AS count FROM tasks GROUP BY state")}
+                    self.reply(200, {"total": total, "by_state": by_state})
                     return
                 if len(parts) == 7 and parts[:3] == ["", "api", "tasks"] and parts[4:6] == ["browser", "screenshots"]:
                     self.reply(200, engine.browser.screenshot(parts[3], parts[6]), "image/png")
@@ -458,7 +465,7 @@ def make_server(engine: Engine, port: int, token: str):
                 if bash is not None:
                     self.reply(*bash)
                 elif path == "/api/init":
-                    self.reply(200, state.initialize(body, engine))
+                    self.reply(200, server_state.initialize(body, engine))
                 elif path == "/api/tasks":
                     self.reply(202, {"id": engine.submit(body)})
                 elif path == "/api/tasks/batch" and isinstance(body, dict):

@@ -243,6 +243,16 @@ class ServerApiTests(unittest.TestCase):
         paths = [e["path"] for e in entries]
         self.assertEqual(paths.count(str(self.root.resolve())), 1)
 
+    def test_tasks_count(self):
+        self.make_task()
+        self.make_task()
+        status, body = self.call("GET", "/api/tasks/count")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(data["total"], 2)
+        self.assertIn("by_state", data)
+        self.assertIn("completed", data["by_state"])
+
 
 if __name__ == "__main__":
     unittest.main()
