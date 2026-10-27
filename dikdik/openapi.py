@@ -142,6 +142,16 @@ OPENAPI = {
         "/api/settings/app": {"get": {"summary": "App settings", "responses": {"200": {"description": "Settings"}}},
                               "patch": {"summary": "Update app settings", "requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}},
                                         "responses": {"200": {"description": "Updated"}}}},
+        "/api/settings/schema": {"get": {"summary": "Settings JSON schema", "responses": {"200": {"description": "Schema"}}}},
+        "/api/workspaces": {
+            "get": {"summary": "List registered workspaces", "responses": {"200": {"description": "Workspace list"}}},
+            "post": {"summary": "Register a workspace",
+                "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
+                    "path": {"type": "string"}, "name": {"type": "string"}}}}}},
+                "responses": {"201": {"description": "Registered"}}}},
+        "/api/workspaces/{path}": {"delete": {"summary": "Remove a workspace",
+            "parameters": [{"name": "path", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "Removed"}}}},
         "/v1/models": {"get": {"summary": "List model profiles (OpenAI-compatible)", "responses": {"200": {"description": "Model list"}}}},
         "/v1/chat/completions": {"post": {"summary": "Chat completion (OpenAI-compatible)",
             "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ChatCompletion"}}}},

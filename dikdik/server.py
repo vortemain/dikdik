@@ -314,6 +314,9 @@ def make_server(engine: Engine, port: int, token: str):
                         "defaults": {k: v for k, v in engine.app_settings().items()},
                     })
                     return
+                if path == "/api/workspaces":
+                    self.reply(200, {"workspaces": engine.workspaces.list()})
+                    return
                 if len(parts) == 7 and parts[:3] == ["", "api", "tasks"] and parts[4:6] == ["browser", "screenshots"]:
                     self.reply(200, engine.browser.screenshot(parts[3], parts[6]), "image/png")
                     return
@@ -473,6 +476,8 @@ def make_server(engine: Engine, port: int, token: str):
                         except KeyError:
                             pass  # skip unknown tasks
                     self.reply(200, {"action": action, "updated": count})
+                elif path == "/api/workspaces" and isinstance(body, dict):
+                    self.reply(201, engine.workspaces.add(body.get("path", ""), body.get("name")))
                 elif path.startswith("/api/tasks/") and path.endswith("/cancel"):
                     self.reply(200, {"requested": engine.cancel(path.split("/")[3])})
                 elif path.startswith("/api/tasks/") and path.endswith("/interrupt"):
@@ -589,6 +594,10 @@ def make_server(engine: Engine, port: int, token: str):
                     return
                 if path == "/api/settings/app" and method == "PATCH":
                     self.reply(200, engine.update_app_settings(body))
+                    return
+                if path.startswith("/api/workspaces/") and method == "DELETE":
+                    engine.workspaces.remove(path.split("/")[3])
+                    self.reply(200, {"removed": path.split("/")[3]})
                     return
                 if path.startswith("/api/tasks/") and path.count("/") == 3:
                     task = path.split("/")[3]

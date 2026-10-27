@@ -39,6 +39,7 @@ from .secrets_store import SecretsStore
 from .skills import SkillIndex
 from .store import Store
 from .webhooks import WebhookStore
+from .workspace_registry import WorkspaceRegistry
 
 
 TERMINAL = {"completed", "failed", "blocked", "cancelled", "interrupted", "draft", "paused"}
@@ -158,6 +159,12 @@ class Engine:
         self.secret_requests = SecretRequests()
         self.attachments = Attachments(self.store, data / "attachments")
         self.webhooks = WebhookStore(self.store)
+        self.workspaces = WorkspaceRegistry(data)
+        # Register the current workspace on startup.
+        try:
+            self.workspaces.add(str(root))
+        except Exception:
+            pass
         with self.store.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS goals (task_id TEXT PRIMARY KEY, objective TEXT NOT NULL, max_turns INTEGER NOT NULL, turns INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, created REAL NOT NULL)")
         self.plugins = PluginStore(data, root, self.store, self.mcp)

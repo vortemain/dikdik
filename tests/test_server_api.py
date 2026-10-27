@@ -229,6 +229,20 @@ class ServerApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["updated"], 0)
 
+    def test_workspaces_list_and_add(self):
+        status, body = self.call("GET", "/api/workspaces")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertGreater(len(data["workspaces"]), 0)  # startup registers the current workspace
+        status, body = self.call("POST", "/api/workspaces", {"path": str(self.root), "name": "test repo"})
+        self.assertEqual(status, 201)
+        self.assertEqual(json.loads(body)["name"], "test repo")
+        # Deduped
+        status, body = self.call("GET", "/api/workspaces")
+        entries = json.loads(body)["workspaces"]
+        paths = [e["path"] for e in entries]
+        self.assertEqual(paths.count(str(self.root.resolve())), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
