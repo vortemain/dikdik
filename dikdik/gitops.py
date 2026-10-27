@@ -12,7 +12,7 @@ from pathlib import Path
 
 TIMEOUT = 15
 STATUS_LIMIT = 500
-LOG_LIMIT = 30
+LOG_LIMIT = 50
 SAFE = ["-c", "core.pager=cat", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false",
         "-c", "color.ui=false", "-c", "commit.gpgsign=false"]
 
@@ -72,8 +72,25 @@ def info(root: Path) -> dict:
         if len(parts) == 5:
             commits.append({"hash": parts[0], "short": parts[1], "author": parts[2], "time": int(parts[3]), "subject": parts[4]})
     ahead = _git(root, "rev-list", "--count", "@{upstream}..HEAD", check=False).strip()
+    capped = len(commits) >= LOG_LIMIT
     return {"repo": True, "installed": True, "branch": branch, "status": status, "commits": commits,
-            "ahead": int(ahead) if ahead.isdigit() else None}
+            "commits_capped": capped, "ahead": int(ahead) if ahead.isdigit() else None}
+
+
+def diff(root: Path, commit: str) -> dict:
+    """Show the diff for a specific commit (or HEAD)."""
+    if not is_repo(root):
+        raise GitError("This workspace is not a Git repository")
+    if not isinstance(commit, str) or not commit.strip() or len(commit) > 80 or commit.startswith("-"):
+        raise GitError("Commit hash must be a safe Git reference")
+    objtype = _git(root, "cat-file", "-t", commit, check=False).strip()
+    if objtype != "commit":
+        raise GitError("No such commit")
+    parent = _git(root, "rev-parse", "--verify", f"{commit}~1", check=False).strip()
+    ref = parent if parent and not parent.startswith("fatal:") else "--root"
+    subject = _git(root, "log", "-1", "--format=%s", commit).strip()
+    patch = _git(root, "diff", ref, commit, "--no-color", "--stat", "--patch", check=False)
+    return {"commit": commit, "subject": subject, "diff": patch[:200000]}
 
 
 def commit(root: Path, message: str, paths: list[str], identity: tuple[str, str] | None = None) -> dict:

@@ -117,6 +117,31 @@ class Store:
             raise KeyError(task)
         return state["state"], [{**dict(r), "data": json.loads(r["data"])} for r in rows]
 
+    def search_events(self, task: str, kind: str | None = None, limit: int = 200):
+        """Search one task's events by kind, newest first."""
+        with self.connect() as db:
+            state = db.execute("SELECT state FROM tasks WHERE id=?", (task,)).fetchone()
+            if state is None:
+                raise KeyError(task)
+            if kind is not None:
+                rows = db.execute("SELECT * FROM events WHERE task_id=? AND kind=? ORDER BY seq DESC LIMIT ?",
+                                  (task, kind, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM events WHERE task_id=? ORDER BY seq DESC LIMIT ?",
+                                  (task, limit)).fetchall()
+            return state["state"], [{**dict(r), "data": json.loads(r["data"])} for r in rows]
+
+    def count_events(self, task: str):
+        """Count one task's events grouped by kind."""
+        with self.connect() as db:
+            state = db.execute("SELECT state FROM tasks WHERE id=?", (task,)).fetchone()
+            if state is None:
+                raise KeyError(task)
+            counts = {row["kind"]: row["count"] for row in
+                      db.execute("SELECT kind, COUNT(*) AS count FROM events WHERE task_id=? GROUP BY kind", (task,))}
+            total = db.execute("SELECT COUNT(*) AS n FROM events WHERE task_id=?", (task,)).fetchone()["n"]
+        return state["state"], {"total": total, "by_kind": counts}
+
     def update_meta(self, task, changes: dict):
         """Rename, pin, archive, file or tag a conversation. Unknown keys and bad types are rejected."""
         if not isinstance(changes, dict) or not changes or set(changes) - {"title", "pinned", "archived", "folder", "tags"}:

@@ -261,6 +261,15 @@ def make_server(engine: Engine, port: int, token: str):
                 elif path.startswith("/api/tasks/") and path.endswith("/stream") and path.count("/") == 4:
                     after = parse_qs(urlsplit(self.path).query).get("after", ["0"])[0]
                     self.stream(path.split("/")[3], int(after) if after.isdigit() else 0)
+                elif path.startswith("/api/tasks/") and path.endswith("/events") and path.count("/") == 4:
+                    query = parse_qs(urlsplit(self.path).query)
+                    kind = query.get("kind", [None])[0]
+                    limit = int(query.get("limit", ["200"])[0]) if query.get("limit", ["200"])[0].isdigit() else 200
+                    state, events = engine.store.search_events(path.split("/")[3], kind, min(limit, 2000))
+                    self.reply(200, {"state": state, "events": events})
+                elif path.startswith("/api/tasks/") and path.endswith("/events/count") and path.count("/") == 5:
+                    state, counts = engine.store.count_events(path.split("/")[3])
+                    self.reply(200, {"state": state, **counts})
                 elif path == "/api/model":
                     self.reply(200, engine.models.describe())
                 elif path == "/api/files/content":
@@ -268,6 +277,8 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(200, engine.file_text(query.get("path", [""])[0], query.get("task", [None])[0]))
                 elif path == "/api/git":
                     self.reply(200, gitops.info(engine.root))
+                elif path.startswith("/api/git/") and path.endswith("/diff") and path.count("/") == 4:
+                    self.reply(200, gitops.diff(engine.root, path.split("/")[3]))
                 elif path == "/api/agent-info":
                     self.reply(200, engine.agent_info())
                 elif path.startswith("/api/tasks/") and path.endswith("/download") and path.count("/") == 4:
@@ -335,6 +346,19 @@ def make_server(engine: Engine, port: int, token: str):
                     self.reply(200, engine.apply(path.split("/")[3], body.get("files")))
                 elif path == "/api/git/commit":
                     self.reply(200, gitops.commit(engine.root, body.get("message"), body.get("files"), engine.git_identity()))
+                elif path == "/api/files/upload" and isinstance(body, dict):
+                    rel = body.get("path")
+                    content = body.get("content")
+                    if not isinstance(rel, str) or not rel.strip() or len(rel) > 500 or rel.startswith("-"):
+                        raise ValueError("path must be a safe relative path")
+                    if not isinstance(content, str) or len(content) > 1_000_000:
+                        raise ValueError("content must be text under 1MB")
+                    target = (engine.root / rel).resolve()
+                    if engine.root.resolve() not in target.parents:
+                        raise ValueError("path must stay inside the workspace")
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(content, encoding="utf-8")
+                    self.reply(201, {"path": rel, "bytes": len(content.encode("utf-8"))})
                 elif path.startswith("/api/tasks/") and path.endswith("/messages") and path.count("/") == 4:
                     task = path.split("/")[3]
                     self.reply(202, {"id": task, "queued": engine.send(task, body)})
