@@ -26,8 +26,8 @@ class ChatGptLoginTests(unittest.TestCase):
         self.addCleanup(self.engine.close)
         self.server = make_server(self.engine, 0, "test-token")
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.addCleanup(self.server.shutdown)
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
 
     def call(self, method, path, body=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
@@ -45,31 +45,27 @@ class ChatGptLoginTests(unittest.TestCase):
         self.assertFalse(data["connected"])
         self.assertIsNone(data["account_email"])
 
-    def test_device_start_returns_codes(self):
-        status, body = self.call("POST", "/api/chatgpt/device/start")
-        data = json.loads(body)
-        self.assertEqual(status, 200)
-        self.assertIn("device_code", data)
-        self.assertIn("user_code", data)
-        self.assertIn("verification_uri", data)
-        self.assertGreater(data["expires_in"], 0)
+    def pending(self):
+        """Stand-in for the device flow that does not exist yet: a pending sign-in
+        that complete_login can finish, so the storage side stays tested."""
+        import time
+        self.engine.chatgpt._pending["code"] = {"expires_at": time.time() + 60}
+        return "code"
 
-    def test_device_poll_pending(self):
+    def test_device_start_says_not_available(self):
+        """No made-up user code: OpenAI never issued one, so showing it would mislead."""
         status, body = self.call("POST", "/api/chatgpt/device/start")
-        device_code = json.loads(body)["device_code"]
-        status, body = self.call("POST", "/api/chatgpt/device/poll", {"device_code": device_code})
         data = json.loads(body)
-        self.assertEqual(status, 200)
-        self.assertFalse(data["connected"])
+        self.assertEqual(status, 400)
+        self.assertIn("not available yet", data["error"])
+        self.assertNotIn("user_code", data)
 
     def test_device_poll_unknown_code_404(self):
         status, body = self.call("POST", "/api/chatgpt/device/poll", {"device_code": "unknown"})
         self.assertEqual(status, 404)
 
     def test_complete_login_and_status(self):
-        # Start device flow
-        status, body = self.call("POST", "/api/chatgpt/device/start")
-        device_code = json.loads(body)["device_code"]
+        device_code = self.pending()
         # Complete the login directly (simulating an OAuth callback)
         self.engine.chatgpt.complete_login(device_code, {
             "access_token": "test-token", "refresh_token": "test-refresh",
@@ -82,8 +78,7 @@ class ChatGptLoginTests(unittest.TestCase):
         self.assertIsNotNone(data["expires_at"])
 
     def test_logout(self):
-        status, body = self.call("POST", "/api/chatgpt/device/start")
-        device_code = json.loads(body)["device_code"]
+        device_code = self.pending()
         self.engine.chatgpt.complete_login(device_code, {
             "access_token": "t", "refresh_token": "r",
             "account_email": "u@e.com", "expires_in": 3600})
@@ -95,14 +90,8 @@ class ChatGptLoginTests(unittest.TestCase):
         status, body = self.call("GET", "/api/chatgpt/status")
         self.assertFalse(json.loads(body)["connected"])
 
-    def test_device_start_without_client_id_400(self):
-        self.engine.chatgpt.client_id = ""
-        status, body = self.call("POST", "/api/chatgpt/device/start")
-        self.assertEqual(status, 400)
-
     def test_credentials_persist_across_instances(self):
-        status, body = self.call("POST", "/api/chatgpt/device/start")
-        device_code = json.loads(body)["device_code"]
+        device_code = self.pending()
         self.engine.chatgpt.complete_login(device_code, {
             "access_token": "t", "refresh_token": "r",
             "account_email": "persist@test.com", "expires_in": 3600})

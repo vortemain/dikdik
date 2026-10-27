@@ -7,8 +7,11 @@ Implements the device authorization flow for ChatGPT subscriptions:
 3. GET /api/chatgpt/status — checks if a login is stored and valid
 4. POST /api/chatgpt/logout — clears the stored credentials
 
-Credentials are stored in the data directory as a JSON file. No real OpenAI
-endpoint is called in tests — the flow is stubbed with a configurable endpoint.
+Not available yet: Dikdik does not call OpenAI's device-authorization endpoints,
+so starting a sign-in answers with a plain "not available" message instead of
+showing a code OpenAI has never issued. Status and logout work, and
+complete_login is the seam a real flow will use. Before that flow lands, the
+stored tokens must move into the encrypted key store (they are plain JSON here).
 """
 
 from __future__ import annotations
@@ -25,6 +28,8 @@ DEVICE_URL = "https://auth.openai.com/device/code"
 TOKEN_URL = "https://auth.openai.com/oauth/token"
 POLL_INTERVAL = 5
 POLL_TIMEOUT = 900  # 15 minutes
+NOT_AVAILABLE = ("ChatGPT sign-in is not available yet: this build does not talk to OpenAI's "
+                 "device sign-in. Use a model profile with an OpenAI API key instead.")
 
 
 class ChatGptLogin:
@@ -59,18 +64,7 @@ class ChatGptLogin:
                 "expires_at": creds.get("expires_at")}
 
     def device_start(self) -> dict:
-        if not self.client_id:
-            raise ValueError("OPENAI_CLIENT_ID is not configured")
-        device_code = secrets.token_urlsafe(32)
-        user_code = "-".join(secrets.choice("ABCDEFGHJKMNPQRSTUVWXYZ23456789") for _ in range(8))
-        pending = {"device_code": device_code, "user_code": user_code,
-                   "verification_uri": f"{self.base_url}/device",
-                   "expires_at": time.time() + POLL_TIMEOUT, "interval": POLL_INTERVAL,
-                   "created": time.time()}
-        self._pending[device_code] = pending
-        return {"device_code": device_code, "user_code": user_code,
-                "verification_uri": pending["verification_uri"],
-                "expires_in": POLL_TIMEOUT, "interval": POLL_INTERVAL}
+        raise ValueError(NOT_AVAILABLE)
 
     def device_poll(self, body: dict) -> dict:
         if not isinstance(body, dict) or not isinstance(body.get("device_code"), str):

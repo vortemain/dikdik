@@ -23,8 +23,8 @@ class ServerApiTests(unittest.TestCase):
         self.addCleanup(self.engine.close)
         self.server = make_server(self.engine, 0, "test-token")
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.addCleanup(self.server.shutdown)
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
 
     def call(self, method, path, body=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
@@ -156,14 +156,19 @@ class ServerApiTests(unittest.TestCase):
         self.assertIn("app.py", names)
 
     def test_files_mkdir(self):
-        status, body = self.call("GET", "/api/files/mkdir?path=new-dir/sub")
+        status, body = self.call("POST", "/api/files/mkdir", {"path": "new-dir/sub"})
         data = json.loads(body)
         self.assertEqual(status, 201)
         self.assertTrue((self.root / "new-dir" / "sub").is_dir())
 
     def test_files_mkdir_escape_refused(self):
-        status, body = self.call("GET", "/api/files/mkdir?path=../../escape")
+        status, body = self.call("POST", "/api/files/mkdir", {"path": "../../escape"})
         self.assertEqual(status, 400)
+
+    def test_files_mkdir_is_not_a_get(self):
+        status, _ = self.call("GET", "/api/files/mkdir?path=by-get")
+        self.assertNotEqual(status, 201)
+        self.assertFalse((self.root / "by-get").exists())
 
     def test_files_home(self):
         status, body = self.call("GET", "/api/files/home")
@@ -226,6 +231,15 @@ class ServerApiTests(unittest.TestCase):
     def test_file_delete_missing(self):
         status, body = self.call("POST", "/api/files/delete", {"path": "absent.txt"})
         self.assertEqual(status, 404)
+
+    def test_file_writes_refuse_workspace_root_and_git(self):
+        (self.root / ".git").mkdir()
+        (self.root / ".git" / "config").write_text("[core]\n", encoding="utf-8")
+        for path in (".", "./", "sub/..", ".git", ".GIT/config", ".git/hooks/pre-commit"):
+            self.assertEqual(self.call("POST", "/api/files/delete", {"path": path})[0], 400, path)
+            self.assertEqual(self.call("POST", "/api/files/upload", {"path": path, "content": "x"})[0], 400, path)
+        self.assertTrue((self.root / "app.py").is_file())
+        self.assertEqual((self.root / ".git" / "config").read_text(encoding="utf-8"), "[core]\n")
 
     def test_file_delete_refuses_escape(self):
         status, body = self.call("POST", "/api/files/delete", {"path": "../../escape"})

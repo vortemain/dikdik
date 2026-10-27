@@ -4,26 +4,29 @@ A worktree is a separate working directory linked to the same Git
 repository. This lets each task work in isolation without disturbing
 the main workspace. Worktrees are created under the data directory
 and cleaned up when the task is deleted.
+
+Git runs through gitops, so repository hooks stay disabled: `git worktree add`
+would otherwise run a post-checkout hook on the host. Worktree ids arrive in URL
+paths, so they are checked against a strict pattern before any path is built;
+an id such as ".." must never resolve to the data directory itself.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
+import re
+import shutil
 from pathlib import Path
 
+from .gitops import GitError, _git, is_repo
 
-def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                          env=env, timeout=30, check=check, stdin=subprocess.DEVNULL)
+ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,99}")
 
 
-def is_repo(root: Path) -> bool:
-    try:
-        return _git(root, "rev-parse", "--is-inside-work-tree", check=False).returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+def _task_id(task_id) -> str:
+    if not isinstance(task_id, str) or not ID.fullmatch(task_id):
+        raise ValueError("Task id must be 1-64 letters, digits, dashes or underscores")
+    return task_id
 
 
 class WorktreeManager:
@@ -36,53 +39,55 @@ class WorktreeManager:
         """Create a worktree for a task. Returns the worktree path."""
         if not is_repo(self.root):
             raise ValueError("Workspace is not a Git repository; worktrees need Git")
-        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 64:
-            raise ValueError("Task id must be a 1-64 character string")
-        wt_path = self.worktrees_dir / task_id
+        wt_path = self.worktrees_dir / _task_id(task_id)
         if wt_path.exists():
             raise ValueError(f"Worktree for task {task_id} already exists")
-        # Create a new branch or use the current branch
-        if branch:
-            if not isinstance(branch, str) or len(branch) > 100 or branch.startswith("-"):
-                raise ValueError("Branch name must be a safe string")
-            current = _git(self.root, "branch", "--show-current").stdout.strip()
-            base = current or "main"
-            _git(self.root, "branch", branch, check=False)
-            _git(self.root, "worktree", "add", str(wt_path), branch, check=False)
+        if branch is not None:
+            if not isinstance(branch, str) or not BRANCH.fullmatch(branch) or ".." in branch or branch.endswith((".lock", "/")):
+                raise ValueError("Branch name must be a safe Git branch name")
+            args = ["worktree", "add", "-b", branch, str(wt_path), "HEAD"]
+            if _git(self.root, "branch", "--list", branch).strip():
+                args = ["worktree", "add", str(wt_path), branch]  # reuse an existing branch
         else:
-            _git(self.root, "worktree", "add", str(wt_path), "HEAD", check=False)
-        if not wt_path.is_dir():
-            raise ValueError("Could not create worktree")
+            args = ["worktree", "add", "--detach", str(wt_path), "HEAD"]
+        try:
+            _git(self.root, *args)
+        except GitError as exc:
+            raise ValueError(f"Could not create worktree: {exc}") from None
         return wt_path
 
     def remove(self, task_id: str) -> None:
         """Remove a task's worktree."""
-        wt_path = self.worktrees_dir / task_id
+        try:
+            wt_path = self.worktrees_dir / _task_id(task_id)
+        except ValueError:
+            raise KeyError(task_id) from None
         if not wt_path.is_dir():
             raise KeyError(task_id)
         try:
             _git(self.root, "worktree", "remove", "--force", str(wt_path), check=False)
-        except (OSError, subprocess.SubprocessError):
+        except GitError:
             pass
         if wt_path.exists():
-            import shutil
             shutil.rmtree(wt_path, ignore_errors=True)
+        try:
+            _git(self.root, "worktree", "prune", check=False)
+        except GitError:
+            pass
 
     def list(self) -> list[dict]:
-        """List all worktrees."""
+        """List the worktrees Dikdik created for tasks."""
         worktrees = []
         if not is_repo(self.root):
             return worktrees
         try:
-            result = _git(self.root, "worktree", "list", "--porcelain", check=False)
-            if result.returncode != 0:
-                return worktrees
-            for line in result.stdout.strip().splitlines():
-                if line.startswith("worktree "):
-                    path = line.removeprefix("worktree ")
-                    task_id = Path(path).name if path else ""
-                    if self.worktrees_dir in Path(path).parents or Path(path) == self.worktrees_dir:
-                        worktrees.append({"task": task_id, "path": path})
-        except (OSError, subprocess.SubprocessError):
-            pass
+            listing = _git(self.root, "worktree", "list", "--porcelain", check=False)
+        except GitError:
+            return worktrees
+        base = self.worktrees_dir.resolve()
+        for line in listing.splitlines():
+            if line.startswith("worktree "):
+                path = Path(line.removeprefix("worktree ")).resolve()
+                if path.parent == base:
+                    worktrees.append({"task": path.name, "path": str(path)})
         return worktrees

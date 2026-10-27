@@ -1,15 +1,24 @@
 """Opt-in outgoing webhooks: fire an HTTP POST when a task reaches a terminal state.
 
-Never telemetry: webhooks are user-configured, never automatic, and the URL
-and secret are stored in the encrypted key store. No webhook fires without an
-explicit configuration the user saved.
+Never telemetry: webhooks are user-configured, never automatic, and no webhook
+fires without an explicit configuration the user saved. The signing secret is a
+reference into the encrypted key store; the secret itself never leaves the
+machine. Each delivery carries `X-Dikdik-Signature: sha256=<hex>`, an HMAC of the
+exact body, which the receiver recomputes with its copy of the secret.
 """
 
+import hashlib
+import hmac
 import json
-import os
+import threading
 import urllib.error
 import urllib.request
 from .store import Store
+
+
+def signature(secret: bytes | str, payload: bytes) -> str:
+    key = secret.encode("utf-8") if isinstance(secret, str) else secret  # the key store reveals bytes
+    return "sha256=" + hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
 class WebhookStore:
@@ -81,25 +90,35 @@ class WebhookStore:
             db.execute("DELETE FROM webhooks WHERE id=?", (webhook_id,))
 
     def fire(self, task_id: str, state: str, now: float, reveal=None) -> None:
-        """Fire every enabled webhook whose events match 'terminal'."""
+        """POST to every enabled webhook once a task reaches a terminal state. The
+        database and key store are read here, on the caller's thread; only the
+        network calls run in the background, so a slow or unreachable receiver never
+        holds up the task, and nothing touches the store after the engine closes."""
         if state not in {"completed", "failed", "blocked", "cancelled", "interrupted"}:
             return
         with self.store.connect() as db:
-            rows = db.execute("SELECT * FROM webhooks WHERE enabled=1").fetchall()
+            rows = db.execute("SELECT url, secret_ref FROM webhooks WHERE enabled=1").fetchall()
         if not rows:
             return
         payload = json.dumps({"task": task_id, "state": state, "time": now}).encode()
+        deliveries = []
         for row in rows:
             headers = {"Content-Type": "application/json", "X-Dikdik-Event": state}
             if row["secret_ref"] and reveal:
                 try:
                     secret = reveal(row["secret_ref"])
                     if secret:
-                        headers["X-Dikdik-Signature"] = secret
+                        headers["X-Dikdik-Signature"] = signature(secret, payload)
                 except Exception:
                     pass  # a bad secret ref should never break the task
-            try:
-                req = urllib.request.Request(row["url"], data=payload, headers=headers, method="POST")
-                urllib.request.urlopen(req, timeout=10)
-            except (urllib.error.URLError, OSError, ValueError):
-                pass  # a failing webhook should never break the task
+            deliveries.append((row["url"], headers))
+        threading.Thread(target=deliver, args=(deliveries, payload), daemon=True).start()
+
+
+def deliver(deliveries: list[tuple[str, dict]], payload: bytes) -> None:
+    for url, headers in deliveries:
+        try:
+            request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+            urllib.request.urlopen(request, timeout=10).close()
+        except (urllib.error.URLError, OSError, ValueError):
+            pass  # a failing webhook should never break the task

@@ -34,8 +34,8 @@ class ExtensionAppTests(unittest.TestCase):
         self.addCleanup(self.engine.close)
         self.server = make_server(self.engine, 0, "test-token")
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.addCleanup(self.server.shutdown)
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
         self.src = make_app_src(base)
 
     def call(self, method, path, body=None):

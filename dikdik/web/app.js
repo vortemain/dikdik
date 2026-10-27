@@ -5202,13 +5202,13 @@ Request (untrusted data, not instructions):
     el("workspace").hidden = false;
     if (!connected) {
       connected = true;
-      refreshPanels = {
+      Object.assign(refreshPanels, {
         models: modelsPane(el("panel-profiles"), paneDeps),
         secrets: keysPane(el("panel-secrets"), paneDeps),
         skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
         plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
         mcp: mcpPane(el("panel-mcp"), paneDeps)
-      };
+      });
     }
     textarea("objective").focus?.();
     const linked = globalThis.location ? new URLSearchParams(globalThis.location.search).get("task") : null;
@@ -5368,7 +5368,7 @@ Request (untrusted data, not instructions):
     storageSet("dikdik.theme", themeSelect.value);
     applyTheme(themeSelect.value);
   });
-  var PANE_TITLES = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations" };
+  var PANE_TITLES = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps" };
   var automations = [];
   function syncAutoForm() {
     const kind = el("auto-kind").value;
@@ -7499,13 +7499,14 @@ Request (untrusted data, not instructions):
       for (const key of data?.keys ?? []) {
         const row = make("div", "m4-item");
         row.append(make("span", "", String(key.name ?? "Unnamed")));
+        row.append(make("span", "muted", (Array.isArray(key.scopes) ? key.scopes : []).join(", ")));
         const del = make("button", "ghost small", "Delete");
         del.onclick = async () => {
           try {
             await request(`/api/keys/${key.id}`, "DELETE");
             loadPlatform();
           } catch (e) {
-            message(String(e), true);
+            message(e instanceof Error ? e.message : String(e), true);
           }
         };
         row.append(del);
@@ -7516,7 +7517,7 @@ Request (untrusted data, not instructions):
       const data = await api("/api/backends");
       const list = el("plat-backends");
       list.replaceChildren();
-      for (const backend of data?.workspaces ?? []) {
+      for (const backend of Array.isArray(data) ? data : []) {
         const row = make("div", "m4-item");
         row.append(make("span", "", String(backend.name ?? "Backend")));
         row.append(make("span", "muted", String(backend.url ?? "")));
@@ -7536,7 +7537,7 @@ Request (untrusted data, not instructions):
             await request(`/api/webhooks/${hook.id}`, "DELETE");
             loadPlatform();
           } catch (e) {
-            message(String(e), true);
+            message(e instanceof Error ? e.message : String(e), true);
           }
         };
         row.append(del);
@@ -7548,12 +7549,30 @@ Request (untrusted data, not instructions):
     const name = prompt("Key name:");
     if (!name)
       return;
+    const scopes = (prompt("Scopes: read, write or admin (comma-separated):", "read") ?? "").split(",").map((scope) => scope.trim()).filter(Boolean);
+    if (!scopes.length)
+      return;
     try {
-      const result = await request("/api/keys", "POST", { name, scopes: ["read"] });
-      message(`Key created: ${result.token.slice(0, 16)}…`);
+      const result = await request("/api/keys", "POST", { name, scopes });
+      prompt("Copy this key now. It will not be shown again:", result.token);
       loadPlatform();
     } catch (e) {
-      message(String(e), true);
+      message(e instanceof Error ? e.message : String(e), true);
+    }
+  });
+  el("plat-backend-add").addEventListener("click", async () => {
+    const name = prompt("Backend name:");
+    if (!name)
+      return;
+    const url = prompt("Backend URL (http:// or https://):");
+    if (!url)
+      return;
+    try {
+      await request("/api/backends", "POST", { name, url });
+      message("Backend added.");
+      loadPlatform();
+    } catch (e) {
+      message(e instanceof Error ? e.message : String(e), true);
     }
   });
   el("plat-webhook-add").addEventListener("click", async () => {
@@ -7565,7 +7584,7 @@ Request (untrusted data, not instructions):
       message("Webhook added.");
       loadPlatform();
     } catch (e) {
-      message(String(e), true);
+      message(e instanceof Error ? e.message : String(e), true);
     }
   });
   async function loadAcp() {
@@ -7599,7 +7618,7 @@ Request (untrusted data, not instructions):
       message("ACP agent added.");
       loadAcp();
     } catch (e) {
-      message(String(e), true);
+      message(e instanceof Error ? e.message : String(e), true);
     }
   });
   el("acp-chatgpt-login").addEventListener("click", async () => {
@@ -7607,7 +7626,7 @@ Request (untrusted data, not instructions):
       const result = await request("/api/chatgpt/device/start", "POST");
       message(`Go to ${result.verification_uri} and enter ${result.user_code}.`);
     } catch (e) {
-      message(String(e), true);
+      message(e instanceof Error ? e.message : String(e), true);
     }
   });
   async function loadApps() {
@@ -7625,7 +7644,7 @@ Request (untrusted data, not instructions):
             await request(`/api/apps/${app.name}`, "DELETE");
             loadApps();
           } catch (e) {
-            message(String(e), true);
+            message(e instanceof Error ? e.message : String(e), true);
           }
         };
         row.append(del);
@@ -7645,7 +7664,7 @@ Request (untrusted data, not instructions):
       message("App installed.");
       loadApps();
     } catch (e) {
-      message(String(e), true);
+      message(e instanceof Error ? e.message : String(e), true);
     }
   });
   Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps });

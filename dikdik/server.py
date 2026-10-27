@@ -1,4 +1,4 @@
-﻿"""Loopback-only authenticated HTTP interface. No repository code runs on host."""
+"""Loopback-only authenticated HTTP interface. No repository code runs on host."""
 
 import argparse
 import errno as errno_module
@@ -9,6 +9,7 @@ import json
 import os
 import platform
 import secrets
+import select
 import shutil
 import socket
 import subprocess
@@ -21,7 +22,6 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .engine import ApplyConflict, Engine, TERMINAL
-from . import gitops
 from . import __version__ as DIKDIK_VERSION
 from .control import IMAGE_TYPES, workspace_image, workspace_images
 from . import gitops
@@ -68,6 +68,20 @@ def session_token(path: Path, rotate: bool = False) -> str:
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(value)
     return value
+
+
+def workspace_path(root: Path, rel, write: bool = False) -> Path:
+    """Resolve a user-supplied relative path inside the workspace. Writes may not
+    target the workspace root itself or anything under .git (hooks, config, objects)."""
+    if not isinstance(rel, str) or not rel.strip() or len(rel) > 500 or rel.startswith("-"):
+        raise ValueError("path must be a safe relative path")
+    base = root.resolve()
+    target = (base / rel).resolve()
+    if target != base and base not in target.parents:
+        raise ValueError("path must stay inside the workspace")
+    if write and (target == base or target.relative_to(base).parts[0].lower() == ".git"):
+        raise ValueError("path must name a file or folder inside the workspace, outside .git")
+    return target
 
 
 def make_server(engine: Engine, port: int, token: str):
@@ -152,17 +166,35 @@ def make_server(engine: Engine, port: int, token: str):
             # Scripts and tests send the bearer header; the browser holds an HttpOnly,
             # SameSite=Strict session cookie, so nobody has to paste a token.
             supplied = self.headers.get("Authorization", "") or ("Bearer " + self.session_cookie())
-            if hmac.compare_digest(supplied.encode("utf-8"), expected):
-                return True
-            # Check API keys for programmatic access
-            if supplied.startswith("Bearer dikdik-"):
-                key = api_keys.verify(supplied.removeprefix("Bearer "))
-                if key is not None:
-                    self.api_key = key  # available for scope checks
-                    return True
             self.api_key = None
-            self.refuse(401, {"error": "Not signed in. Open the link printed in the Dikdik terminal."})
-            return False
+            if not hmac.compare_digest(supplied.encode("utf-8"), expected):
+                key = api_keys.verify(supplied.removeprefix("Bearer ")) if supplied.startswith("Bearer dikdik-") else None
+                if key is None:
+                    self.refuse(401, {"error": "Not signed in. Open the link printed in the Dikdik terminal."})
+                    return False
+                self.api_key = key
+                if not self.key_allows(key, self.command, urlsplit(self.path).path):
+                    self.refuse(403, {"error": f"This API key's scopes ({', '.join(key['scopes'])}) do not allow this request"})
+                    return False
+            if server_state.dormant and urlsplit(self.path).path != "/api/init":
+                self.refuse(503, {"error": "Server is dormant; POST /api/init to initialize"})
+                return False
+            return True
+
+        @staticmethod
+        def key_allows(key, method, path):
+            """read: GET only; write: anything but key management and init; admin: everything.
+            The session token is the owner and is never scope-limited."""
+            scopes = set(key["scopes"])
+            if "admin" in scopes:
+                return True
+            if path == "/api/init" or path == "/api/keys" or path.startswith("/api/keys/"):
+                return False
+            return "write" in scopes or method == "GET"
+
+        def may_write(self):
+            key = getattr(self, "api_key", None)
+            return key is None or bool({"write", "admin"} & set(key["scopes"]))
 
         def start_session(self, body):
             supplied = body.get("token") if isinstance(body, dict) else None
@@ -209,41 +241,29 @@ def make_server(engine: Engine, port: int, token: str):
                 return
 
         def websocket(self, task, after):
-            """Upgrade to a WebSocket and stream task events bidirectionally."""
+            """Upgrade to a WebSocket that streams task events and accepts follow-ups.
+            authorized() has already checked origin, credentials and dormancy."""
             ws_key = self.headers.get("Sec-WebSocket-Key", "")
-            if not ws_key or len(ws_key) < 16:
-                self.reply(400, {"error": "Missing Sec-WebSocket-Key"})
+            if len(ws_key) < 16 or "websocket" not in self.headers.get("Upgrade", "").lower():
+                self.reply(400, {"error": "Missing WebSocket upgrade headers"})
                 return
-            # Verify auth: the session token in the Authorization header or cookie.
-            supplied = self.headers.get("Authorization", "") or ("Bearer " + self.session_cookie())
-            if not hmac.compare_digest(supplied.encode("utf-8"), expected):
-                # Also check API keys
-                if supplied.startswith("Bearer dikdik-"):
-                    key = api_keys.verify(supplied.removeprefix("Bearer "))
-                    if key is None:
-                        self.reply(401, {"error": "Not signed in"})
-                        return
-                else:
-                    self.reply(401, {"error": "Not signed in"})
-                    return
-            # Verify the task exists
             try:
                 engine.store.get(task)
             except KeyError:
                 self.reply(404, {"error": "Task not found"})
                 return
             from .websocket import accept_key, read_frame, send_text, send_close, send_frame, OP_TEXT
-            accept = accept_key(ws_key)
             self.send_response(101)
             self.send_header("Upgrade", "websocket")
             self.send_header("Connection", "Upgrade")
-            self.send_header("Sec-WebSocket-Accept", accept)
+            self.send_header("Sec-WebSocket-Accept", accept_key(ws_key))
             self.end_headers()
+            self.wfile.flush()
             self.close_connection = True
             sock = self.connection
-            last = after
-            deadline = time.monotonic() + 900
-            quiet = time.monotonic()
+            sock.settimeout(10)  # bounds a frame the client started but has not finished
+            last, live, ended = after, None, False
+            quiet, deadline = time.monotonic(), time.monotonic() + 900
             try:
                 while time.monotonic() < deadline:
                     state, events = engine.store.events_after(task, last)
@@ -251,83 +271,42 @@ def make_server(engine: Engine, port: int, token: str):
                         last = event["seq"]
                         send_text(sock, json.dumps({"type": "event", "seq": last, "data": event}))
                     text = engine.live.get(task)
-                    if text is not None:
-                        send_text(sock, json.dumps({"type": "delta", "text": text[:16384]}))
-                    if not events and state in TERMINAL and not engine.busy(task) and not engine.bash.busy(task) and not engine.browser.busy(task):
-                        send_text(sock, json.dumps({"type": "end", "state": state}))
-                        # Wait for the client to close or send a message
-                        try:
-                            sock.settimeout(2.0)
-                            frame = read_frame(sock)
-                            if frame is None:
-                                break
-                        except (OSError, socket.timeout):
-                            break
-                        finally:
-                            sock.settimeout(None)
-                        continue
-                    # Check for incoming messages (with a short timeout)
-                    try:
-                        sock.settimeout(0.5)
-                        frame = read_frame(sock)
-                        if frame is not None and frame[0] == OP_TEXT:
-                            try:
-                                msg = json.loads(frame[1].decode("utf-8"))
-                                if isinstance(msg, dict) and msg.get("type") == "message":
-                                    clean = {"objective": str(msg.get("objective", "")),
-                                             "mode": msg.get("mode", "offline"),
-                                             "verification": msg.get("verification", "syntax"),
-                                             "approve_external": False,
-                                             "edits": msg.get("edits", [{"path": "app.py", "before": "1", "after": "2"}])}
-                                    engine.send(task, clean)
-                                    send_text(sock, json.dumps({"type": "queued"}))
-                            except (ValueError, UnicodeDecodeError) as exc:
-                                send_text(sock, json.dumps({"type": "error", "error": str(exc)}))
-                    except (OSError, socket.timeout):
-                        pass
-                    finally:
-                        sock.settimeout(None)
-                    if time.monotonic() - quiet > 15:
-                        send_frame(sock, 0x9, b"")  # ping
-                        quiet = time.monotonic()
-                    time.sleep(0.2)
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
-                pass
-            finally:
-                try:
-                    send_close(sock)
-                except Exception:
-                    pass
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
-            self.end_headers()
-            self.close_connection = True
-            last, live, quiet, deadline = after, None, time.monotonic(), time.monotonic() + 900
-            try:
-                while time.monotonic() < deadline:
-                    state, events = engine.store.events_after(task, last)
-                    out = []
-                    for event in events:
-                        last = event["seq"]
-                        out.append(f"id: {last}\nevent: task\ndata: {json.dumps(event)}\n\n")
-                    text = engine.live.get(task)
                     if text != live:
                         live = text
-                        out.append(f"event: delta\ndata: {json.dumps({'text': text or ''})}\n\n")
-                    if not events and state in TERMINAL and not engine.busy(task) and not engine.bash.busy(task) and not engine.browser.busy(task):
-                        out.append(f"event: end\ndata: {json.dumps({'state': state})}\n\n")
-                    if not out and time.monotonic() - quiet > 15:
-                        out.append(": keep-alive\n\n")
-                    if out:
-                        self.wfile.write("".join(out).encode())
-                        self.wfile.flush()
+                        send_text(sock, json.dumps({"type": "delta", "text": (text or "")[:16384]}))
+                    idle = (not events and state in TERMINAL and not engine.busy(task)
+                            and not engine.bash.busy(task) and not engine.browser.busy(task))
+                    if idle and not ended:
+                        send_text(sock, json.dumps({"type": "end", "state": state}))
+                    ended = idle
+                    if select.select([sock], [], [], 0.5)[0]:
+                        frame = read_frame(sock)
+                        if frame is None:
+                            break  # the client closed the socket
+                        if frame[0] == OP_TEXT:
+                            self.websocket_message(task, frame[1], sock, send_text)
+                            ended = False
+                    if time.monotonic() - quiet > 15:
+                        send_frame(sock, 0x9, b"")  # ping keeps proxies from closing an idle socket
                         quiet = time.monotonic()
-                        if out[-1].startswith("event: end"):
-                            return
-                    time.sleep(0.2)
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
-                return
+            except (OSError, ValueError):
+                pass
+            finally:
+                send_close(sock)
+
+        def websocket_message(self, task, raw, sock, send_text):
+            """A follow-up sent over the socket goes through the same validation as
+            POST /api/tasks/<id>/messages; its approvals are whatever the client sent."""
+            try:
+                message = json.loads(raw.decode("utf-8"))
+                if not isinstance(message, dict) or message.get("type") != "message":
+                    raise ValueError("Send {\"type\": \"message\", \"objective\": ...}")
+                if not self.may_write():
+                    raise ValueError("This API key is read-only")
+                engine.send(task, {key: value for key, value in message.items() if key != "type"})
+                send_text(sock, json.dumps({"type": "queued"}))
+            except (ValueError, TypeError, KeyError, UnicodeDecodeError) as exc:
+                send_text(sock, json.dumps({"type": "error", "error": str(exc)}))
 
         def oauth_callback(self):
             """The sign-in provider redirects the browser here. The session cookie is
@@ -415,9 +394,6 @@ def make_server(engine: Engine, port: int, token: str):
                 self.reply(200, openapi_document())
                 return
             if not self.authorized():
-                return
-            if server_state.dormant:
-                self.reply(503, {"error": "Server is dormant; POST /api/init to initialize"})
                 return
             answer = gateway.route("GET", path, {}, dict(self.headers))
             if answer is not None:
@@ -555,11 +531,7 @@ def make_server(engine: Engine, port: int, token: str):
                 elif path == "/api/files/download":
                     query = parse_qs(urlsplit(self.path).query)
                     rel = query.get("path", [""])[0]
-                    if not isinstance(rel, str) or not rel.strip() or len(rel) > 500 or rel.startswith("-"):
-                        raise ValueError("path must be a safe relative path")
-                    target = (engine.root / rel).resolve()
-                    if engine.root.resolve() not in target.parents and target != engine.root.resolve():
-                        raise ValueError("path must stay inside the workspace")
+                    target = workspace_path(engine.root, rel)
                     if not target.is_file():
                         raise KeyError(rel)
                     raw = target.read_bytes()
@@ -567,11 +539,7 @@ def make_server(engine: Engine, port: int, token: str):
                 elif path == "/api/files/list":
                     query = parse_qs(urlsplit(self.path).query)
                     rel = query.get("path", [""])[0] or "."
-                    if not isinstance(rel, str) or len(rel) > 500 or rel.startswith("-"):
-                        raise ValueError("path must be a safe relative path")
-                    target = (engine.root / rel).resolve()
-                    if engine.root.resolve() not in target.parents and target != engine.root.resolve():
-                        raise ValueError("path must stay inside the workspace")
+                    target = workspace_path(engine.root, rel)
                     if not target.is_dir():
                         raise KeyError(rel)
                     entries = []
@@ -581,16 +549,6 @@ def make_server(engine: Engine, port: int, token: str):
                         entries.append({"name": child.name, "type": "dir" if child.is_dir() else "file",
                                          "size": child.stat().st_size if child.is_file() else None})
                     self.reply(200, {"path": rel, "entries": entries})
-                elif path == "/api/files/mkdir":
-                    query = parse_qs(urlsplit(self.path).query)
-                    rel = query.get("path", [""])[0]
-                    if not isinstance(rel, str) or not rel.strip() or len(rel) > 500 or rel.startswith("-"):
-                        raise ValueError("path must be a safe relative path")
-                    target = (engine.root / rel).resolve()
-                    if engine.root.resolve() not in target.parents:
-                        raise ValueError("path must stay inside the workspace")
-                    target.mkdir(parents=True, exist_ok=True)
-                    self.reply(201, {"path": rel, "created": True})
                 elif path == "/api/files/home":
                     import os as _os
                     self.reply(200, {"home": str(Path(_os.path.expanduser("~"))),
@@ -599,11 +557,7 @@ def make_server(engine: Engine, port: int, token: str):
                     import io as _io, tarfile, gzip
                     query = parse_qs(urlsplit(self.path).query)
                     rel = query.get("path", [""])[0] or "."
-                    if not isinstance(rel, str) or len(rel) > 500 or rel.startswith("-"):
-                        raise ValueError("path must be a safe relative path")
-                    target = (engine.root / rel).resolve()
-                    if engine.root.resolve() not in target.parents and target != engine.root.resolve():
-                        raise ValueError("path must stay inside the workspace")
+                    target = workspace_path(engine.root, rel)
                     if not target.is_dir():
                         raise KeyError(rel)
                     buffer = _io.BytesIO()
@@ -782,24 +736,21 @@ def make_server(engine: Engine, port: int, token: str):
                     activity["last"] = time.monotonic()
                     rel = body.get("path")
                     content = body.get("content")
-                    if not isinstance(rel, str) or not rel.strip() or len(rel) > 500 or rel.startswith("-"):
-                        raise ValueError("path must be a safe relative path")
+                    target = workspace_path(engine.root, rel, write=True)
                     if not isinstance(content, str) or len(content) > 1_000_000:
                         raise ValueError("content must be text under 1MB")
-                    target = (engine.root / rel).resolve()
-                    if engine.root.resolve() not in target.parents:
-                        raise ValueError("path must stay inside the workspace")
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(content, encoding="utf-8")
                     self.reply(201, {"path": rel, "bytes": len(content.encode("utf-8"))})
+                elif path == "/api/files/mkdir" and isinstance(body, dict):
+                    activity["last"] = time.monotonic()
+                    rel = body.get("path")
+                    workspace_path(engine.root, rel, write=True).mkdir(parents=True, exist_ok=True)
+                    self.reply(201, {"path": rel, "created": True})
                 elif path == "/api/files/delete" and isinstance(body, dict):
                     activity["last"] = time.monotonic()
                     rel = body.get("path")
-                    if not isinstance(rel, str) or not rel.strip() or len(rel) > 500 or rel.startswith("-"):
-                        raise ValueError("path must be a safe relative path")
-                    target = (engine.root / rel).resolve()
-                    if engine.root.resolve() not in target.parents and target != engine.root.resolve():
-                        raise ValueError("path must stay inside the workspace")
+                    target = workspace_path(engine.root, rel, write=True)
                     if not target.exists():
                         raise KeyError(rel)
                     if target.is_dir():
@@ -848,7 +799,7 @@ def make_server(engine: Engine, port: int, token: str):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 0 < length <= 1024:
-                    raise ValueError("Request must contain 1â€“1024 bytes")
+                    raise ValueError("Request must contain 1–1024 bytes")
                 self.start_session(json.loads(self.rfile.read(length)))
             except (ValueError, TypeError, TimeoutError) as exc:
                 self.reply(400, {"error": str(exc)})
@@ -949,7 +900,7 @@ def early_exits(parser: argparse.ArgumentParser) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Dikdik â€” Small name. Serious intelligence.",
+    parser = argparse.ArgumentParser(description="Dikdik — Small name. Serious intelligence.",
                                      prog="python -m dikdik.server")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
     parser.add_argument("--info", action="store_true", help="Print runtime information as JSON and exit")

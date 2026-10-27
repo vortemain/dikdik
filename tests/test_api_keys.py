@@ -23,8 +23,8 @@ class ApiKeyTests(unittest.TestCase):
         self.addCleanup(self.engine.close)
         self.server = make_server(self.engine, 0, "test-token")
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.addCleanup(self.server.shutdown)
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
 
     def call(self, method, path, body=None, token="test-token"):
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
@@ -101,6 +101,28 @@ class ApiKeyTests(unittest.TestCase):
         # New token works
         status, body = self.call("GET", "/api/tasks", token=new_token)
         self.assertEqual(status, 200)
+
+    def key(self, *scopes):
+        return json.loads(self.call("POST", "/api/keys", {"name": "k", "scopes": list(scopes)})[1])["token"]
+
+    def test_read_key_may_only_read(self):
+        token = self.key("read")
+        self.assertEqual(self.call("GET", "/api/tasks", token=token)[0], 200)
+        self.assertEqual(self.call("PATCH", "/api/settings/app", {"sounds": True}, token=token)[0], 403)
+        self.assertEqual(self.call("POST", "/api/files/upload", {"path": "new.txt", "content": "x"}, token=token)[0], 403)
+        self.assertFalse((self.root / "new.txt").exists())
+
+    def test_only_admin_keys_manage_keys(self):
+        for scopes in (["read"], ["write"], ["read", "write"]):
+            token = self.key(*scopes)
+            self.assertEqual(self.call("GET", "/api/keys", token=token)[0], 403, scopes)
+            self.assertEqual(self.call("POST", "/api/keys", {"name": "x", "scopes": ["admin"]}, token=token)[0], 403, scopes)
+        admin = self.key("admin")
+        self.assertEqual(self.call("POST", "/api/keys", {"name": "x", "scopes": ["read"]}, token=admin)[0], 201)
+
+    def test_write_key_may_change_things(self):
+        token = self.key("write")
+        self.assertEqual(self.call("PATCH", "/api/settings/app", {"sounds": True}, token=token)[0], 200)
 
     def test_rotate_unknown_key_404(self):
         status, body = self.call("POST", "/api/keys/nonexistent/rotate")

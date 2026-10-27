@@ -1646,13 +1646,13 @@ async function connect(): Promise<void> {
   el("workspace").hidden = false;
   if (!connected) {
     connected = true;
-    refreshPanels = {
+    Object.assign(refreshPanels, {  // keeps the loaders registered at start-up (Platform, ACP, Apps)
       models: modelsPane(el("panel-profiles"), paneDeps),
       secrets: keysPane(el("panel-secrets"), paneDeps),
       skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
       plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
       mcp: mcpPane(el("panel-mcp"), paneDeps),
-    };
+    });
   }
   textarea("objective").focus?.();
   const linked = globalThis.location ? new URLSearchParams(globalThis.location.search).get("task") : null;
@@ -1762,7 +1762,7 @@ themeSelect.addEventListener("change", () => {
   applyTheme(themeSelect.value);
 });
 
-const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations" };
+const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps" };
 
 // --- automations ----------------------------------------------------------
 let automations: Automation[] = [];
@@ -3294,16 +3294,17 @@ async function loadPlatform(): Promise<void> {
     const list = el("plat-keys"); list.replaceChildren();
     for (const key of data?.keys ?? []) {
       const row = make("div", "m4-item"); row.append(make("span", "", String(key.name ?? "Unnamed")));
+      row.append(make("span", "muted", (Array.isArray(key.scopes) ? key.scopes : []).join(", ")));
       const del = make("button", "ghost small", "Delete"); del.onclick = async () => {
         try { await request(`/api/keys/${key.id}`, "DELETE"); void loadPlatform(); }
-        catch (e) { message(String(e), true); } };
+        catch (e) { message(e instanceof Error ? e.message : String(e), true); } };
       row.append(del); list.append(row);
     }
   } catch { void 0; }
   try {
-    const data = await api<{ workspaces: Array<Record<string, unknown>> } | null>("/api/backends");
+    const data = await api<Array<Record<string, unknown>> | null>("/api/backends");
     const list = el("plat-backends"); list.replaceChildren();
-    for (const backend of data?.workspaces ?? []) {
+    for (const backend of Array.isArray(data) ? data : []) {
       const row = make("div", "m4-item"); row.append(make("span", "", String(backend.name ?? "Backend")));
       row.append(make("span", "muted", String(backend.url ?? ""))); list.append(row);
     }
@@ -3315,7 +3316,7 @@ async function loadPlatform(): Promise<void> {
       const row = make("div", "m4-item"); row.append(make("span", "", String(hook.url ?? "")));
       const del = make("button", "ghost small", "Delete"); del.onclick = async () => {
         try { await request(`/api/webhooks/${hook.id}`, "DELETE"); void loadPlatform(); }
-        catch (e) { message(String(e), true); } };
+        catch (e) { message(e instanceof Error ? e.message : String(e), true); } };
       row.append(del); list.append(row);
     }
   } catch { void 0; }
@@ -3323,14 +3324,26 @@ async function loadPlatform(): Promise<void> {
 el("plat-key-add").addEventListener("click", async () => {
   const name = prompt("Key name:");
   if (!name) return;
-  try { const result = await request<{ token: string }>("/api/keys", "POST", { name, scopes: ["read"] });
-    message(`Key created: ${result.token.slice(0, 16)}…`); void loadPlatform(); }
-  catch (e) { message(String(e), true); } });
+  const scopes = (prompt("Scopes: read, write or admin (comma-separated):", "read") ?? "")
+    .split(",").map((scope) => scope.trim()).filter(Boolean);
+  if (!scopes.length) return;
+  try { const result = await request<{ token: string }>("/api/keys", "POST", { name, scopes });
+    // The server keeps only a hash, so this is the one chance to copy the whole key.
+    prompt("Copy this key now. It will not be shown again:", result.token);
+    void loadPlatform(); }
+  catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
+el("plat-backend-add").addEventListener("click", async () => {
+  const name = prompt("Backend name:");
+  if (!name) return;
+  const url = prompt("Backend URL (http:// or https://):");
+  if (!url) return;
+  try { await request("/api/backends", "POST", { name, url }); message("Backend added."); void loadPlatform(); }
+  catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
 el("plat-webhook-add").addEventListener("click", async () => {
   const url = prompt("Webhook URL:");
   if (!url) return;
   try { await request("/api/webhooks", "POST", { url }); message("Webhook added."); void loadPlatform(); }
-  catch (e) { message(String(e), true); } });
+  catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
 
 // --- ACP agents pane -------------------------------------------------------
 async function loadAcp(): Promise<void> {
@@ -3353,11 +3366,11 @@ el("acp-add").addEventListener("click", async () => {
   const command = prompt("Command (e.g. claude):");
   if (!command) return;
   try { await request("/api/acp-agents", "POST", { name, command }); message("ACP agent added."); void loadAcp(); }
-  catch (e) { message(String(e), true); } });
+  catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
 el("acp-chatgpt-login").addEventListener("click", async () => {
   try { const result = await request<{ user_code: string; verification_uri: string }>("/api/chatgpt/device/start", "POST");
     message(`Go to ${result.verification_uri} and enter ${result.user_code}.`); }
-  catch (e) { message(String(e), true); } });
+  catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
 
 // --- Apps pane -------------------------------------------------------------
 async function loadApps(): Promise<void> {
@@ -3369,7 +3382,7 @@ async function loadApps(): Promise<void> {
       row.append(make("span", "muted", String(app.version ?? "")));
       const del = make("button", "ghost small", "Uninstall"); del.onclick = async () => {
         try { await request(`/api/apps/${app.name}`, "DELETE"); void loadApps(); }
-        catch (e) { message(String(e), true); } };
+        catch (e) { message(e instanceof Error ? e.message : String(e), true); } };
       row.append(del); list.append(row);
     }
   } catch { void 0; }
@@ -3380,7 +3393,7 @@ el("app-add").addEventListener("click", async () => {
   const source = prompt("Local directory path:");
   if (!source) return;
   try { await request("/api/apps", "POST", { name, source }); message("App installed."); void loadApps(); }
-  catch (e) { message(String(e), true); } });
+  catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
 
 // Register the panes for lazy loading on first open.
 Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps });

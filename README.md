@@ -94,9 +94,15 @@ autonomous engineering platform.
   `/v1/responses`): one ordinary Dikdik agent task per request, always keyed
   with the session bearer, consent explicit per request, no streaming yet.
 
-**Not yet:** extension apps,
-WebSocket and TypeScript clients, a desktop app, and any recorded run against a
-live model provider or Docker engine. See [the parity audit](docs/PARITY.md).
+**Partly built:** API keys with read/write/admin scopes, webhooks signed with
+HMAC-SHA256, a WebSocket task socket, a TypeScript client, Git worktrees per task,
+and local extension apps (install and uninstall; not yet opened from the UI).
+Remote backends and ACP agents (Claude Code, Codex, Gemini CLI, OpenCode) can be
+saved but not yet used. ChatGPT sign-in is not available yet.
+
+**Not yet:** a desktop app, and any recorded run against a live model provider or
+Docker engine. See [the parity audit](docs/PARITY.md) and
+[the verification record](docs/VERIFICATION.md).
 
 ## Run without installation
 

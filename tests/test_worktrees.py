@@ -57,6 +57,23 @@ class WorktreeTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.wm.remove("nonexistent")
 
+    def test_ids_cannot_leave_the_worktrees_folder(self):
+        canary = self.data / "canary"
+        canary.write_text("keep", encoding="utf-8")
+        for bad in ("..", ".", "../x", "a/b", "", "-x"):
+            with self.assertRaises(KeyError):
+                self.wm.remove(bad)
+            with self.assertRaises(ValueError):
+                self.wm.create(bad)
+        self.assertTrue(canary.is_file())
+
+    def test_repository_hooks_do_not_run(self):
+        hooks = self.root / ".git" / "hooks"
+        marker = Path(self.temp.name) / "hook-ran"
+        (hooks / "post-checkout").write_text(f"#!/bin/sh\necho ran > '{marker.as_posix()}'\n", encoding="utf-8")
+        self.wm.create("task-6")
+        self.assertFalse(marker.exists())
+
     def test_not_a_repo_raises(self):
         non_repo = Path(self.temp.name) / "not-a-repo"
         non_repo.mkdir()

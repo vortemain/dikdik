@@ -103,11 +103,15 @@ OPENAPI = {
         "/api/git/{commit}/diff": {"get": {"summary": "Git diff for a commit",
             "parameters": [{"name": "commit", "in": "path", "required": True, "schema": {"type": "string"}}],
             "responses": {"200": {"description": "Diff"}, "400": {"description": "No such commit"}}}},
-        "/api/files/upload": {"post": {"summary": "Upload a text file to the workspace",
+        "/api/files/mkdir": {"post": {"summary": "Create a folder in the workspace (not the root, not under .git)",
+            "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
+                "path": {"type": "string"}}}}}},
+            "responses": {"201": {"description": "Created"}, "400": {"description": "Validation error"}}}},
+        "/api/files/upload": {"post": {"summary": "Upload a text file to the workspace (not under .git)",
             "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
                 "path": {"type": "string"}, "content": {"type": "string"}}}}}},
             "responses": {"201": {"description": "Uploaded"}, "400": {"description": "Validation error"}}}},
-        "/api/files/delete": {"post": {"summary": "Delete a file or directory",
+        "/api/files/delete": {"post": {"summary": "Delete a file or directory (never the workspace root or .git)",
             "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
                 "path": {"type": "string"}}}}}},
             "responses": {"200": {"description": "Deleted"}, "404": {"description": "Not found"}, "400": {"description": "Validation error"}}}},
@@ -224,8 +228,10 @@ OPENAPI = {
             "responses": {"200": {"description": "Removed"}, "404": {"description": "Not found"}}}},
         "/v1/models": {"get": {"summary": "List model profiles (OpenAI-compatible)", "responses": {"200": {"description": "Model list"}}}},
         "/api/keys": {
-            "get": {"summary": "List API keys (tokens never returned)", "responses": {"200": {"description": "Key list"}}},
-            "post": {"summary": "Create an API key",
+            "get": {"summary": "List API keys (tokens never returned). Key management needs the session token or an admin key; "
+                               "a read key may only GET, a write key may do anything else",
+                    "responses": {"200": {"description": "Key list"}, "403": {"description": "Key scope too narrow"}}},
+            "post": {"summary": "Create an API key; the token is returned once",
                 "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
                     "name": {"type": "string"}, "scopes": {"type": "array", "items": {"type": "string", "enum": ["read", "write", "admin"]}}}}}}},
                 "responses": {"201": {"description": "Created with token"}, "400": {"description": "Validation error"}}}},

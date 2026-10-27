@@ -1,5 +1,68 @@
 # Verification record — updated 2026-10-27
 
+## Full verification of the Phase D–F work (latest)
+
+A review of the 37 commits from `85c13e4` to `77c9335` against the rules in
+`docs/NEXT_PHASES_PROMPT.md` §3, with each suspected defect reproduced against a
+real loopback server in throwaway directories before it was fixed.
+
+- Before fixes: Python **505 passed, 3 skipped**; Bun **105 / 490 assertions**;
+  Rust **15**; strict TypeScript check passed; the committed `app.js` matched a
+  fresh build. The suites were green, but none of them covered the defects below.
+- After fixes: Python **511 passed, 3 skipped** (514 run); Bun **105 / 490 assertions**; Rust **15**;
+  TypeScript check and build passed. Each new regression test was run against
+  the old code first and failed there (9 server tests, 1 worktree hook test).
+  Deterministic syntax-only evaluation **4/4** on three consecutive runs.
+
+Defects found and fixed:
+
+1. **`DELETE /api/worktrees/..` deleted the whole data directory** (database,
+   encrypted keys). Worktree ids are now checked against a strict pattern.
+2. **`POST /api/files/delete` with `"."` deleted the whole workspace.** Upload,
+   delete and mkdir now share one path check that refuses the workspace root and
+   anything under `.git`; `mkdir` moved from GET to POST (a GET never writes).
+3. **API key scopes were stored but never enforced**: a `read` key could create an
+   `admin` key, change settings and write files. Now `read` = GET only, `write` =
+   everything except key management and init, `admin` = everything.
+4. **Dormant mode only blocked GET**; POST/PATCH/DELETE all worked before
+   `/api/init`. The check moved into authentication for every method.
+5. **The WebSocket handler wrote a whole SSE stream onto the upgraded socket after
+   its close frame**, and an offline follow-up without edits was given a made-up
+   `app.py` `1→2` edit. Follow-ups now go through the same validation as
+   `POST /api/tasks/<id>/messages`; read-only keys cannot send them.
+6. **`git worktree add` ran repository hooks** (post-checkout) on the host. It now
+   uses the hook-free gitops runner.
+7. **Webhooks sent the stored secret itself** in `X-Dikdik-Signature`. They now send
+   `sha256=<HMAC of the body>` and deliver on a background thread.
+8. **ChatGPT sign-in showed a locally invented code** (`H-A-C-X-…`) that OpenAI never
+   issued, and polling could never succeed. Starting it now answers plainly that it
+   is not available yet.
+9. **The Platform, ACP agents and Apps settings pages never loaded**: `connect()`
+   replaced the loader table after start-up. Their titles were missing (so
+   `#settings/platform` fell back to General), Add backend had no handler, the
+   backends list read a field the server does not send, and a new API key was cut
+   to 16 characters so it could never be used. All fixed; rows got a style.
+10. `server.py` had gained a UTF-8 BOM, two mojibake strings (`1â€“1024`,
+    `Dikdik â€”`) and a duplicate import; eight new test files closed the server
+    before shutting it down, printing `WinError 10038` tracebacks.
+
+Real browser (local server, scratch workspace and data, no model, no Docker):
+Platform showed health and VS Code status; Create key returned the full
+`dikdik-…` key once, and that key then read tasks (200), changed settings (200,
+read+write) and was refused key management (403); Add backend and Add webhook
+listed their rows; ChatGPT login showed the not-available message; Apps installed
+and uninstalled a local app. 1440-wide light and 375-wide dark layouts had no
+horizontal overflow; the only console error was the deliberate ChatGPT 400.
+
+Still not built or not verified (unchanged by this pass): ACP agents can be saved
+but not launched or used as the conversation agent; a backend's health check
+records success without contacting it and the UI cannot switch to a backend;
+installed apps cannot be enabled or opened from the UI and their bundle is served
+under the main page's CSP rather than an isolated origin; VS Code only reports
+whether `code-server` is on PATH; ChatGPT tokens, once a real flow exists, must
+move from plain JSON into the encrypted key store. No live provider, Docker
+engine or OpenAI account was used.
+
 ## Phase A — Composer resize (latest)
 
 - Full checks: **269 Python passes / 2 explicit live-runtime skips** (271 total),
@@ -286,10 +349,6 @@ fair autonomous-capability comparison or proof of superiority.
 - Not checked against a hosted remote with stored credentials; pushes to a bare
   local remote were verified by the test suite only.
 
-## Runtime variants verification
-
-## OpenAI-compatible gateway verification
-
 ## Health, readiness and server-info verification
 
 - `tests/test_health.py` passes 6 tests: `/alive` and `/health` return
@@ -299,7 +358,7 @@ fair autonomous-capability comparison or proof of superiority.
   `/openapi.json` and `/api/openapi` serve a 3.1 OpenAPI document with the
   conversation, gateway, health and settings routes.
 
-## OpenAI-compatible gateway verification (details)
+## OpenAI-compatible gateway verification
 
 - `tests/test_gateway.py` passes 7 tests against a real loopback server with a
   stubbed model transport: `/v1/models` lists saved profiles (empty with none)
@@ -313,7 +372,7 @@ fair autonomous-capability comparison or proof of superiority.
 - The gateway is loopback-only and always keyed with the server session bearer.
   No live provider was called.
 
-## Runtime variants verification (details)
+## Runtime variants verification
 
 - `tests/test_runtime_variants.py` passes 7 tests against real subprocesses:
   `--version`/`-v` print `Dikdik <version>` and exit 0; `--info` prints runtime

@@ -24,8 +24,8 @@ class WebhookTests(unittest.TestCase):
         self.addCleanup(self.engine.close)
         self.server = make_server(self.engine, 0, "test-token")
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.addCleanup(self.server.shutdown)
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
 
     def call(self, method, path, body=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
@@ -67,7 +67,8 @@ class WebhookTests(unittest.TestCase):
             def log_message(self, *args): pass
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
-                received.append({"body": self.rfile.read(length), "event": self.headers.get("X-Dikdik-Event")})
+                received.append({"body": self.rfile.read(length), "event": self.headers.get("X-Dikdik-Event"),
+                                 "signature": self.headers.get("X-Dikdik-Signature")})
                 self.send_response(200)
                 self.end_headers()
 
@@ -128,6 +129,37 @@ class WebhookTests(unittest.TestCase):
         import time
         time.sleep(2)
         self.assertFalse(received)  # disabled webhook did not fire
+
+
+    def test_signature_is_an_hmac_not_the_secret(self):
+        import hashlib, hmac, time
+        received = []
+
+        class CatchHandler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                received.append((body, self.headers.get("X-Dikdik-Signature")))
+                self.send_response(200)
+                self.end_headers()
+
+        catch = HTTPServer(("127.0.0.1", 0), CatchHandler)
+        threading.Thread(target=catch.serve_forever, daemon=True).start()
+        self.addCleanup(catch.server_close)
+        self.addCleanup(catch.shutdown)
+        self.assertEqual(self.call("POST", "/api/secrets", {"ref": "hook-secret", "plaintext": "s3cret-value"})[0], 201)
+        self.call("POST", "/api/webhooks", {"url": f"http://127.0.0.1:{catch.server_port}/hook", "secret_ref": "hook-secret"})
+        self.call("POST", "/api/tasks", {
+            "objective": "Change x", "mode": "offline", "verification": "syntax",
+            "approve_external": False, "approve_execution": False,
+            "edits": [{"path": "app.py", "before": "1", "after": "2"}]})
+        for _ in range(30):
+            if received:
+                break
+            time.sleep(0.5)
+        body, sent = received[0]
+        self.assertNotIn("s3cret-value", sent)
+        self.assertEqual(sent, "sha256=" + hmac.new(b"s3cret-value", body, hashlib.sha256).hexdigest())
 
 
 if __name__ == "__main__":

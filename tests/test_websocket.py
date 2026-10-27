@@ -100,8 +100,8 @@ class WebSocketTests(unittest.TestCase):
         self.addCleanup(self.engine.close)
         self.server = make_server(self.engine, 0, "test-token")
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.addCleanup(self.server.shutdown)
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
 
     def make_task(self):
         import http.client
@@ -174,6 +174,41 @@ class WebSocketTests(unittest.TestCase):
         sock.close()
         self.assertTrue(any(m.get("type") in ("queued", "error") for m in messages),
                         f"messages: {messages}")
+
+    def test_websocket_sends_only_frames(self):
+        """After the close frame nothing else may follow on the socket (the old handler
+        went on to write a whole SSE stream onto the upgraded connection)."""
+        task = self.make_task()
+        sock, status = ws_connect("127.0.0.1", self.server.server_port, f"/api/tasks/{task}/ws", "test-token")
+        self.assertIn("101", status)
+        ws_send_close(sock)
+        raw = b""
+        try:
+            while chunk := sock.recv(65536):
+                raw += chunk
+        except (socket.timeout, OSError):
+            pass
+        sock.close()
+        self.assertNotIn(b"event: ", raw)
+        self.assertNotIn(b"Cache-Control", raw)
+
+    def test_websocket_follow_up_is_validated_like_http(self):
+        task = self.make_task()
+        sock, _ = ws_connect("127.0.0.1", self.server.server_port, f"/api/tasks/{task}/ws", "test-token")
+        ws_send(sock, json.dumps({"type": "message", "objective": "Again", "mode": "offline", "verification": "syntax"}))
+        reply = None
+        for _ in range(40):
+            message = json.loads(ws_recv(sock) or "{}")
+            if message.get("type") in ("queued", "error"):
+                reply = message
+                break
+        sock.close()
+        self.assertEqual(reply["type"], "error", "an offline follow-up without edits must not get made-up edits")
+
+
+def ws_send_close(sock):
+    mask = os.urandom(4)
+    sock.sendall(bytes([0x88, 0x80]) + mask)
 
 
 if __name__ == "__main__":

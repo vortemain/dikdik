@@ -598,6 +598,9 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
 .m4-panel-mount p.error:empty, .m4-panel-mount p.hint:empty { display: none; }
 .m4-list { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 8px; }
 .m4-row { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow-wrap: anywhere; display: grid; gap: 4px; }
+.m4-item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow-wrap: anywhere; font-size: 14px; }
+.m4-item .muted { color: var(--muted); font-size: 12.5px; }
+.m4-item button { margin-left: auto; padding: 4px 10px; font-size: 12.5px; }
 .m4-title { font-size: 14px; font-weight: 500; color: var(--ink); }
 .m4-strong { font-weight: 600; }
 .m4-meta, .m4-status { display: block; color: var(--muted); font-size: 12.5px; }

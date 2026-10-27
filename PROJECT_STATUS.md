@@ -27,8 +27,8 @@ keyed and with consent explicit per request.
 The parity audit (docs/PARITY.md) moved from 89 to 425 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **359 passed, 2 live-runtime tests skipped** (361 run); Bun
-**100 passed / 474 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-27): Python **511 passed, 3 skipped** (514 run); Bun
+**105 passed / 490 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 
@@ -122,8 +122,9 @@ Test status (2026-10-27): Python **359 passed, 2 live-runtime tests skipped** (3
 
 ## Test status
 
-- Python: **359 passed, 2 live-runtime tests skipped** (361 run).
-- Bun: **100 passed / 474 assertions**; strict TypeScript check and browser build passed.
+- Python: **511 passed, 3 skipped** (514 run). A full review of the Phase D–F
+  commits found and fixed ten defects, two of them data-losing; see `docs/VERIFICATION.md`.
+- Bun: **105 passed / 490 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
 - Real HTTP tests cover agent submission without user-authored edits using explicit

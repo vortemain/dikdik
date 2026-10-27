@@ -24,8 +24,8 @@ class CorsRangeTests(unittest.TestCase):
         self.addCleanup(self.engine.close)
         self.server = make_server(self.engine, 0, "test-token")
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.addCleanup(self.server.shutdown)
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
 
     def call(self, method, path, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
@@ -87,8 +87,8 @@ class CorsConfiguredTests(unittest.TestCase):
         importlib.reload(svr)
         self.server = svr.make_server(self.engine, 0, "test-token")
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.addCleanup(self.server.shutdown)
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
 
     def call(self, method, path, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)

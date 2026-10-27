@@ -79,5 +79,41 @@ class DeferredInitTests(unittest.TestCase):
         self.assertIn("initialized_at", info)
 
 
+class DormantHttpTests(unittest.TestCase):
+    """A dormant server must refuse every method, not only GET, until /api/init."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        base = Path(self.temp.name)
+        self.root = base / "repo"
+        self.root.mkdir()
+        (self.root / "app.py").write_text("value = 1\n", encoding="utf-8")
+        self.engine = Engine(self.root, base / "data")
+        self.addCleanup(self.engine.close)
+        with patch.dict(os.environ, {"DIKDIK_DORMANT": "1"}):
+            self.server = make_server(self.engine, 0, "test-token")
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+
+    def call(self, method, path, body=None):
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
+        conn.request(method, path, json.dumps(body) if body is not None else None,
+                     {"Authorization": "Bearer test-token", "Content-Type": "application/json"})
+        response = conn.getresponse()
+        response.read()
+        conn.close()
+        return response.status
+
+    def test_every_method_waits_for_init(self):
+        self.assertEqual(self.call("GET", "/api/tasks"), 503)
+        self.assertEqual(self.call("POST", "/api/keys", {"name": "x", "scopes": ["read"]}), 503)
+        self.assertEqual(self.call("PATCH", "/api/settings/app", {"sounds": True}), 503)
+        self.assertEqual(self.call("DELETE", "/api/keys/abc"), 503)
+        self.assertEqual(self.call("POST", "/api/init", {"workspace": str(self.root)}), 200)
+        self.assertEqual(self.call("GET", "/api/tasks"), 200)
+
+
 if __name__ == "__main__":
     unittest.main()
