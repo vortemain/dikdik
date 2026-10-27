@@ -128,6 +128,24 @@ class DikdikClient:
     def settings_schema(self) -> dict:
         return self._call("GET", "/api/settings/schema")
 
+    def create_api_key(self, name: str, scopes: list[str] | None = None) -> str:
+        return self._call("POST", "/api/keys", {"name": name, "scopes": scopes or ["read"]})["token"]
+
+    def list_api_keys(self) -> list[dict]:
+        return self._call("GET", "/api/keys")["keys"]
+
+    def delete_api_key(self, key_id: str) -> None:
+        self._call("DELETE", f"/api/keys/{quote(key_id)}")
+
+    def task_count(self) -> dict:
+        return self._call("GET", "/api/tasks/count")
+
+    def workspaces(self) -> list[dict]:
+        return self._call("GET", "/api/workspaces")["workspaces"]
+
+    def events_batch(self, limit: int = 100) -> list[dict]:
+        return self._call("GET", f"/api/events/batch?limit={limit}")["events"]
+
     def rename(self, task: str, title: str) -> None:
         self._call("PATCH", f"/api/tasks/{quote(task)}", {"title": title})
 

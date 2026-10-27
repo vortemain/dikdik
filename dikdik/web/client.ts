@@ -87,4 +87,22 @@ export class DikdikClient {
   }
   async exportConversation(id: string): Promise<Task> { return this.call("GET", `/api/tasks/${id}/export`); }
   async settingsSchema(): Promise<Record<string, unknown>> { return this.call("GET", "/api/settings/schema"); }
+  async createApiKey(name: string, scopes?: string[]): Promise<string> {
+    const r = await this.call<{ token: string }>("POST", "/api/keys", { name, scopes: scopes ?? ["read"] });
+    return r.token;
+  }
+  async listApiKeys(): Promise<Array<Record<string, unknown>>> {
+    const r = await this.call<{ keys: Array<Record<string, unknown>> }>("GET", "/api/keys");
+    return r.keys;
+  }
+  async deleteApiKey(id: string): Promise<void> { await this.call("DELETE", `/api/keys/${id}`); }
+  async taskCount(): Promise<Record<string, unknown>> { return this.call("GET", "/api/tasks/count"); }
+  async workspaces(): Promise<Array<Record<string, unknown>>> {
+    const r = await this.call<{ workspaces: Array<Record<string, unknown>> }>("GET", "/api/workspaces");
+    return r.workspaces;
+  }
+  async eventsBatch(limit?: number): Promise<Array<Record<string, unknown>>> {
+    const r = await this.call<{ events: Array<Record<string, unknown>> }>("GET", `/api/events/batch${limit ? `?limit=${limit}` : ""}`);
+    return r.events;
+  }
 }

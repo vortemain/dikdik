@@ -153,6 +153,20 @@ OPENAPI = {
             "parameters": [{"name": "path", "in": "path", "required": True, "schema": {"type": "string"}}],
             "responses": {"200": {"description": "Removed"}}}},
         "/v1/models": {"get": {"summary": "List model profiles (OpenAI-compatible)", "responses": {"200": {"description": "Model list"}}}},
+        "/api/keys": {
+            "get": {"summary": "List API keys (tokens never returned)", "responses": {"200": {"description": "Key list"}}},
+            "post": {"summary": "Create an API key",
+                "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
+                    "name": {"type": "string"}, "scopes": {"type": "array", "items": {"type": "string", "enum": ["read", "write", "admin"]}}}}}}},
+                "responses": {"201": {"description": "Created with token"}, "400": {"description": "Validation error"}}}},
+        "/api/keys/{id}": {"delete": {"summary": "Delete an API key",
+            "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "Deleted"}, "404": {"description": "Not found"}}}},
+        "/api/tasks/count": {"get": {"summary": "Count tasks by state", "responses": {"200": {"description": "Counts"}}}},
+        "/api/init": {"post": {"summary": "Initialize a dormant server",
+            "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {
+                "workspace": {"type": "string"}, "init_key": {"type": "string"}}}}}},
+            "responses": {"200": {"description": "Initialized"}, "400": {"description": "Validation error"}}}},
         "/v1/chat/completions": {"post": {"summary": "Chat completion (OpenAI-compatible)",
             "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ChatCompletion"}}}},
             "responses": {"200": {"description": "Chat completion"}, "400": {"description": "Validation error"}}}},
