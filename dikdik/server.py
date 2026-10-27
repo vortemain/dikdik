@@ -71,6 +71,8 @@ def make_server(engine: Engine, port: int, token: str):
     gateway = Gateway(engine)
     engine.gateway = gateway  # the gateway routes after authentication in this handler  # M4: shared (method, path) routing table
     expected = ("Bearer " + token).encode("utf-8")
+    started_at = time.monotonic()
+    activity = {"last": time.monotonic()}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -212,9 +214,12 @@ def make_server(engine: Engine, port: int, token: str):
                 self.reply(200, {"status": "ready"})
                 return
             if path == "/server_info" or path == "/api/server-info":
+                now = time.monotonic()
                 self.reply(200, {"version": DIKDIK_VERSION, "python": platform.python_version(),
                                  "platform": platform.platform(), "workspace": engine.root.name,
-                                 "rust_indexer": INDEXER, "port": self.server.server_port})
+                                 "rust_indexer": INDEXER, "port": self.server.server_port,
+                                 "uptime": round(now - started_at, 3),
+                                 "idle_time": round(now - activity["last"], 3)})
                 return
             if path == "/openapi.json" or path == "/api/openapi":
                 self.reply(200, openapi_document())
@@ -349,8 +354,10 @@ def make_server(engine: Engine, port: int, token: str):
                         raise ValueError("Applying changes needs explicit confirmation")
                     self.reply(200, engine.apply(path.split("/")[3], body.get("files")))
                 elif path == "/api/git/commit":
+                    activity["last"] = time.monotonic()
                     self.reply(200, gitops.commit(engine.root, body.get("message"), body.get("files"), engine.git_identity()))
                 elif path == "/api/files/upload" and isinstance(body, dict):
+                    activity["last"] = time.monotonic()
                     rel = body.get("path")
                     content = body.get("content")
                     if not isinstance(rel, str) or not rel.strip() or len(rel) > 500 or rel.startswith("-"):

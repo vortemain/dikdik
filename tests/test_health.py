@@ -65,6 +65,10 @@ class HealthTests(unittest.TestCase):
         self.assertIn("python", data)
         self.assertIn("platform", data)
         self.assertIn("workspace", data)
+        self.assertIn("uptime", data)
+        self.assertIn("idle_time", data)
+        self.assertGreaterEqual(data["uptime"], 0)
+        self.assertGreaterEqual(data["idle_time"], 0)
 
     def test_api_server_info_alias(self):
         status, body = self.call("/api/server-info")
