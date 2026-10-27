@@ -391,6 +391,10 @@
       </section>
     </div>
   </dialog>
+  <dialog id="lightbox" class="lightbox" aria-labelledby="lightbox-name">
+    <div class="lightbox-head"><span id="lightbox-name" class="lightbox-name"></span><button id="lightbox-close" class="ghost icon" type="button" aria-label="Close image"><svg class="i"><use href="#i-x"/></svg></button></div>
+    <img id="lightbox-image" class="lightbox-image" alt="">
+  </dialog>
   <dialog id="palette" class="palette" aria-label="Command menu">
     <div class="palette-field"><svg class="i"><use href="#i-search"/></svg><input id="palette-input" type="text" placeholder="Search conversations and commands…" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"></div>
     <ul id="palette-list" class="palette-list" role="listbox" aria-label="Results"></ul>

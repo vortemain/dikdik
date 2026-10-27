@@ -30,8 +30,8 @@ OpenHands app map (799 sub-features) and the agent-server/SDK map
 
 | Status | First audit | After the first build phases | After the parity fix | Run control | Interface | Models | Current |
 |---|---|---|---|---|---|---|---|
-| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 329 |
-| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 211 |
+| Has (equivalent behaviour) | 89 | 199 | 230 | 260 | 283 | 325 | 333 |
+| Partly (note says what is missing) | 91 | 154 | 165 | 180 | 204 | 212 | 207 |
 | Missing | 1,491 | 1,318 | 1,273 | 1,228 | 1,181 | 1,131 | 1,128 |
 | Needs an outside service (Cloud, DigitalOcean, ChatGPT login, third-party agent CLIs) | 61 | 61 | 61 | 61 | 61 | 61 | 61 |
 | Not applicable by design (telemetry, LAN binding, revealing secrets) | 17 | 17 | 20 | 20 | 20 | 20 | 20 |

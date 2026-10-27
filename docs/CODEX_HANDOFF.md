@@ -263,12 +263,11 @@ outside the repository.
 
 Each item maps to audit rows still `N`/`P`; read their notes.
 
-**Run control / chat (Phase A)**
-- Interrupt a running tool call (today Pause waits for the step; Stop cancels the run). srv `F05.interrupt-tool-call`, app `F06.stop-resume`.
-- Usage tab: per-turn and per-task token breakdown from provider reports (input/output/cache when reported), never invented costs. app `F27.usage-*`, `F07.display-cost`.
-- Image lightbox for attached images (`F06.image-attachments`).
-- Branch from an individual message (user message: fork without it; agent message: inclusive). Needs fork by event seq, not only finished turns (`F06.branch-from-here`, `F07.branch-from-message`, srv `F10.fork-from-event`).
-- Confirmation shortcuts Ctrl/Cmd+Enter (allow) and Shift+Ctrl/Cmd+Backspace (reject) in addition to Y/N.
+**Run control / chat (Phase A)** — done since this document was written: Stop
+interrupts a running tool (`2aa5f78`), the Usage tab (`c358b2c`), the image lightbox,
+approval shortcuts and Branch on individual messages. Still open:
+- Fork at an arbitrary event (srv `F10.fork-from-event`), compact from the Usage tab
+  (`F27.usage-compact`), a provider balance card (`F27.usage-provider-balance`).
 
 **Interface (Phase B)**
 - Language switching (i18n with English as source; `<html lang>`), title generation with a chosen model (`F16.language`, `F16.title-model*`).

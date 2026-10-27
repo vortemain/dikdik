@@ -1931,6 +1931,7 @@ ${c.output}` : "";
   var slashModels = false;
   var taskRequest = null;
   var confirmCards = new Map;
+  var confirmDecisions = new Map;
   var modelReady = true;
   var activeTag = "";
   var listLimit = 40;
@@ -2491,10 +2492,29 @@ ${c.output}` : "";
       content.append(richText(msg.body));
       const tools = make("div", "msg-actions");
       tools.append(copyButton(() => msg.body ?? "", "Copy"));
+      if (msg.kind === "agent_message")
+        tools.append(branchButton(msg, "Start a new conversation that includes everything up to and including this reply"));
       content.append(tools);
     }
     li.append(content);
     return li;
+  }
+  function messageSeq(msg) {
+    const seq = Number(msg.id.slice(msg.id.lastIndexOf("-") + 1));
+    return Number.isInteger(seq) && seq > 0 ? seq : null;
+  }
+  function branchButton(msg, title) {
+    const control = make("button", "copy");
+    control.type = "button";
+    control.title = title;
+    control.append(icon("branch"), make("span", "", "Branch"));
+    control.onclick = () => {
+      const seq = messageSeq(msg);
+      if (!selected || seq === null)
+        return;
+      branchFromMessage(selected, seq).catch((error) => message(error instanceof Error ? error.message : "Branch failed", true));
+    };
+    return control;
   }
   function usageText(details) {
     const agent = typeof details === "object" && details !== null ? details.agent : undefined;
@@ -2520,12 +2540,17 @@ ${c.output}` : "";
     const grid = make("div", "attachment-grid");
     for (const file of attachmentList(msg.details)) {
       if (file.type.startsWith("image/")) {
+        const open = make("button", "attachment-open");
+        open.type = "button";
+        open.setAttribute("aria-label", `Open ${file.name}`);
         const image = make("img", "attachment-image");
         image.src = `/api/attachments/${file.id}`;
         image.alt = file.name;
         image.loading = "lazy";
         image.title = file.name;
-        grid.append(image);
+        open.append(image);
+        open.onclick = () => openLightbox(image.src, file.name);
+        grid.append(open);
       } else {
         const chip = make("span", "attachment-chip");
         chip.append(icon("file"), make("span", "", file.name));
@@ -2553,10 +2578,10 @@ ${c.output}` : "";
     const actions = make("div", "result-actions");
     const allow = make("button", "small primary", "Allow");
     allow.type = "button";
-    allow.title = "Allow (Y or Enter)";
+    allow.title = "Allow (Y, Enter or Ctrl+Enter)";
     const reject = make("button", "small", "Reject");
     reject.type = "button";
-    reject.title = "Reject (N or Esc)";
+    reject.title = "Reject (N, Esc or Shift+Ctrl+Backspace)";
     const status = make("span", "confirm-status");
     actions.append(allow, reject, status);
     card.append(actions);
@@ -2581,6 +2606,8 @@ ${c.output}` : "";
       decide(false);
     };
     card.addEventListener("keydown", (event) => {
+      if (event.ctrlKey || event.metaKey)
+        return;
       const key = event.key.toLowerCase();
       if (key === "y" || key === "enter") {
         event.preventDefault();
@@ -2593,6 +2620,9 @@ ${c.output}` : "";
     card.tabIndex = -1;
     if (openConfirmations(liveEvents).includes(id)) {
       confirmCards.set(id, li);
+      confirmDecisions.set(id, (accept) => {
+        decide(accept);
+      });
       if (!textarea("objective").value.trim())
         setTimeout(() => allow.focus?.(), 0);
     } else {
@@ -2622,6 +2652,7 @@ ${c.output}` : "";
         if (status)
           status.textContent = msg.title === "Approved" ? "Allowed" : "Rejected";
         confirmCards.delete(id);
+        confirmDecisions.delete(id);
       }
     }
     if (msg.kind === "plan_updated") {
@@ -2669,6 +2700,8 @@ ${c.output}` : "";
       const bubble = make("div", "bubble", msg.body ?? "");
       const tools = make("div", "msg-actions user-actions");
       tools.append(copyButton(() => msg.body ?? "", "Copy"));
+      if (msg.kind === "user_message")
+        tools.append(branchButton(msg, "Start a new conversation from just before this message, so you can write it differently"));
       li2.append(bubble, tools);
       lastRole = "user";
       return li2;
@@ -2770,6 +2803,7 @@ ${c.output}` : "";
     lastRole = "";
     stepGroup = null;
     confirmCards.clear();
+    confirmDecisions.clear();
     el("message-stream").replaceChildren();
     renderMessageStream(eventsToChat(liveEvents, liveObjective));
   }
@@ -3287,6 +3321,7 @@ ${c.output}` : "";
     applyStep = "idle";
     lastApplied = [];
     confirmCards.clear();
+    confirmDecisions.clear();
     taskRequest = null;
     stepGroup = null;
     showAllMessages = false;
@@ -5004,6 +5039,13 @@ ${c.output}` : "";
     if (task === selected)
       await observe(true);
   }
+  async function branchFromMessage(task, seq) {
+    const reply = await api(`/api/tasks/${encodeURIComponent(task)}/fork`, { message_seq: seq });
+    await loadHistory();
+    selectTask(reply.id);
+    await observe();
+    message("Branched into a new conversation. The original is unchanged.");
+  }
   async function forkTask(task, upto) {
     const reply = await api(`/api/tasks/${encodeURIComponent(task)}/fork`, upto === undefined ? {} : { upto_seq: upto });
     await loadHistory();
@@ -5747,6 +5789,34 @@ ${c.output}` : "";
         closeModelMenu();
     });
   }
+  function openLightbox(src, name) {
+    const dialog = el("lightbox");
+    const image = el("lightbox-image");
+    image.src = src;
+    image.alt = name;
+    el("lightbox-name").textContent = name;
+    if (typeof dialog.showModal === "function")
+      dialog.showModal();
+  }
+  el("lightbox-close").addEventListener("click", () => el("lightbox").close());
+  el("lightbox").addEventListener("click", (event) => {
+    if (event.target === el("lightbox"))
+      el("lightbox").close();
+  });
+  function approvalShortcut(event) {
+    if (!(event.ctrlKey || event.metaKey) || !confirmDecisions.size)
+      return false;
+    const allow = event.key === "Enter" && !event.shiftKey, reject = event.key === "Backspace" && event.shiftKey;
+    if (!allow && !reject)
+      return false;
+    const newest = [...confirmDecisions.values()].pop();
+    event.preventDefault();
+    event.stopPropagation();
+    newest?.(allow);
+    return true;
+  }
+  if (typeof document.addEventListener === "function")
+    document.addEventListener("keydown", approvalShortcut, true);
   var stopArmed;
   button("cancel").onclick = async () => {
     if (!selected)

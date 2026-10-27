@@ -35,6 +35,7 @@ let modelProfiles: { id: string; name: string; model: string }[] = [], skillName
 let slashItems: SlashCommand[] = [], slashIndex = 0, slashModels = false;
 let taskRequest: TaskRequest | null = null;
 const confirmCards = new Map<string, HTMLElement>();
+const confirmDecisions = new Map<string, (accept: boolean) => void>();  // open approvals, newest last
 // Organisation, onboarding and files: read by functions that run at load time.
 let modelReady = true, activeTag = "", listLimit = 40, folderOptions: string[] = [];
 let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean } | null = null;
@@ -457,10 +458,28 @@ function assistantMessage(msg: ChatMessage, showHeader: boolean): HTMLLIElement 
     content.append(richText(msg.body));
     const tools = make("div", "msg-actions");
     tools.append(copyButton(() => msg.body ?? "", "Copy"));
+    if (msg.kind === "agent_message") tools.append(branchButton(msg, "Start a new conversation that includes everything up to and including this reply"));
     content.append(tools);
   }
   li.append(content);
   return li;
+}
+/** The event number a chat message came from (its id ends in "-<seq>"). */
+function messageSeq(msg: ChatMessage): number | null {
+  const seq = Number(msg.id.slice(msg.id.lastIndexOf("-") + 1));
+  return Number.isInteger(seq) && seq > 0 ? seq : null;
+}
+function branchButton(msg: ChatMessage, title: string): HTMLButtonElement {
+  const control = make("button", "copy");
+  control.type = "button";
+  control.title = title;
+  control.append(icon("branch"), make("span", "", "Branch"));
+  control.onclick = () => {
+    const seq = messageSeq(msg);
+    if (!selected || seq === null) return;
+    void branchFromMessage(selected, seq).catch(error => message(error instanceof Error ? error.message : "Branch failed", true));
+  };
+  return control;
 }
 /** Work counts the provider and agent reported for a turn; never an invented cost. */
 function usageText(details: unknown): string {
@@ -483,8 +502,12 @@ function attachmentCard(msg: ChatMessage): HTMLLIElement {
   const grid = make("div", "attachment-grid");
   for (const file of attachmentList(msg.details)) {
     if (file.type.startsWith("image/")) {
+      const open = make("button", "attachment-open"); open.type = "button";
+      open.setAttribute("aria-label", `Open ${file.name}`);
       const image = make("img", "attachment-image"); image.src = `/api/attachments/${file.id}`; image.alt = file.name; image.loading = "lazy"; image.title = file.name;
-      grid.append(image);
+      open.append(image);
+      open.onclick = () => openLightbox(image.src, file.name);
+      grid.append(open);
     } else {
       const chip = make("span", "attachment-chip"); chip.append(icon("file"), make("span", "", file.name));
       grid.append(chip);
@@ -506,8 +529,8 @@ function confirmationCard(msg: ChatMessage): HTMLLIElement {
   const shown = typeof args.command === "string" ? codeBlock(args.command, "bash", { wrap: true }) : codeBlock(JSON.stringify(args, null, 2), "json", { wrap: true });
   card.append(shown);
   const actions = make("div", "result-actions");
-  const allow = make("button", "small primary", "Allow"); allow.type = "button"; allow.title = "Allow (Y or Enter)";
-  const reject = make("button", "small", "Reject"); reject.type = "button"; reject.title = "Reject (N or Esc)";
+  const allow = make("button", "small primary", "Allow"); allow.type = "button"; allow.title = "Allow (Y, Enter or Ctrl+Enter)";
+  const reject = make("button", "small", "Reject"); reject.type = "button"; reject.title = "Reject (N, Esc or Shift+Ctrl+Backspace)";
   const status = make("span", "confirm-status");
   actions.append(allow, reject, status);
   card.append(actions);
@@ -522,6 +545,7 @@ function confirmationCard(msg: ChatMessage): HTMLLIElement {
   allow.onclick = () => { void decide(true); };
   reject.onclick = () => { void decide(false); };
   card.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.ctrlKey || event.metaKey) return;  // the global shortcuts below handle these
     const key = event.key.toLowerCase();
     if (key === "y" || key === "enter") { event.preventDefault(); void decide(true); }
     else if (key === "n" || key === "escape") { event.preventDefault(); void decide(false); }
@@ -529,6 +553,7 @@ function confirmationCard(msg: ChatMessage): HTMLLIElement {
   card.tabIndex = -1;
   if (openConfirmations(liveEvents).includes(id)) {
     confirmCards.set(id, li);
+    confirmDecisions.set(id, accept => { void decide(accept); });
     if (!textarea("objective").value.trim()) setTimeout(() => allow.focus?.(), 0);
   } else {
     allow.disabled = reject.disabled = true;
@@ -550,6 +575,7 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
       const status = card.querySelector(".confirm-status");
       if (status) status.textContent = msg.title === "Approved" ? "Allowed" : "Rejected";
       confirmCards.delete(id);
+      confirmDecisions.delete(id);
     }
   }
   if (msg.kind === 'plan_updated') {
@@ -580,6 +606,7 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
     const bubble = make("div", "bubble", msg.body ?? "");
     const tools = make("div", "msg-actions user-actions");
     tools.append(copyButton(() => msg.body ?? "", "Copy"));
+    if (msg.kind === "user_message") tools.append(branchButton(msg, "Start a new conversation from just before this message, so you can write it differently"));
     li.append(bubble, tools);
     lastRole = "user";
     return li;
@@ -659,7 +686,7 @@ function closeStepGroup(): void {
   stepGroup = null;
 }
 function rerenderConversation(): void {
-  rendered = new Set(); pendingCalls = []; lastRole = ""; stepGroup = null; confirmCards.clear();
+  rendered = new Set(); pendingCalls = []; lastRole = ""; stepGroup = null; confirmCards.clear(); confirmDecisions.clear();
   el("message-stream").replaceChildren();
   renderMessageStream(eventsToChat(liveEvents, liveObjective));
 }
@@ -1078,7 +1105,7 @@ async function applyChanges(): Promise<void> {
 // --- task lifecycle / polling ---------------------------------------------
 function resetConversation(): void {
   rendered = new Set(); pendingCalls = []; lastRole = ""; renderedDiff = ""; applyStep = "idle"; lastApplied = [];
-  confirmCards.clear(); taskRequest = null; stepGroup = null; showAllMessages = false;
+  confirmCards.clear(); confirmDecisions.clear(); taskRequest = null; stepGroup = null; showAllMessages = false;
   el("goal-banner").hidden = true; el("context-meter").hidden = true; el("pause").hidden = true; el("side-answer").hidden = true;
   el("message-stream").replaceChildren();
   el("review-controls").replaceChildren();
@@ -2311,6 +2338,13 @@ async function condenseNow(): Promise<void> {
   message("Condensed. Older turns now travel as a summary.");
   if (task === selected) await observe(true);
 }
+async function branchFromMessage(task: string, seq: number): Promise<void> {
+  const reply = await api<{ id: string }>(`/api/tasks/${encodeURIComponent(task)}/fork`, { message_seq: seq });
+  await loadHistory();
+  selectTask(reply.id);
+  await observe();
+  message("Branched into a new conversation. The original is unchanged.");
+}
 async function forkTask(task: string, upto?: number): Promise<void> {
   const reply = await api<{ id: string }>(`/api/tasks/${encodeURIComponent(task)}/fork`, upto === undefined ? {} : { upto_seq: upto });
   await loadHistory();
@@ -2862,6 +2896,29 @@ if (typeof document.addEventListener === "function") {
   });
   document.addEventListener("keydown", (event: KeyboardEvent) => { if (event.key === "Escape" && !el("model-menu").hidden) closeModelMenu(); });
 }
+
+// --- image lightbox and approval shortcuts ------------------------------------------
+function openLightbox(src: string, name: string): void {
+  const dialog = el("lightbox") as HTMLDialogElement;
+  const image = el("lightbox-image") as HTMLImageElement;
+  image.src = src; image.alt = name;
+  el("lightbox-name").textContent = name;
+  if (typeof dialog.showModal === "function") dialog.showModal();
+}
+el("lightbox-close").addEventListener("click", () => (el("lightbox") as HTMLDialogElement).close());
+el("lightbox").addEventListener("click", event => { if (event.target === el("lightbox")) (el("lightbox") as HTMLDialogElement).close(); });
+/** Ctrl/Cmd+Enter allows and Shift+Ctrl/Cmd+Backspace rejects the newest open approval, from anywhere. */
+function approvalShortcut(event: KeyboardEvent): boolean {
+  if (!(event.ctrlKey || event.metaKey) || !confirmDecisions.size) return false;
+  const allow = event.key === "Enter" && !event.shiftKey, reject = event.key === "Backspace" && event.shiftKey;
+  if (!allow && !reject) return false;
+  const newest = [...confirmDecisions.values()].pop();
+  event.preventDefault();
+  event.stopPropagation();
+  newest?.(allow);
+  return true;
+}
+if (typeof document.addEventListener === "function") document.addEventListener("keydown", approvalShortcut, true);
 
 let stopArmed: ReturnType<typeof setTimeout> | undefined;
 button("cancel").onclick = async () => {

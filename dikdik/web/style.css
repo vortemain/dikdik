@@ -801,3 +801,12 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
 .usage-context { margin: 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .usage-cost, .usage-note { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
 .usage-empty h3 { font-size: 15px; margin: 0 0 4px; }
+
+/* Image lightbox. */
+.attachment-open { padding: 0; border: 0; background: none; border-radius: 12px; cursor: zoom-in; }
+.attachment-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lightbox { width: min(1100px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; background: var(--surface); }
+.lightbox[open] { display: flex; flex-direction: column; }
+.lightbox-head { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--line); }
+.lightbox-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--muted); }
+.lightbox-image { display: block; max-width: 100%; max-height: calc(100dvh - 120px); margin: 0 auto; object-fit: contain; background: var(--surface-2); }

@@ -322,6 +322,32 @@ class ControlTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finished turn"):
             self.engine.fork(task, {"upto_seq": 1})
 
+    def test_branch_from_a_message(self):
+        models = [Script([ModelResponse("First answer.", [])]), Script([ModelResponse("Second answer.", [])])]
+        with patch("dikdik.engine.CompatibleAgentModel", side_effect=models):
+            task = self.idle(self.engine.submit({"objective": "Hello", **AGENT}))["id"]
+            self.engine.send(task, {"objective": "Tell me more", **AGENT})
+            self.idle(task)
+        events = self.engine.store.get(task)["events"]
+        follow_up = next(e["seq"] for e in events if e["kind"] == "user_message")
+        first_reply = next(e["seq"] for e in events if e["kind"] == "agent_message")
+        # From your own message: the message is left out and the branch is ready for a new one.
+        mine = self.engine.store.get(self.engine.fork(task, {"message_seq": follow_up})["id"])
+        texts = [e["data"].get("text") for e in mine["events"] if e["kind"] == "user_message"]
+        self.assertEqual((texts, mine["state"], mine["title"]), ([], "completed", "Hello (branch)"))
+        self.assertEqual([e["data"]["content"] for e in mine["events"] if e["kind"] == "agent_message"], ["First answer."])
+        # From an agent reply: the reply is kept.
+        theirs = self.engine.store.get(self.engine.fork(task, {"message_seq": first_reply})["id"])
+        self.assertEqual([e["data"]["content"] for e in theirs["events"] if e["kind"] == "agent_message"], ["First answer."])
+        self.assertEqual(theirs["events"][-1]["data"]["from_seq"], first_reply)
+        # The branch takes follow-ups like any conversation.
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=Script([ModelResponse("Branch answer.", [])])):
+            self.engine.send(mine["id"], {"objective": "Something else", **AGENT})
+            self.assertEqual(self.idle(mine["id"])["state"], "completed")
+        for bad in ({"message_seq": events[0]["seq"]}, {"message_seq": "3"}, {"message_seq": first_reply, "upto_seq": first_reply}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.engine.fork(task, bad)
+
     # --- attachments ------------------------------------------------------------------------------
     def test_attachments_reach_the_agent(self):
         text = self.engine.attachments.add({"name": "notes.txt", "type": "text/plain", "data": base64.b64encode(b"Use integers only.").decode()})

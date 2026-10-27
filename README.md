@@ -47,7 +47,7 @@ autonomous engineering platform.
   (`.dikdik/agents/*.md`). Attach images and text files (+, paste or drop). Type
   `/` for commands: `/goal` (judged multi-turn loop), `/btw` (side question),
   `/model`, `/condense`, `/fork`, `/plan`, `/code` and your skills. Fork any
-  conversation or branch from an earlier turn; a meter shows context use, and the
+  conversation or branch from an earlier turn or message; a meter shows context use, and the
   Usage tab lists provider-reported tokens per turn (cost only when the provider
   reports it; never estimated).
 - **Find and organise.** Ctrl+K opens a command menu for every action, panel,

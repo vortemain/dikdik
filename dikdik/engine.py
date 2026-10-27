@@ -444,34 +444,56 @@ class Engine:
             self.store.event(task, "user_message", {"text": follow["objective"], "mode": "agent", "verification": follow["verification"], "goal": True})
 
     def fork(self, task, body):
-        """A new conversation with this one's history (up to a finished turn) and candidate."""
+        """A new conversation with this one's history and candidate, up to a finished turn or a chosen message.
+
+        Branching from your own message leaves that message out, so it can be written
+        differently; branching from an agent reply keeps it. Files come from the last
+        finished turn before the cut.
+        """
         body = body if isinstance(body, dict) else {}
         source = self.store.get(task)
-        upto = body.get("upto_seq")
-        ends = [e for e in source["events"] if e["kind"] in TERMINAL]
-        if upto is not None:
-            if type(upto) is not int:
-                raise ValueError("upto_seq must be an event number")
-            ends = [e for e in ends if e["seq"] <= upto]
-        if not ends:
+        events = source["events"]
+        upto, message = body.get("upto_seq"), body.get("message_seq")
+        if upto is not None and message is not None:
+            raise ValueError("Fork from a turn or from a message, not both")
+        for value, name in ((upto, "upto_seq"), (message, "message_seq")):
+            if value is not None and type(value) is not int:
+                raise ValueError(f"{name} must be an event number")
+        cut = None
+        if message is not None:
+            chosen = next((e for e in events if e["seq"] == message), None)
+            if chosen is None or chosen["kind"] not in {"user_message", "agent_message"}:
+                raise ValueError("Branch from one of your later messages or an agent reply in this conversation")
+            cut = message if chosen["kind"] == "agent_message" else message - 1
+        ends = [e for e in events if e["kind"] in TERMINAL and e["seq"] <= (cut if cut is not None else upto if upto is not None else e["seq"])]
+        if not ends and message is None:
             raise ValueError("Fork from a finished turn")
-        end = ends[-1]
+        end = ends[-1] if ends else None
+        if cut is None:
+            cut = end["seq"]
         with self.lock:
-            if task in self.active and upto is None:
+            if task in self.active and upto is None and message is None:
                 raise ValueError("Wait for the current turn to finish, or fork from an earlier turn")
+            base = source.get("title") or source["request"].get("objective", "")[:60]
+            title = body["title"].strip() if isinstance(body.get("title"), str) and body["title"].strip() else f"{base} (branch)" if message is not None else f"Fork of {base}"
+            # A cut inside a turn copies part of it; the branch is then simply idle (completed) and ready for a message.
+            state = end["kind"] if end is not None and end["seq"] == cut else "completed"
+            result = end["data"] if end is not None else {"turn_changed": False, "changed_files": []}
             new = self.store.create(dict(source["request"]))
             with self.store.connect() as db:
                 db.execute("DELETE FROM events WHERE task_id=?", (new,))
-                for event in source["events"]:
-                    if event["seq"] > end["seq"]:
+                for event in events:
+                    if event["seq"] > cut:
                         break
                     db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (new, event["time"], event["kind"], json.dumps(event["data"])))
-                db.execute("UPDATE tasks SET state=?, result=?, title=? WHERE id=?", (end["kind"], json.dumps(end["data"]), body.get("title") if isinstance(body.get("title"), str) and body["title"].strip() else f"Fork of {source.get('title') or source['request'].get('objective', '')[:60]}", new))
-            self.store.event(new, "forked", {"from_task": task, "from_seq": end["seq"]})
-        snapshot = self.data / "snapshots" / task / str(end["seq"])
-        origin = snapshot if snapshot.is_dir() else (self.data / "artifacts" / task if end is ends[-1] and upto is None else None)
-        if origin is not None and origin.is_dir():
-            shutil.copytree(origin, self.data / "artifacts" / new, dirs_exist_ok=True)
+                db.execute("UPDATE tasks SET state=?, result=?, title=? WHERE id=?", (state, json.dumps(result), title, new))
+            self.store.event(new, "forked", {"from_task": task, "from_seq": cut})
+        if end is not None:
+            snapshot = self.data / "snapshots" / task / str(end["seq"])
+            whole = upto is None and message is None
+            origin = snapshot if snapshot.is_dir() else (self.data / "artifacts" / task if whole else None)
+            if origin is not None and origin.is_dir():
+                shutil.copytree(origin, self.data / "artifacts" / new, dirs_exist_ok=True)
         return {"id": new}
 
     def prepare_planner(self, task):

@@ -18,10 +18,10 @@ control (interrupt/exact resume, pause-at-boundary, per-action confirmation, hoo
 attachments, slash commands, side questions, condensing, judged goals, forks);
 an organised interface (command menu, folders and tags, file tree, onboarding);
 and model management (connections, routing, a model picker, sandbox secrets).
-The parity audit (docs/PARITY.md) moved from 89 to 329 fully matched OpenHands sub-features
+The parity audit (docs/PARITY.md) moved from 89 to 333 fully matched OpenHands sub-features
 of 1,749. Live model-provider and live-Docker runs are still not recorded.
 
-Test status (2026-10-27): Python **309 passed, 2 live-runtime tests skipped**; Bun
+Test status (2026-10-27): Python **310 passed, 2 live-runtime tests skipped**; Bun
 **89 passed / 436 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
@@ -60,6 +60,9 @@ Test status (2026-10-27): Python **309 passed, 2 live-runtime tests skipped**; B
   a Stop arriving as a turn finished could turn a later cancel into a pause, and
   unexpected task errors are now printed to the server console as the error
   message promised.
+- Added an image lightbox, Ctrl/Cmd+Enter and Shift+Ctrl/Cmd+Backspace for
+  pending approvals, and Branch on individual messages (a reply is kept, your own
+  message is left out so it can be rewritten).
 - Added the interface phase: Ctrl+K command menu, Get started card, a banner and
   blocked Send without a model, folders/tags/sort/age filter, grouped steps,
   Thinking rows, Markdown tables and alerts, clickable workspace paths, a file
@@ -80,7 +83,7 @@ Test status (2026-10-27): Python **309 passed, 2 live-runtime tests skipped**; B
 
 ## Test status
 
-- Python: **309 passed, 2 live-runtime tests skipped** (311 total).
+- Python: **310 passed, 2 live-runtime tests skipped** (312 total).
 - Bun: **89 passed / 436 assertions**; strict TypeScript check and browser build passed.
 - Rust: **15 passed**.
 - Deterministic syntax-only evaluation: **4/4**; not model task-success evidence.
