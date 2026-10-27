@@ -487,6 +487,30 @@ def make_server(engine: Engine, port: int, token: str):
                                     db.execute("SELECT state, COUNT(*) AS count FROM tasks GROUP BY state")}
                     self.reply(200, {"total": total, "by_state": by_state})
                     return
+                if path == "/api/tasks/search":
+                    query = parse_qs(urlsplit(self.path).query)
+                    q = query.get("q", [""])[0]
+                    state_filter = query.get("state", [""])[0]
+                    with engine.store.connect() as db:
+                        sql = "SELECT id,created,state,request,title,pinned,archived,folder,tags FROM tasks"
+                        params: list = []
+                        conditions = []
+                        if q:
+                            conditions.append("title LIKE ?")
+                            params.append(f"%{q}%")
+                        if state_filter:
+                            conditions.append("state=?")
+                            params.append(state_filter)
+                        if conditions:
+                            sql += " WHERE " + " AND ".join(conditions)
+                        sql += " ORDER BY pinned DESC, created DESC LIMIT 100"
+                        rows = db.execute(sql, params).fetchall()
+                    tasks = [{"id": r["id"], "created": r["created"], "state": r["state"],
+                              "title": r["title"] or "", "pinned": bool(r["pinned"]),
+                              "archived": bool(r["archived"]), "folder": r["folder"] or "",
+                              "tags": json.loads(r["tags"]) if r["tags"] else []} for r in rows]
+                    self.reply(200, {"tasks": tasks, "total": len(tasks)})
+                    return
                 if len(parts) == 7 and parts[:3] == ["", "api", "tasks"] and parts[4:6] == ["browser", "screenshots"]:
                     self.reply(200, engine.browser.screenshot(parts[3], parts[6]), "image/png")
                     return

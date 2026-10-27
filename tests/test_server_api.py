@@ -282,6 +282,20 @@ class ServerApiTests(unittest.TestCase):
         self.assertIn("by_state", data)
         self.assertIn("completed", data["by_state"])
 
+    def test_tasks_search(self):
+        self.make_task()
+        status, body = self.call("GET", "/api/tasks/search?q=")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertGreater(len(data["tasks"]), 0)
+
+    def test_tasks_search_by_state(self):
+        self.make_task()
+        status, body = self.call("GET", "/api/tasks/search?state=completed")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertTrue(all(t["state"] == "completed" for t in data["tasks"]))
+
 
 if __name__ == "__main__":
     unittest.main()
