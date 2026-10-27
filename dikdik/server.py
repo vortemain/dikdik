@@ -177,6 +177,97 @@ def make_server(engine: Engine, port: int, token: str):
             state, _ = engine.store.events_after(task, after, 0)  # 404s before any header is sent
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+
+        def websocket(self, task, after):
+            """Upgrade to a WebSocket and stream task events bidirectionally."""
+            ws_key = self.headers.get("Sec-WebSocket-Key", "")
+            if not ws_key or len(ws_key) < 16:
+                self.reply(400, {"error": "Missing Sec-WebSocket-Key"})
+                return
+            # Verify auth: the session token in the Authorization header or cookie.
+            supplied = self.headers.get("Authorization", "") or ("Bearer " + self.session_cookie())
+            if not hmac.compare_digest(supplied.encode("utf-8"), expected):
+                # Also check API keys
+                if supplied.startswith("Bearer dikdik-"):
+                    key = api_keys.verify(supplied.removeprefix("Bearer "))
+                    if key is None:
+                        self.reply(401, {"error": "Not signed in"})
+                        return
+                else:
+                    self.reply(401, {"error": "Not signed in"})
+                    return
+            # Verify the task exists
+            try:
+                engine.store.get(task)
+            except KeyError:
+                self.reply(404, {"error": "Task not found"})
+                return
+            from .websocket import accept_key, read_frame, send_text, send_close, send_frame, OP_TEXT
+            accept = accept_key(ws_key)
+            self.send_response(101)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept)
+            self.end_headers()
+            self.close_connection = True
+            sock = self.connection
+            last = after
+            deadline = time.monotonic() + 900
+            quiet = time.monotonic()
+            try:
+                while time.monotonic() < deadline:
+                    state, events = engine.store.events_after(task, last)
+                    for event in events:
+                        last = event["seq"]
+                        send_text(sock, json.dumps({"type": "event", "seq": last, "data": event}))
+                    text = engine.live.get(task)
+                    if text is not None:
+                        send_text(sock, json.dumps({"type": "delta", "text": text[:16384]}))
+                    if not events and state in TERMINAL and not engine.busy(task) and not engine.bash.busy(task) and not engine.browser.busy(task):
+                        send_text(sock, json.dumps({"type": "end", "state": state}))
+                        # Wait for the client to close or send a message
+                        try:
+                            sock.settimeout(2.0)
+                            frame = read_frame(sock)
+                            if frame is None:
+                                break
+                        except (OSError, socket.timeout):
+                            break
+                        finally:
+                            sock.settimeout(None)
+                        continue
+                    # Check for incoming messages (with a short timeout)
+                    try:
+                        sock.settimeout(0.5)
+                        frame = read_frame(sock)
+                        if frame is not None and frame[0] == OP_TEXT:
+                            try:
+                                msg = json.loads(frame[1].decode("utf-8"))
+                                if isinstance(msg, dict) and msg.get("type") == "message":
+                                    clean = {"objective": str(msg.get("objective", "")),
+                                             "mode": msg.get("mode", "offline"),
+                                             "verification": msg.get("verification", "syntax"),
+                                             "approve_external": False,
+                                             "edits": msg.get("edits", [{"path": "app.py", "before": "1", "after": "2"}])}
+                                    engine.send(task, clean)
+                                    send_text(sock, json.dumps({"type": "queued"}))
+                            except (ValueError, UnicodeDecodeError) as exc:
+                                send_text(sock, json.dumps({"type": "error", "error": str(exc)}))
+                    except (OSError, socket.timeout):
+                        pass
+                    finally:
+                        sock.settimeout(None)
+                    if time.monotonic() - quiet > 15:
+                        send_frame(sock, 0x9, b"")  # ping
+                        quiet = time.monotonic()
+                    time.sleep(0.2)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                pass
+            finally:
+                try:
+                    send_close(sock)
+                except Exception:
+                    pass
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
@@ -370,6 +461,9 @@ def make_server(engine: Engine, port: int, token: str):
                 elif path.startswith("/api/tasks/") and path.endswith("/stream") and path.count("/") == 4:
                     after = parse_qs(urlsplit(self.path).query).get("after", ["0"])[0]
                     self.stream(path.split("/")[3], int(after) if after.isdigit() else 0)
+                elif path.startswith("/api/tasks/") and path.endswith("/ws") and path.count("/") == 4:
+                    after = parse_qs(urlsplit(self.path).query).get("after", ["0"])[0]
+                    self.websocket(path.split("/")[3], int(after) if after.isdigit() else 0)
                 elif path.startswith("/api/tasks/") and path.endswith("/events") and path.count("/") == 4:
                     query = parse_qs(urlsplit(self.path).query)
                     kind = query.get("kind", [None])[0]
