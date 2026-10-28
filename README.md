@@ -144,6 +144,20 @@ changed your files has **Undo changes**, which puts them back unless you edited 
 since. Commands run with your own tools (Git Bash on Windows when installed,
 otherwise PowerShell).
 
+**Starting a project.** The project name sits at the top of the sidebar and the chat;
+click it (or a card on an empty chat) to open a folder, clone a repository (your GitHub
+repositories are listed when the GitHub CLI is signed in) or start a new project.
+
+**Models.** Settings → Models lists providers the way OpenRouter does: OpenRouter,
+Anthropic, OpenAI, Google Gemini, DeepSeek, xAI, Mistral, Groq, Cerebras, Together,
+Fireworks, Moonshot, Z.ai, Qwen, Perplexity, Ollama, LM Studio and Azure. Paste a key
+once, pick a model (or **Load all models** for the provider's live list with context
+size and price) and it becomes the model Dikdik uses. **Custom provider** adds any
+OpenAI-compatible API by name, URL and key. Older settings live under Advanced.
+
+**Git accounts.** Settings → Git shows your GitHub and GitLab sign-ins (through the `gh`
+and `glab` tools), signs you in with the browser and sets Git up to use that sign-in.
+
 **Code, files and Git.** Code is coloured everywhere (chat, files, diffs) for 15
 languages. Files shows type badges, indent guides and a breadcrumb, and **Open in
 VS Code** opens a file at the line you are reading (or the whole project from

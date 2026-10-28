@@ -160,3 +160,72 @@ export function highlightLines(text: string, lang: string): Token[][] {
   }
   return lines;
 }
+
+// --- what a file is, from its name and first line, like an editor's language mode ----
+const EXTENSIONS: Record<string, [string, string]> = {
+  py: ["python", "Python"], pyi: ["python", "Python"], ts: ["typescript", "TypeScript"], tsx: ["tsx", "TypeScript React"],
+  js: ["javascript", "JavaScript"], mjs: ["javascript", "JavaScript"], cjs: ["javascript", "JavaScript"], jsx: ["jsx", "JavaScript React"],
+  json: ["json", "JSON"], jsonc: ["json", "JSON with Comments"], md: ["markdown", "Markdown"], markdown: ["markdown", "Markdown"],
+  rs: ["rust", "Rust"], go: ["go", "Go"], java: ["java", "Java"], kt: ["kotlin", "Kotlin"], cs: ["csharp", "C#"], swift: ["swift", "Swift"],
+  c: ["c", "C"], h: ["c", "C"], cpp: ["cpp", "C++"], cc: ["cpp", "C++"], hpp: ["cpp", "C++"], rb: ["ruby", "Ruby"], php: ["c", "PHP"],
+  sh: ["bash", "Shell"], bash: ["bash", "Shell"], zsh: ["bash", "Shell"], ps1: ["powershell", "PowerShell"], bat: ["bash", "Batch"], cmd: ["bash", "Batch"],
+  css: ["css", "CSS"], scss: ["css", "SCSS"], less: ["css", "Less"], html: ["html", "HTML"], htm: ["html", "HTML"], xml: ["xml", "XML"],
+  svg: ["xml", "SVG"], vue: ["vue", "Vue"], yml: ["yaml", "YAML"], yaml: ["yaml", "YAML"], toml: ["toml", "TOML"], ini: ["toml", "INI"],
+  cfg: ["toml", "Config"], env: ["bash", "Environment"], sql: ["c", "SQL"], txt: ["", "Plain Text"], lock: ["", "Lock file"], csv: ["", "CSV"],
+};
+const NAMES: Record<string, [string, string]> = {
+  dockerfile: ["bash", "Dockerfile"], makefile: ["bash", "Makefile"], ".gitignore": ["bash", "Ignore"], ".dockerignore": ["bash", "Ignore"],
+  ".env": ["bash", "Environment"], ".editorconfig": ["toml", "EditorConfig"], "cargo.lock": ["toml", "TOML"], "license": ["", "Plain Text"],
+  "go.mod": ["go", "Go Module"], "requirements.txt": ["bash", "Pip Requirements"], "procfile": ["bash", "Procfile"],
+};
+const SHEBANGS: [RegExp, [string, string]][] = [[/python/, ["python", "Python"]], [/\b(node|bun|deno)\b/, ["javascript", "JavaScript"]],
+  [/\b(ba|z)?sh\b/, ["bash", "Shell"]], [/ruby/, ["ruby", "Ruby"]]];
+
+/** The highlighter language and the name an editor would show for this file. */
+export function detectLanguage(path: string, text = ""): { lang: string; label: string } {
+  const name = path.split("/").pop()?.toLowerCase() ?? "";
+  const special = NAMES[name] ?? (name.startsWith(".env") ? NAMES[".env"] : name.startsWith("dockerfile") ? NAMES["dockerfile"] : undefined);
+  if (special) return { lang: special[0], label: special[1] };
+  const ext = name.includes(".") ? name.split(".").pop() ?? "" : "";
+  const known = EXTENSIONS[ext];
+  if (known) return { lang: known[0], label: known[1] };
+  const first = text.slice(0, 200).split("\n", 1)[0] ?? "";
+  if (first.startsWith("#!")) {
+    for (const [pattern, found] of SHEBANGS) if (pattern.test(first)) return { lang: found[0], label: found[1] };
+  }
+  return { lang: "", label: ext ? ext.toUpperCase() : "Plain Text" };
+}
+
+/** Indentation, line endings and size for an editor-style status bar. */
+export function fileFacts(text: string): { lines: number; indent: string; eol: string; bytes: number } {
+  const lines = text.length ? text.split("\n").length - (text.endsWith("\n") ? 1 : 0) : 0;
+  let tabs = 0, spaces = 0;
+  const widths = new Map<number, number>();
+  for (const line of text.split("\n").slice(0, 2000)) {
+    if (line.startsWith("\t")) tabs++;
+    else {
+      const lead = /^( +)\S/.exec(line)?.[1]?.length ?? 0;
+      if (lead) { spaces++; for (const size of [2, 4, 8]) if (lead % size === 0) widths.set(size, (widths.get(size) ?? 0) + 1); }
+    }
+  }
+  const size = [4, 2, 8].find(n => (widths.get(n) ?? 0) >= spaces * 0.9) ?? 4;
+  const indent = tabs > spaces ? "Tabs" : spaces ? `Spaces: ${size}` : "—";
+  return { lines, indent, eol: text.includes("\r\n") ? "CRLF" : "LF", bytes: new TextEncoder().encode(text).length };
+}
+
+/** What kind of project a set of paths looks like, for the explorer header. */
+export function projectStack(paths: string[]): string[] {
+  const names = new Set(paths.map(p => p.toLowerCase()));
+  const has = (...files: string[]) => files.some(f => names.has(f));
+  const stack: string[] = [];
+  if (has("pyproject.toml", "requirements.txt", "setup.py", "pipfile") || paths.some(p => p.endsWith(".py"))) stack.push("Python");
+  if (has("tsconfig.json")) stack.push("TypeScript");
+  if (has("package.json")) stack.push(has("bun.lock", "bun.lockb") ? "Bun" : "Node");
+  if (has("cargo.toml")) stack.push("Rust");
+  if (has("go.mod")) stack.push("Go");
+  if (has("pom.xml", "build.gradle", "build.gradle.kts")) stack.push("Java");
+  if (has("gemfile")) stack.push("Ruby");
+  if (has("composer.json")) stack.push("PHP");
+  if (has("dockerfile", "docker-compose.yml", "compose.yaml")) stack.push("Docker");
+  return stack;
+}

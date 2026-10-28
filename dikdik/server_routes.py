@@ -20,8 +20,8 @@ from .drafts import DraftConflict, Drafts
 from .mcp import OAUTH_PREFIX, McpError, McpStore, oauth_ref, test_server
 from .mcp_catalog import catalog as mcp_library, install as mcp_install
 from .mcp_oauth import OAuthJobs
-from .connections import ConnectionStore
-from .model_catalog import catalog
+from .connections import ConnectionStore, secret_ref as connection_ref
+from .model_catalog import add_custom, catalog, live_models, provider_info
 from .profiles import ApiError, ProfileStore
 from .providers import chat_completion
 from .routing import STRATEGIES, RouterStore
@@ -170,7 +170,73 @@ def build_routes(engine_or_stores):
         return None
 
     def catalog_routes(method, parts, body, query):
-        return (200, catalog()) if method == "GET" and len(parts) == 2 else None
+        """/api/model-catalog: providers, connect with a key, live model lists, use a model."""
+        if method == "GET" and len(parts) == 2:
+            return 200, catalog(stores.store, connections.list())
+        if method == "POST" and len(parts) == 3 and parts[2] == "custom":
+            added = add_custom(stores.store, body)
+            if body.get("api_key") or provider_info(stores.store, added["id"]).get("no_key"):
+                connect(added["id"], body)
+            return 201, catalog(stores.store, connections.list())["providers"][added["id"]]
+        if len(parts) != 4:
+            return None
+        try:
+            info = provider_info(stores.store, parts[2])
+        except KeyError:
+            return 404, {"error": "Unknown provider"}
+        current = catalog(stores.store, connections.list())["providers"][info["id"]]
+        if method == "POST" and parts[3] == "connect":
+            connect(info["id"], body)
+            return 200, catalog(stores.store, connections.list())["providers"][info["id"]]
+        if method == "GET" and parts[3] == "models":
+            key = None
+            if current["connection"]:
+                try:
+                    key = secrets.reveal(connection_ref(current["connection"])).decode("utf-8")
+                except KeyError:
+                    key = None
+            elif not info.get("public_models") and not info.get("no_key"):
+                raise ValueError(f"Connect {info['name']} first")
+            endpoint = connections.get(current["connection"])["endpoint"] if current["connection"] else ""
+            return 200, {"provider": info["id"], "models": live_models({**info, "base": endpoint or info["base"]}, key)}
+        if method == "POST" and parts[3] == "use":
+            if not current["connection"]:
+                raise ValueError(f"Connect {info['name']} first")
+            model = body.get("model")
+            if not isinstance(model, str) or not model.strip() or len(model) > 200:
+                raise ValueError("Choose a model")
+            name = f"{info['name']} · {model.strip()}"[:128]
+            existing = next((p for p in profiles.list_profiles()[1] if p["name"] == name), None)
+            if existing is None:
+                status, created = profiles.create({"name": name, "provider": info["kind"], "model": model.strip(),
+                                                   "connection_id": current["connection"]})
+                existing = {"id": created["id"]}
+            if body.get("default", True) is True:
+                profiles.patch(existing["id"], {"is_default": True})
+            return 200, {"profile": existing["id"], "name": name}
+        return None
+
+    def connect(provider_id, body):
+        """Store the provider's key as a connection whose endpoint is the provider's base URL."""
+        info = provider_info(stores.store, provider_id)
+        if not isinstance(body, dict):
+            raise ValueError("Send the API key")
+        endpoint = info["base"]
+        if info["kind"] == "azure":
+            endpoint = body.get("endpoint") or ""
+            if not isinstance(endpoint, str) or not endpoint.startswith("https://"):
+                raise ValueError("Azure needs your resource endpoint, e.g. https://my-resource.openai.azure.com/openai/v1")
+        current = catalog(stores.store, connections.list())["providers"][provider_id]
+        if current["connection"]:
+            return connections.update(current["connection"], {"api_key": body.get("api_key")}) if body.get("api_key") else {"id": current["connection"]}
+        names = {c["name"] for c in connections.list()}
+        name = info["name"] if info["name"] not in names else f"{info['name']} ({len(names) + 1})"
+        payload = {"name": name, "provider": info["kind"], "endpoint": None if info["id"] in {"openai", "anthropic"} else endpoint}
+        if body.get("api_key"):
+            payload["api_key"] = body["api_key"]
+        elif not info.get("no_key"):
+            raise ValueError(f"Paste your {info['name']} API key")
+        return connections.create(payload)
 
     def secrets_routes(method: str, parts: list[str], body: dict, query: dict):
         if method == "GET" and len(parts) == 2:

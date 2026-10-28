@@ -33,8 +33,8 @@ The parity audit (docs/PARITY.md) moved from 89 to 425 fully matched OpenHands s
 of 1,749. One live model run is recorded (OpenRouter, GLM 5.2: the example bug fixed
 for $0.0028); live-Docker runs are still not recorded.
 
-Test status (2026-10-28): Python **554 passed, 4 skipped** (558 run); Bun
-**112 passed / 538 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-10-28): Python **563 passed, 3 skipped** (566 run); Bun
+**116 passed / 558 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
 
 ## Completed
 

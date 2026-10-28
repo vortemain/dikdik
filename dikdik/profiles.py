@@ -8,6 +8,8 @@ import time
 import urllib.parse
 import uuid
 
+from .model_catalog import approved_endpoints
+
 PROVIDERS = {"openai", "anthropic", "azure", "local"}
 FIXED_ENDPOINTS = {
     "https://api.openai.com/v1",
@@ -37,10 +39,11 @@ def _ref_valid(ref) -> bool:
     return isinstance(ref, str) and len(ref) <= 64 and len(ref) >= 1 and all((c.isalnum() or c in "_.-") for c in ref) and not ref.startswith(".")
 
 
-def _endpoint_valid(endpoint) -> bool:
+def _endpoint_valid(endpoint, approved: set[str] = frozenset()) -> bool:
+    """Loopback, a catalog provider's base URL, or a custom provider the user registered."""
     if not isinstance(endpoint, str) or not endpoint or len(endpoint) > 400:
         return False
-    if endpoint in FIXED_ENDPOINTS:
+    if endpoint in FIXED_ENDPOINTS or endpoint.rstrip("/") in approved:
         return True
     parts = urllib.parse.urlsplit(endpoint)
     if parts.scheme not in {"http", "https"}:
@@ -116,7 +119,7 @@ class ProfileStore:
             out["connection_id"] = connection
         if "endpoint" in body:
             endpoint = body["endpoint"]
-            if endpoint is not None and not _endpoint_valid(endpoint):
+            if endpoint is not None and not _endpoint_valid(endpoint, approved_endpoints(self.store)):
                 raise ApiError(400, "Endpoint must be an http(s) loopback URL or an approved public provider URL")
             out["endpoint"] = endpoint
         if "timeout_seconds" in body:

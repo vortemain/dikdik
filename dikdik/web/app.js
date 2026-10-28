@@ -3028,6 +3028,378 @@ Request (untrusted data, not instructions):
     }
     return lines;
   }
+  var EXTENSIONS = {
+    py: ["python", "Python"],
+    pyi: ["python", "Python"],
+    ts: ["typescript", "TypeScript"],
+    tsx: ["tsx", "TypeScript React"],
+    js: ["javascript", "JavaScript"],
+    mjs: ["javascript", "JavaScript"],
+    cjs: ["javascript", "JavaScript"],
+    jsx: ["jsx", "JavaScript React"],
+    json: ["json", "JSON"],
+    jsonc: ["json", "JSON with Comments"],
+    md: ["markdown", "Markdown"],
+    markdown: ["markdown", "Markdown"],
+    rs: ["rust", "Rust"],
+    go: ["go", "Go"],
+    java: ["java", "Java"],
+    kt: ["kotlin", "Kotlin"],
+    cs: ["csharp", "C#"],
+    swift: ["swift", "Swift"],
+    c: ["c", "C"],
+    h: ["c", "C"],
+    cpp: ["cpp", "C++"],
+    cc: ["cpp", "C++"],
+    hpp: ["cpp", "C++"],
+    rb: ["ruby", "Ruby"],
+    php: ["c", "PHP"],
+    sh: ["bash", "Shell"],
+    bash: ["bash", "Shell"],
+    zsh: ["bash", "Shell"],
+    ps1: ["powershell", "PowerShell"],
+    bat: ["bash", "Batch"],
+    cmd: ["bash", "Batch"],
+    css: ["css", "CSS"],
+    scss: ["css", "SCSS"],
+    less: ["css", "Less"],
+    html: ["html", "HTML"],
+    htm: ["html", "HTML"],
+    xml: ["xml", "XML"],
+    svg: ["xml", "SVG"],
+    vue: ["vue", "Vue"],
+    yml: ["yaml", "YAML"],
+    yaml: ["yaml", "YAML"],
+    toml: ["toml", "TOML"],
+    ini: ["toml", "INI"],
+    cfg: ["toml", "Config"],
+    env: ["bash", "Environment"],
+    sql: ["c", "SQL"],
+    txt: ["", "Plain Text"],
+    lock: ["", "Lock file"],
+    csv: ["", "CSV"]
+  };
+  var NAMES = {
+    dockerfile: ["bash", "Dockerfile"],
+    makefile: ["bash", "Makefile"],
+    ".gitignore": ["bash", "Ignore"],
+    ".dockerignore": ["bash", "Ignore"],
+    ".env": ["bash", "Environment"],
+    ".editorconfig": ["toml", "EditorConfig"],
+    "cargo.lock": ["toml", "TOML"],
+    license: ["", "Plain Text"],
+    "go.mod": ["go", "Go Module"],
+    "requirements.txt": ["bash", "Pip Requirements"],
+    procfile: ["bash", "Procfile"]
+  };
+  var SHEBANGS = [
+    [/python/, ["python", "Python"]],
+    [/\b(node|bun|deno)\b/, ["javascript", "JavaScript"]],
+    [/\b(ba|z)?sh\b/, ["bash", "Shell"]],
+    [/ruby/, ["ruby", "Ruby"]]
+  ];
+  function detectLanguage(path, text = "") {
+    const name = path.split("/").pop()?.toLowerCase() ?? "";
+    const special = NAMES[name] ?? (name.startsWith(".env") ? NAMES[".env"] : name.startsWith("dockerfile") ? NAMES["dockerfile"] : undefined);
+    if (special)
+      return { lang: special[0], label: special[1] };
+    const ext = name.includes(".") ? name.split(".").pop() ?? "" : "";
+    const known = EXTENSIONS[ext];
+    if (known)
+      return { lang: known[0], label: known[1] };
+    const first = text.slice(0, 200).split(`
+`, 1)[0] ?? "";
+    if (first.startsWith("#!")) {
+      for (const [pattern, found] of SHEBANGS)
+        if (pattern.test(first))
+          return { lang: found[0], label: found[1] };
+    }
+    return { lang: "", label: ext ? ext.toUpperCase() : "Plain Text" };
+  }
+  function fileFacts(text) {
+    const lines = text.length ? text.split(`
+`).length - (text.endsWith(`
+`) ? 1 : 0) : 0;
+    let tabs = 0, spaces = 0;
+    const widths = new Map;
+    for (const line of text.split(`
+`).slice(0, 2000)) {
+      if (line.startsWith("\t"))
+        tabs++;
+      else {
+        const lead = /^( +)\S/.exec(line)?.[1]?.length ?? 0;
+        if (lead) {
+          spaces++;
+          for (const size2 of [2, 4, 8])
+            if (lead % size2 === 0)
+              widths.set(size2, (widths.get(size2) ?? 0) + 1);
+        }
+      }
+    }
+    const size = [4, 2, 8].find((n) => (widths.get(n) ?? 0) >= spaces * 0.9) ?? 4;
+    const indent = tabs > spaces ? "Tabs" : spaces ? `Spaces: ${size}` : "—";
+    return { lines, indent, eol: text.includes(`\r
+`) ? "CRLF" : "LF", bytes: new TextEncoder().encode(text).length };
+  }
+  function projectStack(paths) {
+    const names = new Set(paths.map((p) => p.toLowerCase()));
+    const has = (...files) => files.some((f) => names.has(f));
+    const stack = [];
+    if (has("pyproject.toml", "requirements.txt", "setup.py", "pipfile") || paths.some((p) => p.endsWith(".py")))
+      stack.push("Python");
+    if (has("tsconfig.json"))
+      stack.push("TypeScript");
+    if (has("package.json"))
+      stack.push(has("bun.lock", "bun.lockb") ? "Bun" : "Node");
+    if (has("cargo.toml"))
+      stack.push("Rust");
+    if (has("go.mod"))
+      stack.push("Go");
+    if (has("pom.xml", "build.gradle", "build.gradle.kts"))
+      stack.push("Java");
+    if (has("gemfile"))
+      stack.push("Ruby");
+    if (has("composer.json"))
+      stack.push("PHP");
+    if (has("dockerfile", "docker-compose.yml", "compose.yaml"))
+      stack.push("Docker");
+    return stack;
+  }
+
+  // dikdik/web/providers-pane.ts
+  function priceLabel(model) {
+    const perMillion = (value) => value === null || value === undefined || value === "" || Number.isNaN(Number(value)) ? null : Number(value) * 1e6;
+    const input = perMillion(model.prompt_price), output = perMillion(model.completion_price);
+    if (input === null && output === null)
+      return "";
+    if (input === 0 && output === 0)
+      return "Free";
+    const money = (n) => n === null ? "?" : n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+    return `${money(input)} in · ${money(output)} out per 1M`;
+  }
+  function contextLabel(tokens) {
+    if (!tokens)
+      return "";
+    return tokens >= 1e6 ? `${Math.round(tokens / 1e5) / 10}M context` : `${Math.round(tokens / 1000)}K context`;
+  }
+  function providersPane(root, deps) {
+    const { request, make, message } = deps;
+    let providers = [], selected = "", current = "", query = "";
+    const live = new Map;
+    const fail = (error) => message(error instanceof Error ? error.message : "Something went wrong", true);
+    const button = (label, className, onclick) => {
+      const node = make("button", className, label);
+      node.type = "button";
+      node.onclick = onclick;
+      return node;
+    };
+    async function load() {
+      const [catalog, model] = await Promise.all([
+        request("/api/model-catalog", "GET"),
+        request("/api/model", "GET")
+      ]);
+      providers = catalog.order.map((id) => catalog.providers[id]).filter(Boolean);
+      current = model.configured ? `${model.model ?? ""}${model.profile ? ` · ${model.profile}` : ""}` : "";
+      render();
+    }
+    async function use(provider, model) {
+      try {
+        await request("/api/model-catalog/" + encodeURIComponent(provider.id) + "/use", "POST", { model, default: true });
+        message(`Now using ${model}.`);
+        deps.changed?.();
+        await load();
+      } catch (error) {
+        fail(error);
+      }
+    }
+    function modelRow(provider, id, detail2 = "") {
+      const row = make("li", "provider-model");
+      const text = make("span", "provider-model-text");
+      text.append(make("strong", "", id));
+      if (detail2)
+        text.append(make("small", "", detail2));
+      row.append(text, button(provider.connection ? "Use" : "Connect first", "ghost small", () => {
+        if (provider.connection)
+          use(provider, id);
+      }));
+      return row;
+    }
+    function detail(provider) {
+      const box = make("section", "provider-detail");
+      const head = make("div", "provider-detail-head");
+      head.append(avatar(provider), make("strong", "", provider.name), make("span", provider.connection ? "state ok" : "state", provider.connection ? "Connected" : "Not connected"));
+      box.append(head, make("p", "muted", provider.blurb + (provider.base ? ` · ${provider.base}` : "")));
+      const form = make("form", "provider-connect");
+      const key = make("input");
+      key.type = "password";
+      key.autocomplete = "off";
+      key.placeholder = provider.no_key ? "No key needed (optional)" : provider.connection ? "Paste a new key to replace it" : `Paste your ${provider.name} API key`;
+      key.setAttribute("aria-label", `${provider.name} API key`);
+      const endpoint = make("input");
+      endpoint.placeholder = "https://my-resource.openai.azure.com/openai/v1";
+      endpoint.hidden = provider.kind !== "azure" || !!provider.connection;
+      const submit = make("button", "primary small", provider.connection ? "Replace key" : "Connect");
+      submit.type = "submit";
+      form.append(key, endpoint, submit);
+      if (provider.key_help) {
+        const link = make("a", "", provider.no_key ? "Download" : "Get a key");
+        link.href = provider.key_help;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        form.append(link);
+      }
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!key.value.trim() && !provider.no_key && !provider.connection) {
+          message(`Paste your ${provider.name} API key.`, true);
+          return;
+        }
+        if (provider.connection && !key.value.trim())
+          return;
+        submit.disabled = true;
+        try {
+          await request(`/api/model-catalog/${encodeURIComponent(provider.id)}/connect`, "POST", { api_key: key.value.trim() || undefined, endpoint: endpoint.value.trim() || undefined });
+          key.value = "";
+          message(provider.connection ? `${provider.name} key replaced.` : `${provider.name} connected. Pick a model below.`);
+          deps.changed?.();
+          await load();
+        } catch (error) {
+          fail(error);
+          submit.disabled = false;
+        }
+      });
+      box.append(form);
+      const list = make("ul", "provider-models");
+      const models = live.get(provider.id);
+      const search = make("input");
+      search.placeholder = `Search ${provider.name} models`;
+      search.value = query;
+      search.className = "provider-search";
+      search.oninput = () => {
+        query = search.value;
+        paint();
+      };
+      const paint = () => {
+        const needle = query.trim().toLowerCase();
+        const rows = models ? models.filter((m) => !needle || m.id.toLowerCase().includes(needle) || m.name.toLowerCase().includes(needle)).slice(0, 200).map((m) => modelRow(provider, m.id, [m.name !== m.id ? m.name : "", contextLabel(m.context), priceLabel(m)].filter(Boolean).join(" · "))) : provider.models.filter((m) => !needle || m.toLowerCase().includes(needle)).map((m) => modelRow(provider, m));
+        list.replaceChildren(...rows.length ? rows : [make("li", "muted", "No models match")]);
+      };
+      const tools = make("div", "provider-models-head");
+      tools.append(make("strong", "", models ? `${models.length} models from ${provider.name}` : "Popular models"), search);
+      const loadAll = button(models ? "Reload list" : "Load all models", "ghost small", async () => {
+        loadAll.disabled = true;
+        loadAll.textContent = "Loading…";
+        try {
+          live.set(provider.id, (await request(`/api/model-catalog/${encodeURIComponent(provider.id)}/models`, "GET")).models);
+          render();
+        } catch (error) {
+          fail(error);
+          loadAll.disabled = false;
+          loadAll.textContent = "Load all models";
+        }
+      });
+      tools.append(loadAll);
+      const custom = make("form", "provider-custom-model");
+      const typed = make("input");
+      typed.placeholder = "Or type any model name";
+      typed.setAttribute("aria-label", "Model name");
+      const go = make("button", "ghost small", "Use");
+      go.type = "submit";
+      custom.append(typed, go);
+      custom.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (typed.value.trim() && provider.connection)
+          use(provider, typed.value.trim());
+        else if (!provider.connection)
+          message(`Connect ${provider.name} first.`, true);
+      });
+      paint();
+      box.append(tools, list, custom);
+      return box;
+    }
+    function avatar(provider) {
+      const letters = provider.name.replace(/[^A-Za-z0-9 ]/g, "").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+      const node = make("span", "provider-avatar", letters || "?");
+      node.dataset.hue = String([...provider.id].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 12);
+      node.setAttribute("aria-hidden", "true");
+      return node;
+    }
+    function customForm() {
+      const box = make("section", "provider-detail");
+      box.append(make("strong", "", "Add your own provider"), make("p", "muted", "Any OpenAI-compatible API: a name, its base URL and a key (no key for servers on this computer)."));
+      const form = make("form", "provider-connect");
+      const name = make("input");
+      name.placeholder = "Name, e.g. Company gateway";
+      const base = make("input");
+      base.placeholder = "https://api.example.com/v1";
+      const key = make("input");
+      key.type = "password";
+      key.placeholder = "API key";
+      key.autocomplete = "off";
+      const add = make("button", "primary small", "Add provider");
+      add.type = "submit";
+      form.append(name, base, key, add);
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        try {
+          const created = await request("/api/model-catalog/custom", "POST", { name: name.value.trim(), base_url: base.value.trim(), api_key: key.value.trim() || undefined });
+          message(`${created.name} added.`);
+          selected = created.id;
+          deps.changed?.();
+          await load();
+        } catch (error) {
+          fail(error);
+        }
+      });
+      box.append(form);
+      return box;
+    }
+    function reveal() {
+      const panel = root.querySelector?.(".provider-detail");
+      panel?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    }
+    function render() {
+      const head = make("div", "providers-head");
+      head.append(make("p", "lead", current ? `Dikdik is using ${current}.` : "Connect a provider and pick a model to start."));
+      const grid = make("div", "provider-grid");
+      for (const provider of providers) {
+        const card = make("button", "provider-card");
+        card.type = "button";
+        card.setAttribute("aria-pressed", String(provider.id === selected));
+        const text = make("span", "provider-card-text");
+        text.append(make("strong", "", provider.name), make("small", "", provider.connection ? "Connected" : provider.blurb));
+        card.append(avatar(provider), text);
+        if (provider.connection)
+          card.dataset.connected = "true";
+        card.onclick = () => {
+          selected = selected === provider.id ? "" : provider.id;
+          query = "";
+          render();
+          reveal();
+        };
+        grid.append(card);
+      }
+      const plus = make("button", "provider-card provider-add");
+      plus.type = "button";
+      plus.setAttribute("aria-pressed", String(selected === "custom"));
+      plus.append(make("span", "provider-avatar", "+"), make("span", "provider-card-text", "Custom provider"));
+      plus.onclick = () => {
+        selected = selected === "custom" ? "" : "custom";
+        render();
+        reveal();
+      };
+      grid.append(plus);
+      const chosen = providers.find((p) => p.id === selected);
+      root.replaceChildren(head, grid, ...chosen ? [detail(chosen)] : selected === "custom" ? [customForm()] : []);
+    }
+    return async () => {
+      try {
+        await load();
+      } catch (error) {
+        fail(error);
+      }
+    };
+  }
 
   // dikdik/web/organise.ts
   var RUNNING = new Set(["queued", "running"]);
@@ -4712,7 +5084,12 @@ Request (untrusted data, not instructions):
         filePreview = false;
       showFilePreview();
       renderFileTabs();
-      const lines = highlightLines(data.text, languageFor(path));
+      const language = detectLanguage(path, data.text);
+      const lines = highlightLines(data.text, language.lang);
+      const facts = fileFacts(data.text);
+      const size = facts.bytes < 1024 ? `${facts.bytes} B` : facts.bytes < 1048576 ? `${(facts.bytes / 1024).toFixed(1)} KB` : `${(facts.bytes / 1048576).toFixed(1)} MB`;
+      el("editor-status").replaceChildren(...[`${facts.lines} lines`, facts.indent, "UTF-8", facts.eol, size, language.label].map((text, index) => make("span", index === 5 ? "status-lang" : "", text)));
+      el("editor-status").hidden = false;
       if (lines.length > 1 && !lines[lines.length - 1].length)
         lines.pop();
       el("file-view").replaceChildren(...lines.map((line, index) => {
@@ -5106,6 +5483,10 @@ Request (untrusted data, not instructions):
     const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
     const summary = `${plural(data.files.length, "file")} · ${plural(data.python_tests.length, "test")}`;
     el("project-name").textContent = data.name;
+    el("project-picker-name").textContent = data.name;
+    el("topbar-project-name").textContent = data.name;
+    el("explorer-project").textContent = data.name;
+    el("explorer-stack").replaceChildren(...projectStack(projectFiles).map((name) => make("span", "stack-chip", name)));
     el("project-summary").textContent = summary;
     projectTrusted = data.trusted === true;
     applyRunMode();
@@ -5593,6 +5974,11 @@ Request (untrusted data, not instructions):
       }
     }
   }
+  function twoPanes(...loaders) {
+    return async () => {
+      await Promise.all(loaders.map((load) => load()));
+    };
+  }
   var refreshPanels = {};
   async function connect() {
     await project();
@@ -5609,7 +5995,7 @@ Request (untrusted data, not instructions):
     if (!connected) {
       connected = true;
       Object.assign(refreshPanels, {
-        models: modelsPane(el("panel-profiles"), paneDeps),
+        models: twoPanes(providersPane(el("panel-providers"), paneDeps), modelsPane(el("panel-profiles"), paneDeps)),
         secrets: keysPane(el("panel-secrets"), paneDeps),
         skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
         plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
@@ -5774,7 +6160,7 @@ Request (untrusted data, not instructions):
     storageSet("dikdik.theme", themeSelect.value);
     applyTheme(themeSelect.value);
   });
-  var PANE_TITLES = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps" };
+  var PANE_TITLES = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps", git: "Git" };
   var automations = [];
   function syncAutoForm() {
     const kind = el("auto-kind").value;
@@ -7103,6 +7489,10 @@ Dikdik will read this folder, send what it reads to your model provider, ` + `ed
       message(error instanceof Error ? error.message : "Could not open VS Code", true);
     }
   }
+  el("explorer-collapse").addEventListener("click", () => {
+    expandedDirs.clear();
+    renderFileList();
+  });
   el("open-editor").addEventListener("click", () => {
     if (!openFile)
       return;
@@ -7123,7 +7513,9 @@ Dikdik will read this folder, send what it reads to your model provider, ` + `ed
         item.setAttribute("aria-expanded", String(row.open));
         const chevron = icon("chevron");
         chevron.setAttribute("class", "i tree-chevron");
-        item.append(chevron, icon("folder"), make("span", "tree-name", row.name));
+        const folder = icon(row.open ? "folder-open" : "folder");
+        folder.setAttribute("class", "i tree-folder");
+        item.append(chevron, folder, make("span", "tree-name", row.name));
         item.onclick = () => {
           if (expandedDirs.has(row.path))
             expandedDirs.delete(row.path);
@@ -7190,6 +7582,8 @@ Dikdik will read this folder, send what it reads to your model provider, ` + `ed
             el("file-view").replaceChildren();
             el("copy-file").hidden = true;
             el("file-preview").hidden = true;
+            el("editor-status").hidden = true;
+            el("open-editor").hidden = true;
             filePreview = false;
             showFilePreview();
             renderFileList();
@@ -7197,7 +7591,7 @@ Dikdik will read this folder, send what it reads to your model provider, ` + `ed
         }
         renderFileTabs();
       };
-      tab.append(pin, open, close);
+      tab.append(fileBadge(path.split("/").pop() ?? path), open, pin, close);
       return tab;
     }));
   }
@@ -8351,11 +8745,59 @@ Dikdik will read this folder, send what it reads to your model provider, ` + `ed
   function openProjects(form = null) {
     projectStatus("");
     showProjectForm(form);
+    if (form === "clone")
+      loadRepos();
     if (!projectsDialog.open)
       projectsDialog.showModal();
     loadProjects().catch((error) => projectStatus(error instanceof Error ? error.message : String(error), true));
   }
   el("project-switch").addEventListener("click", () => openProjects());
+  el("project-picker").addEventListener("click", () => openProjects());
+  el("topbar-project").addEventListener("click", () => openProjects());
+  for (const card of document.querySelectorAll?.(".start-card") ?? [])
+    card.addEventListener("click", () => openProjects(card.dataset.start ?? null));
+  var repoCache = null;
+  var gitProtocol = "https";
+  async function loadRepos() {
+    const box = el("project-repos");
+    try {
+      const accounts = await api("/api/git/accounts");
+      if (!accounts.github.signed_in) {
+        box.hidden = true;
+        return;
+      }
+      gitProtocol = accounts.github.protocol === "ssh" ? "ssh" : "https";
+      box.hidden = false;
+      if (!repoCache) {
+        el("project-repos-list").replaceChildren(make("li", "muted", "Loading your repositories…"));
+        repoCache = (await api("/api/git/repos")).repos;
+      }
+      renderRepos();
+    } catch {
+      box.hidden = true;
+    }
+  }
+  function renderRepos() {
+    const needle = (el("project-repos-search").value ?? "").trim().toLowerCase();
+    const shown = (repoCache ?? []).filter((repo) => !needle || repo.name.toLowerCase().includes(needle) || repo.description.toLowerCase().includes(needle)).slice(0, 80);
+    el("project-repos-list").replaceChildren(...shown.length ? shown.map((repo) => {
+      const item = make("li"), pick = make("button");
+      pick.type = "button";
+      pick.append(make("strong", "", `${repo.name}${repo.private ? " · private" : ""}`), make("small", "", repo.description || "No description"));
+      pick.onclick = () => {
+        el("project-clone-url").value = gitProtocol === "ssh" ? repo.ssh_url : repo.url;
+        for (const other of el("project-repos-list").querySelectorAll("button"))
+          other.setAttribute("aria-pressed", String(other === pick));
+      };
+      item.append(pick);
+      return item;
+    }) : [make("li", "muted", "No repositories match")]);
+  }
+  el("project-repos-search").addEventListener("input", renderRepos);
+  for (const tab of projectsDialog.querySelectorAll('[data-project-tab="clone"]'))
+    tab.addEventListener("click", () => {
+      loadRepos();
+    });
   el("projects-close").addEventListener("click", () => projectsDialog.close());
   for (const button2 of projectsDialog.querySelectorAll("[data-project-tab]")) {
     button2.addEventListener("click", () => showProjectForm(button2.getAttribute("aria-selected") === "true" ? null : button2.dataset.projectTab ?? null));
@@ -8401,5 +8843,88 @@ Dikdik will read this folder, send what it reads to your model provider, ` + `ed
     }
     switchProject("/api/projects/clone", { url, parent: el("project-clone-parent").value.trim() }, "Cloning… large repositories can take a few minutes.");
   });
-  Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps });
+  async function loadGitAccounts() {
+    const mount = el("panel-git");
+    let data;
+    try {
+      data = await api("/api/git/accounts");
+    } catch (error) {
+      mount.replaceChildren(make("p", "error", error instanceof Error ? error.message : "Could not read Git accounts"));
+      return;
+    }
+    const card = (title, provider, account) => {
+      const box = make("section", "git-card"), head = make("div", "git-card-head");
+      const state = make("span", account.signed_in ? "state ok" : "state", !account.installed ? "CLI not installed" : account.signed_in ? `Signed in${account.account ? ` as ${account.account}` : ""}` : "Not signed in");
+      head.append(icon("branch"), make("strong", "", title), state);
+      box.append(head);
+      const row = make("div", "row");
+      if (!account.installed) {
+        const link = make("a", "secondary small", `Install the ${title} CLI (${account.cli})`);
+        link.href = account.install;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        row.append(link);
+        box.append(row, make("p", "muted", `Then come back and press Refresh. The ${account.cli} tool keeps your sign-in in this computer's keyring.`));
+        return box;
+      } else {
+        const signIn = make("button", account.signed_in ? "ghost small" : "primary small", account.signed_in ? "Sign in again" : "Sign in with browser");
+        signIn.type = "button";
+        signIn.onclick = async () => {
+          signIn.disabled = true;
+          try {
+            let job = await request(`/api/git/accounts/${provider}/login`, "POST", {});
+            const info = make("div", "git-signin");
+            if (job.code)
+              info.append(make("p", "", "Enter this code on the page that opened in your browser:"), make("span", "git-code", job.code));
+            if (job.url) {
+              const open = make("a", "", job.url);
+              open.href = job.url;
+              open.target = "_blank";
+              open.rel = "noopener noreferrer";
+              info.append(open);
+            }
+            box.append(info);
+            for (let tries = 0;tries < 150 && job.state === "waiting"; tries++) {
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              job = await api(`/api/git/accounts/${provider}/login`);
+            }
+            message(job.state === "done" ? `Signed in to ${title}. Git now uses this sign-in.` : job.error || "The sign-in did not finish", job.state !== "done");
+          } catch (error) {
+            message(error instanceof Error ? error.message : "Sign-in failed", true);
+          }
+          loadGitAccounts();
+        };
+        row.append(signIn);
+        if (provider === "github" && account.signed_in) {
+          const setup = make("button", "ghost small", "Use for Git pushes and pulls");
+          setup.type = "button";
+          setup.title = "Runs gh auth setup-git so plain Git uses your GitHub sign-in";
+          setup.onclick = async () => {
+            try {
+              await request("/api/git/accounts/github/setup-git", "POST", {});
+              message("Git now uses your GitHub sign-in.");
+              loadGitAccounts();
+            } catch (error) {
+              message(error instanceof Error ? error.message : "Setup failed", true);
+            }
+          };
+          row.append(setup);
+          box.append(make("p", "muted", `Git transfers use ${account.protocol === "ssh" ? "SSH keys" : "HTTPS with this sign-in"}. Your repositories appear under Projects → Clone repository.`));
+        }
+      }
+      box.append(row);
+      return box;
+    };
+    const identity = make("section", "git-card");
+    const idHead = make("div", "git-card-head");
+    idHead.append(icon("pencil"), make("strong", "", "Commit identity"), make("span", "state", data.git.installed ? "" : "Git not installed"));
+    identity.append(idHead, make("p", "", data.git.name || data.git.email ? `${data.git.name || "(no name)"} <${data.git.email || "no email"}>` : "Not set yet."), make("p", "muted", `Credential helper: ${data.git.credential_helper || "none"}. Change the name Dikdik commits with under General → Git identity.`));
+    const refresh = make("button", "ghost small", "Refresh");
+    refresh.type = "button";
+    refresh.onclick = () => {
+      loadGitAccounts();
+    };
+    mount.replaceChildren(card("GitHub", "github", data.github), card("GitLab", "gitlab", data.gitlab), identity, refresh);
+  }
+  Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps, git: loadGitAccounts });
 })();

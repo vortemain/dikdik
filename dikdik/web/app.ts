@@ -7,7 +7,8 @@ import { keysPane, modelsPane } from "./models-pane";
 import { skillsPane } from "./skills-pane";
 import { pluginsPane } from "./plugins-pane";
 import { mcpPane } from "./mcp-pane";
-import { highlight, highlightLines, type Token } from "./highlight";
+import { detectLanguage, fileFacts, highlight, highlightLines, projectStack, type Token } from "./highlight";
+import { providersPane } from "./providers-pane";
 import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, workspacePath } from "./organise";
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
@@ -1111,7 +1112,13 @@ async function showFile(path: string, version: string): Promise<void> {
     if (!markdown) filePreview = false;
     showFilePreview();
     renderFileTabs();
-    const lines = highlightLines(data.text, languageFor(path));
+    const language = detectLanguage(path, data.text);
+    const lines = highlightLines(data.text, language.lang);
+    const facts = fileFacts(data.text);
+    const size = facts.bytes < 1024 ? `${facts.bytes} B` : facts.bytes < 1048576 ? `${(facts.bytes / 1024).toFixed(1)} KB` : `${(facts.bytes / 1048576).toFixed(1)} MB`;
+    el("editor-status").replaceChildren(...[`${facts.lines} lines`, facts.indent, "UTF-8", facts.eol, size, language.label]
+      .map((text, index) => make("span", index === 5 ? "status-lang" : "", text)));
+    el("editor-status").hidden = false;
     if (lines.length > 1 && !lines[lines.length - 1]!.length) lines.pop();
     el("file-view").replaceChildren(...lines.map((line, index) => {
       const span = make("span", "ln");
@@ -1422,6 +1429,10 @@ async function project(): Promise<void> {
   const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
   const summary = `${plural(data.files.length, "file")} · ${plural(data.python_tests.length, "test")}`;
   el("project-name").textContent = data.name;
+  el("project-picker-name").textContent = data.name;
+  el("topbar-project-name").textContent = data.name;
+  el("explorer-project").textContent = data.name;
+  el("explorer-stack").replaceChildren(...projectStack(projectFiles).map(name => make("span", "stack-chip", name)));
   el("project-summary").textContent = summary;
   projectTrusted = (data as Project & { trusted?: boolean }).trusted === true;
   applyRunMode();
@@ -1759,6 +1770,9 @@ async function observe(force = false): Promise<void> {
 }
 
 // --- sign-in and panels ---------------------------------------------------
+function twoPanes(...loaders: (() => Promise<void>)[]): () => Promise<void> {
+  return async () => { await Promise.all(loaders.map(load => load())); };
+}
 let refreshPanels: Record<string, () => Promise<void>> = {};
 
 async function connect(): Promise<void> {
@@ -1771,7 +1785,7 @@ async function connect(): Promise<void> {
   if (!connected) {
     connected = true;
     Object.assign(refreshPanels, {  // keeps the loaders registered at start-up (Platform, ACP, Apps)
-      models: modelsPane(el("panel-profiles"), paneDeps),
+      models: twoPanes(providersPane(el("panel-providers"), paneDeps), modelsPane(el("panel-profiles"), paneDeps)),
       secrets: keysPane(el("panel-secrets"), paneDeps),
       skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
       plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
@@ -1886,7 +1900,7 @@ themeSelect.addEventListener("change", () => {
   applyTheme(themeSelect.value);
 });
 
-const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps" };
+const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps", git: "Git" };
 
 // --- automations ----------------------------------------------------------
 let automations: Automation[] = [];
@@ -2823,6 +2837,7 @@ async function openInEditor(path: string, line?: number): Promise<void> {
   try { await request("/api/files/open-in-editor", "POST", { path, ...(line ? { line } : {}) }); message(path === "." ? "Opened the project in VS Code." : `Opened ${path} in VS Code.`); }
   catch (error) { message(error instanceof Error ? error.message : "Could not open VS Code", true); }
 }
+el("explorer-collapse").addEventListener("click", () => { expandedDirs.clear(); renderFileList(); });
 el("open-editor").addEventListener("click", () => {
   if (!openFile) return;
   const view = el("file-view"), first = [...view.querySelectorAll<HTMLElement>(".ln")].find(line => line.offsetTop >= view.scrollTop);
@@ -2839,7 +2854,8 @@ function treeRows(paths: string[], changed: Set<string>): HTMLElement[] {
     if (row.dir) {
       item.setAttribute("aria-expanded", String(row.open));
       const chevron = icon("chevron"); chevron.setAttribute("class", "i tree-chevron");
-      item.append(chevron, icon("folder"), make("span", "tree-name", row.name));
+      const folder = icon(row.open ? "folder-open" : "folder"); folder.setAttribute("class", "i tree-folder");
+      item.append(chevron, folder, make("span", "tree-name", row.name));
       item.onclick = () => { if (expandedDirs.has(row.path)) expandedDirs.delete(row.path); else expandedDirs.add(row.path); renderFileList(); };
     } else {
       item.setAttribute("aria-selected", String(row.path === openFile));
@@ -2875,11 +2891,11 @@ function renderFileTabs(): void {
       if (path === openFile) {
         const next = openTabs[openTabs.length - 1];
         if (next) void showFile(next, changedPaths().has(next) && selected ? "candidate" : "workspace");
-        else { openFile = null; fileText = ""; el("file-name").textContent = "Choose a file"; el("file-view").replaceChildren(); el("copy-file").hidden = true; el("file-preview").hidden = true; filePreview = false; showFilePreview(); renderFileList(); }
+        else { openFile = null; fileText = ""; el("file-name").textContent = "Choose a file"; el("file-view").replaceChildren(); el("copy-file").hidden = true; el("file-preview").hidden = true; el("editor-status").hidden = true; el("open-editor").hidden = true; filePreview = false; showFilePreview(); renderFileList(); }
       }
       renderFileTabs();
     };
-    tab.append(pin, open, close);
+    tab.append(fileBadge(path.split("/").pop() ?? path), open, pin, close);
     return tab;
   }));
 }
@@ -3713,10 +3729,46 @@ async function switchProject(route: string, body: Record<string, unknown>, worki
 function openProjects(form: string | null = null): void {
   projectStatus("");
   showProjectForm(form);
+  if (form === "clone") void loadRepos();
   if (!projectsDialog.open) projectsDialog.showModal();
   void loadProjects().catch(error => projectStatus(error instanceof Error ? error.message : String(error), true));
 }
 el("project-switch").addEventListener("click", () => openProjects());
+el("project-picker").addEventListener("click", () => openProjects());
+el("topbar-project").addEventListener("click", () => openProjects());
+for (const card of document.querySelectorAll?.<HTMLButtonElement>(".start-card") ?? []) card.addEventListener("click", () => openProjects(card.dataset.start ?? null));
+
+// Clone: the signed-in GitHub account's repositories, newest first, one click to pick.
+interface RepoEntry { name: string; description: string; private: boolean; url: string; ssh_url: string }
+let repoCache: RepoEntry[] | null = null, gitProtocol = "https";
+async function loadRepos(): Promise<void> {
+  const box = el("project-repos");
+  try {
+    const accounts = await api<{ github: { signed_in: boolean; protocol?: string | null } }>("/api/git/accounts");
+    if (!accounts.github.signed_in) { box.hidden = true; return; }
+    gitProtocol = accounts.github.protocol === "ssh" ? "ssh" : "https";
+    box.hidden = false;
+    if (!repoCache) { el("project-repos-list").replaceChildren(make("li", "muted", "Loading your repositories…")); repoCache = (await api<{ repos: RepoEntry[] }>("/api/git/repos")).repos; }
+    renderRepos();
+  } catch { box.hidden = true; }
+}
+function renderRepos(): void {
+  const needle = ((el("project-repos-search") as HTMLInputElement).value ?? "").trim().toLowerCase();
+  const shown = (repoCache ?? []).filter(repo => !needle || repo.name.toLowerCase().includes(needle) || repo.description.toLowerCase().includes(needle)).slice(0, 80);
+  el("project-repos-list").replaceChildren(...(shown.length ? shown.map(repo => {
+    const item = make("li"), pick = make("button") as HTMLButtonElement;
+    pick.type = "button";
+    pick.append(make("strong", "", `${repo.name}${repo.private ? " · private" : ""}`), make("small", "", repo.description || "No description"));
+    pick.onclick = () => {
+      (el("project-clone-url") as HTMLInputElement).value = gitProtocol === "ssh" ? repo.ssh_url : repo.url;
+      for (const other of el("project-repos-list").querySelectorAll("button")) other.setAttribute("aria-pressed", String(other === pick));
+    };
+    item.append(pick);
+    return item;
+  }) : [make("li", "muted", "No repositories match")]));
+}
+el("project-repos-search").addEventListener("input", renderRepos);
+for (const tab of projectsDialog.querySelectorAll<HTMLElement>('[data-project-tab="clone"]')) tab.addEventListener("click", () => { void loadRepos(); });
 el("projects-close").addEventListener("click", () => projectsDialog.close());
 for (const button of projectsDialog.querySelectorAll<HTMLElement>("[data-project-tab]")) {
   button.addEventListener("click", () => showProjectForm(button.getAttribute("aria-selected") === "true" ? null : button.dataset.projectTab ?? null));
@@ -3751,5 +3803,66 @@ el("project-clone-form").addEventListener("submit", event => {
     "Cloning… large repositories can take a few minutes.");
 });
 
+// --- Settings → Git: this computer's own GitHub / GitLab sign-ins ---------------
+interface GitAccount { installed: boolean; signed_in: boolean; account?: string | null; protocol?: string | null; install: string; cli: string }
+interface GitAccounts { git: { installed: boolean; name: string; email: string; credential_helper: string }; github: GitAccount; gitlab: GitAccount }
+async function loadGitAccounts(): Promise<void> {
+  const mount = el("panel-git");
+  let data: GitAccounts;
+  try { data = await api<GitAccounts>("/api/git/accounts"); }
+  catch (error) { mount.replaceChildren(make("p", "error", error instanceof Error ? error.message : "Could not read Git accounts")); return; }
+  const card = (title: string, provider: "github" | "gitlab", account: GitAccount) => {
+    const box = make("section", "git-card"), head = make("div", "git-card-head");
+    const state = make("span", account.signed_in ? "state ok" : "state",
+      !account.installed ? "CLI not installed" : account.signed_in ? `Signed in${account.account ? ` as ${account.account}` : ""}` : "Not signed in");
+    head.append(icon("branch"), make("strong", "", title), state);
+    box.append(head);
+    const row = make("div", "row");
+    if (!account.installed) {
+      const link = make("a", "secondary small", `Install the ${title} CLI (${account.cli})`) as HTMLAnchorElement;
+      link.href = account.install; link.target = "_blank"; link.rel = "noopener noreferrer";
+      row.append(link);
+      box.append(row, make("p", "muted", `Then come back and press Refresh. The ${account.cli} tool keeps your sign-in in this computer's keyring.`));
+      return box;
+    } else {
+      const signIn = make("button", account.signed_in ? "ghost small" : "primary small", account.signed_in ? "Sign in again" : "Sign in with browser") as HTMLButtonElement;
+      signIn.type = "button";
+      signIn.onclick = async () => {
+        signIn.disabled = true;
+        try {
+          let job = await request<{ state: string; code: string | null; url: string | null; error: string | null }>(`/api/git/accounts/${provider}/login`, "POST", {});
+          const info = make("div", "git-signin");
+          if (job.code) info.append(make("p", "", "Enter this code on the page that opened in your browser:"), make("span", "git-code", job.code));
+          if (job.url) { const open = make("a", "", job.url) as HTMLAnchorElement; open.href = job.url; open.target = "_blank"; open.rel = "noopener noreferrer"; info.append(open); }
+          box.append(info);
+          for (let tries = 0; tries < 150 && job.state === "waiting"; tries++) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            job = await api(`/api/git/accounts/${provider}/login`);
+          }
+          message(job.state === "done" ? `Signed in to ${title}. Git now uses this sign-in.` : job.error || "The sign-in did not finish", job.state !== "done");
+        } catch (error) { message(error instanceof Error ? error.message : "Sign-in failed", true); }
+        void loadGitAccounts();
+      };
+      row.append(signIn);
+      if (provider === "github" && account.signed_in) {
+        const setup = make("button", "ghost small", "Use for Git pushes and pulls") as HTMLButtonElement; setup.type = "button";
+        setup.title = "Runs gh auth setup-git so plain Git uses your GitHub sign-in";
+        setup.onclick = async () => { try { await request("/api/git/accounts/github/setup-git", "POST", {}); message("Git now uses your GitHub sign-in."); void loadGitAccounts(); } catch (error) { message(error instanceof Error ? error.message : "Setup failed", true); } };
+        row.append(setup);
+        box.append(make("p", "muted", `Git transfers use ${account.protocol === "ssh" ? "SSH keys" : "HTTPS with this sign-in"}. Your repositories appear under Projects → Clone repository.`));
+      }
+    }
+    box.append(row);
+    return box;
+  };
+  const identity = make("section", "git-card");
+  const idHead = make("div", "git-card-head");
+  idHead.append(icon("pencil"), make("strong", "", "Commit identity"), make("span", "state", data.git.installed ? "" : "Git not installed"));
+  identity.append(idHead, make("p", "", data.git.name || data.git.email ? `${data.git.name || "(no name)"} <${data.git.email || "no email"}>` : "Not set yet."),
+    make("p", "muted", `Credential helper: ${data.git.credential_helper || "none"}. Change the name Dikdik commits with under General → Git identity.`));
+  const refresh = make("button", "ghost small", "Refresh") as HTMLButtonElement; refresh.type = "button"; refresh.onclick = () => { void loadGitAccounts(); };
+  mount.replaceChildren(card("GitHub", "github", data.github), card("GitLab", "gitlab", data.gitlab), identity, refresh);
+}
+
 // Register the panes for lazy loading on first open.
-Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps });
+Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps, git: loadGitAccounts });

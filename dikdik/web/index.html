@@ -14,6 +14,7 @@
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
     <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
+    <symbol id="i-folder-open" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.6l2 2.2h7.4A2.5 2.5 0 0 1 21 9.7V10H7.2a2 2 0 0 0-1.9 1.4L3 18.5Z"/><path d="M5.3 11.4A2 2 0 0 1 7.2 10H21.5a1 1 0 0 1 .95 1.3l-2.1 6.8a2.5 2.5 0 0 1-2.4 1.9H5"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.6l2 2.2h7.4A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8m0-4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16m0 4v-4h-4"/></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></symbol>
@@ -103,6 +104,11 @@
         <button id="open-palette" class="ghost icon" type="button" aria-label="Command menu" title="Command menu (Ctrl K)"><svg class="i"><use href="#i-command"/></svg></button>
         <button id="toggle-sidebar" class="ghost icon" type="button" aria-label="Hide sidebar" title="Hide sidebar"><svg class="i"><use href="#i-sidebar"/></svg></button>
       </div>
+      <button id="project-picker" class="project-picker" type="button" title="Switch, open, clone or create a project" aria-haspopup="dialog">
+        <span class="project-picker-icon"><svg class="i"><use href="#i-folder"/></svg></span>
+        <span class="project-picker-text"><small>Project</small><strong id="project-picker-name">—</strong></span>
+        <svg class="i project-picker-chevron"><use href="#i-chevron"/></svg>
+      </button>
       <button id="new-task" class="new-task" type="button"><svg class="i"><use href="#i-plus"/></svg>New task<kbd>Ctrl ⇧ O</kbd></button>
       <label class="task-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Search tasks</span><input id="task-search" type="search" placeholder="Search tasks" autocomplete="off"></label>
       <div class="list-tools">
@@ -142,7 +148,7 @@
       <header class="topbar">
         <button id="show-sidebar" class="ghost icon" type="button" aria-label="Show sidebar" title="Show sidebar" hidden><svg class="i"><use href="#i-sidebar"/></svg></button>
         <button id="toggle-sidebar-mobile" class="ghost icon" type="button" aria-label="Open menu"><svg class="i"><use href="#i-menu"/></svg></button>
-        <div class="topbar-title"><h1 id="chat-title">New task</h1><button id="state-button" class="state-button" type="button" aria-haspopup="menu" title="Status and actions"><span id="task-state" class="state-pill" role="status" aria-live="polite"></span></button></div>
+        <div class="topbar-title"><button id="topbar-project" class="topbar-project" type="button" title="Switch, open, clone or create a project" aria-haspopup="dialog"><svg class="i"><use href="#i-folder"/></svg><span id="topbar-project-name">—</span><svg class="i topbar-project-chevron"><use href="#i-chevron"/></svg></button><span class="topbar-sep" aria-hidden="true">/</span><h1 id="chat-title">New task</h1><button id="state-button" class="state-button" type="button" aria-haspopup="menu" title="Status and actions"><span id="task-state" class="state-pill" role="status" aria-live="polite"></span></button></div>
         <div class="topbar-actions">
           <button id="task-actions" class="ghost icon" type="button" aria-label="Task actions" title="Task actions" hidden><svg class="i"><use href="#i-more"/></svg></button>
           <button id="pause" class="ghost small" type="button" hidden title="Pause after the current step; resume later from exactly here"><svg class="i"><use href="#i-pause"/></svg>Pause</button>
@@ -156,6 +162,11 @@
         <section class="welcome" aria-label="Welcome">
           <img class="welcome-mark" src="/icon.svg" alt="">
           <h1>What should we build?</h1>
+          <div class="start-project" role="group" aria-label="Start with a project">
+            <button class="start-card" type="button" data-start="open"><svg class="i"><use href="#i-folder"/></svg><strong>Open a folder</strong><span>Work on a project on this computer</span></button>
+            <button class="start-card" type="button" data-start="clone"><svg class="i"><use href="#i-branch"/></svg><strong>Clone a repository</strong><span>From GitHub, GitLab or any Git URL</span></button>
+            <button class="start-card" type="button" data-start="new"><svg class="i"><use href="#i-plus"/></svg><strong>New project</strong><span>Start an empty folder with Git</span></button>
+          </div>
           <div id="onboarding" class="onboarding" hidden>
             <div class="onb-head"><strong>Get started</strong><button id="onboarding-dismiss" class="ghost small" type="button">Dismiss</button></div>
             <ol id="onboarding-steps" class="onb-steps"></ol>
@@ -255,10 +266,17 @@
           </div>
         </div>
       </div>
-      <div class="canvas-body" data-pane="files" hidden>
-        <label class="file-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Find a file</span><input id="file-search" type="search" placeholder="Find a file" autocomplete="off"></label>
-        <div id="file-list" class="file-list file-tree" role="tree" aria-label="Workspace files"></div>
+      <div class="canvas-body files-pane" data-pane="files" hidden>
+       <div class="files-grid">
+        <aside class="explorer" aria-label="Explorer">
+          <div class="explorer-head"><span>Explorer</span><button id="explorer-collapse" class="ghost icon" type="button" title="Collapse folders" aria-label="Collapse folders"><svg class="i"><use href="#i-list"/></svg></button></div>
+          <div class="explorer-project"><svg class="i"><use href="#i-chevron"/></svg><strong id="explorer-project">—</strong></div>
+          <div id="explorer-stack" class="explorer-stack"></div>
+          <label class="file-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Find a file</span><input id="file-search" type="search" placeholder="Search files by name" autocomplete="off"></label>
+          <div id="file-list" class="file-list file-tree" role="tree" aria-label="Workspace files"></div>
+        </aside>
         <div id="tree-resize" class="tree-resize" role="separator" aria-orientation="horizontal" aria-label="Resize the file tree; arrow keys resize, Home resets" tabindex="0" title="Drag to resize"></div>
+        <section class="editor" aria-label="Editor">
         <div id="file-tabs" class="file-tabs" role="tablist" aria-label="Open files" hidden></div>
         <div class="diff-view">
           <div class="code-block">
@@ -276,6 +294,9 @@
             <div id="file-rendered" class="file-rendered" hidden></div>
           </div>
         </div>
+        <div id="editor-status" class="editor-status" role="status" hidden></div>
+        </section>
+       </div>
       </div>
       <div class="canvas-body" data-pane="git" hidden>
         <div id="git-panel" class="git-panel"><p class="muted">Loading Git status…</p></div>
@@ -320,6 +341,7 @@
       <h2 id="settings-title">Settings</h2>
       <button class="settings-tab" type="button" role="tab" data-pane="general" aria-selected="true"><svg class="i"><use href="#i-sun"/></svg>General</button>
       <button class="settings-tab" type="button" role="tab" data-pane="models" aria-selected="false"><svg class="i"><use href="#i-cpu"/></svg>Models</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="git" aria-selected="false"><svg class="i"><use href="#i-branch"/></svg>Git</button>
       <button class="settings-tab" type="button" role="tab" data-pane="agents" aria-selected="false"><svg class="i"><use href="#i-sparkle"/></svg>Agents</button>
       <button class="settings-tab" type="button" role="tab" data-pane="secrets" aria-selected="false"><svg class="i"><use href="#i-key"/></svg>API keys</button>
       <button class="settings-tab" type="button" role="tab" data-pane="skills" aria-selected="false"><svg class="i"><use href="#i-book"/></svg>Skills</button>
@@ -344,7 +366,12 @@
         <div class="setting-row"><div><h4>Workspace</h4><p>The only folder Dikdik may read. Candidates are written to the private data directory.</p></div></div>
         <dl class="kv"><dt>Project</dt><dd id="settings-project">—</dd><dt>Inventory</dt><dd id="settings-inventory">—</dd><dt>Indexer</dt><dd id="settings-indexer">—</dd><dt>Network</dt><dd>Loopback only (127.0.0.1)</dd><dt>Sign-in</dt><dd>Remembered in this browser for 30 days. Restart with <code>--rotate-token</code> to sign out everywhere.</dd></dl>
       </section>
-      <section class="settings-pane" data-pane="models" role="tabpanel" hidden><p class="lead">Connections hold a provider key, profiles pick a model, and a router can choose a model per message.</p><div id="panel-profiles" class="m4-panel-mount"></div></section>
+      <section class="settings-pane" data-pane="models" role="tabpanel" hidden>
+        <div id="panel-providers" class="providers"></div>
+        <details class="advanced-models"><summary>Advanced: connections, model profiles and routers</summary>
+          <p class="lead">Connections hold a provider key, profiles pick a model, and a router can choose a model per message.</p><div id="panel-profiles" class="m4-panel-mount"></div>
+        </details>
+      </section>
       <section class="settings-pane" data-pane="agents" role="tabpanel" hidden>
         <p class="lead">Agent profiles are ready-made setups you pick in the composer: your instructions, which model to use, how long it may work, and which tools it may use. Tool switches only narrow what a task's approvals allow.</p>
         <form id="agent-form" class="skill-form">
@@ -391,6 +418,10 @@
       <section class="settings-pane" data-pane="mcp" role="tabpanel" hidden>
         <p class="lead">Give the agent tools from Model Context Protocol servers: issue trackers, databases, docs search. Servers start disabled; agent tasks connect to the ones you enable. A command server runs on this machine with only the key you give it.</p>
         <div id="panel-mcp" class="m4-panel-mount"></div>
+      </section>
+      <section class="settings-pane" data-pane="git" role="tabpanel" hidden>
+        <p class="lead">Dikdik uses this computer's own Git sign-ins. Sign in once here and pushing, pulling, cloning private repositories and opening pull requests just work. No token is stored in Dikdik.</p>
+        <div id="panel-git" class="git-accounts"></div>
       </section>
       <section class="settings-pane" data-pane="automations" role="tabpanel" hidden>
         <p class="lead">Run tasks on a timer, cron schedule, or local Git commit. Each run is an ordinary task you can inspect, review and apply, using exactly the approvals saved here.</p>
@@ -527,6 +558,10 @@
         <label for="project-clone-parent">Clone into</label>
         <div class="field-row"><input id="project-clone-parent" placeholder="Your Projects folder" autocomplete="off" spellcheck="false"><button class="ghost small" type="button" data-browse="project-clone-parent">Browse…</button></div>
         <p class="hint">Uses this computer's Git sign-in. Private repositories may open a sign-in window once.</p>
+        <div id="project-repos" class="project-repos" hidden>
+          <div class="field-row"><input id="project-repos-search" placeholder="Search your GitHub repositories" autocomplete="off" spellcheck="false"></div>
+          <ul id="project-repos-list" class="project-repos-list"></ul>
+        </div>
         <div class="row"><button class="primary small" type="submit">Clone</button></div>
       </form>
       <p id="projects-status" class="hint" role="status"></p>

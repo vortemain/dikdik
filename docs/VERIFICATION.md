@@ -1,6 +1,26 @@
 # Verification record — updated 2026-10-28
 
-## Code, files, Git, browser and server mode (latest)
+## Projects in view, provider catalog, Git accounts, VS Code-style files (latest)
+
+- Tests: `tests/test_model_catalog.py` (catalog, connect with a key, key never in
+  responses, use a model as default, the request URL becomes openrouter.ai, custom
+  provider with a live model list from a stand-in server, unregistered endpoints still
+  refused, rejected key reported), `tests/test_git_accounts.py` (CLI status parsing,
+  token text hidden, repositories newest first and filtered, sign-in needs a known
+  provider and its CLI), `tests/web/editor.test.ts` (language from names, extensions
+  and `#!`, status-bar facts, project stack, prices and context sizes).
+- Real browser: the top bar shows `shop-app ⌄ / New task`; the empty chat shows Open a
+  folder / Clone a repository / New project; Clone listed the owner's 61 GitHub
+  repositories (read-only `gh repo list`); Settings → Git showed "Signed in as
+  kibuchi254" and GitLab's missing CLI; Settings → Models showed the provider grid,
+  and Load all models fetched OpenRouter's public list (464 models with context and
+  price). Files at a wide size: explorer beside the editor, stack "Python ·
+  TypeScript · Node", folder icons, tabs with icons, breadcrumb, status bar
+  "4 lines · Spaces: 2 · UTF-8 · LF · 158 B · TypeScript React".
+- Not pressed: Sign in with browser (starts a real GitHub login), Connect (needs a real
+  key), Use (needs a connection).
+
+## Code, files, Git, browser and server mode
 
 - Full checks: Python **554 passed, 4 skipped** (558 run; the new skip is the live
   host-browser test, run separately with `DIKDIK_RUN_HOST_BROWSER=1`); Bun **112 /

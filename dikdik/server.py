@@ -34,6 +34,7 @@ from .api_keys import ApiKeyStore
 from .config import check_config_or_exit
 from .projects import Projects, check_location, pick_folder
 from . import remote as remote_mode
+from . import git_accounts
 
 
 WEB = Path(__file__).parent / "web"
@@ -149,6 +150,7 @@ def open_in_editor(root: Path, rel: str, line=None) -> dict:
 
 def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.RemoteConfig | None" = None):
     wiring = _Wiring(engine)
+    sign_ins = git_accounts.SignIns()
     projects = Projects(engine, on_switch=wiring.wire, limit=remote.projects_root if remote else None)
     engine, routes, gateway = _Live(wiring, "engine"), _Live(wiring, "routes"), _Live(wiring, "gateway")
     expected = ("Bearer " + token).encode("utf-8")
@@ -656,6 +658,13 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(200, gitops.info(engine.root))
                 elif path.startswith("/api/git/") and path.endswith("/diff") and path.count("/") == 4:
                     self.reply(200, gitops.diff(engine.root, path.split("/")[3]))
+                elif path == "/api/git/accounts":
+                    self.reply(200, git_accounts.status())
+                elif path.startswith("/api/git/accounts/") and path.endswith("/login") and path.count("/") == 5:
+                    self.reply(200, sign_ins.poll(path.split("/")[4]))
+                elif path == "/api/git/repos":
+                    query = parse_qs(urlsplit(self.path).query)
+                    self.reply(200, {"repos": git_accounts.repositories(query.get("provider", ["github"])[0], query.get("q", [""])[0])})
                 elif path == "/api/git/remote":
                     self.reply(200, gitops.remote_info(engine.root))
                 elif path == "/api/git/search":
@@ -833,6 +842,12 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(200, engine.undo(path.split("/")[3]))
                 elif path == "/api/commands/allowed/forget":
                     self.reply(200, {"commands": engine.forget_command(str(body.get("command") or ""))})
+                elif path.startswith("/api/git/accounts/") and path.endswith("/login") and path.count("/") == 5:
+                    if remote:
+                        raise ValueError("Sign in on the server itself (run gh auth login there)")
+                    self.reply(200, sign_ins.start(path.split("/")[4]))
+                elif path == "/api/git/accounts/github/setup-git":
+                    self.reply(200, sign_ins.setup_git())
                 elif path == "/api/git/fetch":
                     self.reply(200, gitops.fetch(engine.root))
                 elif path == "/api/git/pull":

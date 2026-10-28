@@ -7,6 +7,7 @@ holds the name, provider and optional endpoint. Keys are never returned.
 import time
 import uuid
 
+from .model_catalog import approved_endpoints
 from .profiles import PROVIDERS, ApiError, _endpoint_valid
 
 SCHEMA = """
@@ -68,7 +69,7 @@ class ConnectionStore:
         if body.get("provider") not in PROVIDERS:
             raise ApiError(400, "Provider must be one of openai, anthropic, azure, local")
         endpoint = body.get("endpoint") or None
-        if endpoint is not None and not _endpoint_valid(endpoint):
+        if endpoint is not None and not _endpoint_valid(endpoint, approved_endpoints(self.store)):
             raise ApiError(400, "Endpoint must be an http(s) loopback URL or an approved public provider URL")
         key = self._key(body.get("api_key")) if body.get("provider") != "local" or body.get("api_key") else None
         connection_id = uuid.uuid4().hex
@@ -96,7 +97,7 @@ class ConnectionStore:
                     raise ApiError(400, f"A connection called “{changes['name']}” already exists")
         if "endpoint" in body:
             endpoint = body["endpoint"] or None
-            if endpoint is not None and not _endpoint_valid(endpoint):
+            if endpoint is not None and not _endpoint_valid(endpoint, approved_endpoints(self.store)):
                 raise ApiError(400, "Endpoint must be an http(s) loopback URL or an approved public provider URL")
             changes["endpoint"] = endpoint
         if body.get("api_key"):  # blank keeps the current key
