@@ -1533,7 +1533,8 @@ async function loadModel(): Promise<void> {
   const pill = el("model-pill");
   setClass(pill, "unset", !info.configured);
   modelReady = info.configured;
-  el("model-label").textContent = modelOverride ? modelOverride.name : info.configured ? info.model ?? "Model" : "Set up a model";
+  el("model-label").textContent = modelOverride ? modelOverride.name : info.configured ? info.model ?? "Model" : "Choose model";
+  if (!info.configured && info.problem && info.source === "profile") el("model-banner-note").textContent = info.problem;
   setClass(pill, "override", modelOverride !== null);
   const profile = modelOverride ? profiles.find(p => p.id === modelOverride?.id) : profiles.find(p => p.is_default);
   let mark = el("model-symbol");
@@ -1912,7 +1913,8 @@ async function connect(): Promise<void> {
   if (!connected) {
     connected = true;
     Object.assign(refreshPanels, {  // keeps the loaders registered at start-up (Platform, ACP, Apps)
-      models: twoPanes(providersPane(el("panel-providers"), paneDeps), modelsPane(el("panel-profiles"), paneDeps)),
+      models: twoPanes(providersPane(el("panel-providers"), { ...paneDeps, takeProvider: () => { const id = pendingProvider; pendingProvider = null; return id; } }),
+        modelsPane(el("panel-profiles"), paneDeps)),
       secrets: keysPane(el("panel-secrets"), paneDeps),
       skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
       plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
@@ -3268,6 +3270,11 @@ function syncModelBanner(): void {
   el("model-banner").hidden = modelReady || !needsModel;
 }
 el("model-banner-setup").addEventListener("click", () => openSettings("models"));
+/** A provider chosen from the composer opens straight on its panel in Settings → Models. */
+let pendingProvider: string | null = null;
+for (const chip of document.querySelectorAll?.<HTMLButtonElement>(".model-chip") ?? []) {
+  chip.addEventListener("click", () => { pendingProvider = chip.dataset.provider ?? null; openSettings("models"); });
+}
 
 // --- settings routes, Git identity, sounds -----------------------------------------------
 function settingsHash(pane: string | null): void {

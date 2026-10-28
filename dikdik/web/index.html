@@ -187,7 +187,21 @@
 
       <section class="composer" aria-label="Send a message">
         <div class="composer-inner">
-          <div id="model-banner" class="goal-banner model-banner" role="alert" hidden><svg class="i"><use href="#i-alert"/></svg><span class="goal-text">No model is set up yet. Agent, planning and single-proposal modes need one.</span><button id="model-banner-setup" class="primary small" type="button">Set up a model</button></div>
+          <div id="model-banner" class="model-banner" role="status" hidden>
+            <span class="model-banner-icon" aria-hidden="true"><svg class="i"><use href="#i-cpu"/></svg></span>
+            <div class="model-banner-text">
+              <strong>Choose a model to start</strong>
+              <span id="model-banner-note">Connect a provider with your API key, or a model running on this computer. It takes a minute.</span>
+              <div class="model-banner-quick" role="group" aria-label="Quick connect">
+                <button class="model-chip" type="button" data-provider="openrouter">OpenRouter</button>
+                <button class="model-chip" type="button" data-provider="anthropic">Anthropic</button>
+                <button class="model-chip" type="button" data-provider="openai">OpenAI</button>
+                <button class="model-chip" type="button" data-provider="google">Gemini</button>
+                <button class="model-chip" type="button" data-provider="ollama">Ollama</button>
+              </div>
+            </div>
+            <button id="model-banner-setup" class="primary small model-banner-cta" type="button">Choose a model</button>
+          </div>
           <div id="goal-banner" class="goal-banner" role="status" hidden><svg class="i"><use href="#i-target"/></svg><span id="goal-text" class="goal-text"></span><button id="goal-stop" class="ghost small" type="button">Stop goal</button><button id="goal-resume" class="ghost small" type="button" hidden>Resume goal</button></div>
           <div id="side-answer" class="side-answer" role="status" hidden><div class="side-head"><span id="side-question" class="side-question"></span><button id="side-close" class="ghost icon" type="button" aria-label="Dismiss side answer" title="Dismiss"><svg class="i"><use href="#i-x"/></svg></button></div><div id="side-body"></div></div>
           <ul id="slash-menu" class="slash-menu" role="listbox" aria-label="Commands" hidden></ul>

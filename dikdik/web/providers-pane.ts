@@ -31,7 +31,7 @@ export function contextLabel(tokens: number | null): string {
   return tokens >= 1_000_000 ? `${Math.round(tokens / 100_000) / 10}M context` : `${Math.round(tokens / 1000)}K context`;
 }
 
-export function providersPane(root: HTMLElement, deps: PaneDeps): () => Promise<void> {
+export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider?: () => string | null }): () => Promise<void> {
   const { request, make, message } = deps;
   let providers: CatalogProvider[] = [], selected = "", current = "", query = "", generation = 0;
   const live = new Map<string, LiveModel[]>();
@@ -50,7 +50,10 @@ export function providersPane(root: HTMLElement, deps: PaneDeps): () => Promise<
     generation++; live.clear(); loading.clear(); errors.clear();
     if (root.dataset.selectedProvider) { selected = root.dataset.selectedProvider; delete root.dataset.selectedProvider; }
     current = model.configured ? `${model.model ?? ""}${model.profile ? ` · ${model.profile}` : ""}` : "";
+    const wanted = deps.takeProvider?.();
+    if (wanted && providers.some(p => p.id === wanted)) { selected = wanted; query = ""; }
     render();
+    if (wanted) setTimeout(reveal, 50);
     const provider = providers.find(p => p.id === selected);
     if (provider) void fetchModels(provider);
   }

@@ -495,8 +495,9 @@ pre.numbered .ln:hover::before { color: var(--ink-2, var(--ink)); }
 .composer-spacer { flex: 1; }
 .model-pill { border-radius: 999px; gap: 7px; color: var(--ink-2); max-width: 220px; }
 .model-pill span { overflow: hidden; text-overflow: ellipsis; }
-.model-pill.unset { color: var(--warn); background: var(--warn-soft); }
-.model-pill.unset:hover:not(:disabled) { background: var(--warn-soft); color: var(--warn); }
+.model-pill.unset { color: var(--accent); background: transparent; border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); font-weight: 600; }
+.model-pill.unset:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); border-style: solid; }
+.composer-controls > .model-pill.unset { max-width: none; flex: 0 0 auto; }
 .options-toggle[aria-expanded=true] { background: var(--hover); color: var(--ink); }
 #start { width: 34px; height: 34px; padding: 0; border-radius: 50%; }
 #start svg.i { width: 17px; height: 17px; stroke-width: 2.2; }
@@ -984,9 +985,21 @@ body.run-simple .classic-only { display: none !important; }
 .onb-text { flex: 1 1 auto; display: grid; font-size: 13px; color: var(--muted); }
 .onb-text strong { color: var(--ink); font-weight: 600; font-size: 13.5px; }
 .onb-step.done .onb-text strong { color: var(--muted); text-decoration: line-through; }
-.model-banner { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); background: var(--warn-soft); }
-.model-banner .i { color: var(--warn); }
-.model-banner .goal-text { white-space: normal; }
+/* No model yet: a calm, actionable card on top of the composer rather than a warning. */
+.model-banner { display: flex; align-items: flex-start; gap: 12px; margin: 0 0 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, var(--surface)), var(--surface)); box-shadow: var(--shadow-sm); }
+.model-banner[hidden] { display: none; }
+.model-banner-icon { flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.model-banner-icon .i { width: 18px; height: 18px; }
+.model-banner-text { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; line-height: 1.35; }
+.model-banner-text strong { font-size: 14px; color: var(--ink); }
+.model-banner-text span { font-size: 12.5px; color: var(--muted); }
+.model-banner-quick { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.model-banner-cta { flex: 0 0 auto; align-self: center; }
+.model-chip { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink-2); font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.model-chip:hover { border-color: var(--accent); color: var(--accent); }
+.model-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 560px) { .model-banner { flex-wrap: wrap; } .model-banner-cta { width: 100%; } }
 #cancel.confirming { color: var(--danger); border-color: var(--danger); }
 
 /* Chat polish: grouped steps, thinking, tables, alerts, quotes, paths. */
