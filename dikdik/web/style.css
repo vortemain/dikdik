@@ -497,7 +497,13 @@ pre.numbered .ln:hover::before { color: var(--ink-2, var(--ink)); }
 .model-pill span { overflow: hidden; text-overflow: ellipsis; }
 .model-pill.unset { color: var(--accent); background: transparent; border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); font-weight: 600; }
 .model-pill.unset:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); border-style: solid; }
-.composer-controls > .model-pill.unset { max-width: none; flex: 0 0 auto; }
+.composer-controls > .model-pill.unset { max-width: none; flex: 0 0 auto; border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.composer-controls > .model-pill.unset:hover:not(:disabled) { border-style: solid; }
+/* No model yet: the plain model icon instead of the generic provider glyph. */
+#model-pill.unset { border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); color: var(--accent); }
+#model-pill.unset:hover, #model-pill.unset[aria-expanded="true"] { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+#model-pill.unset #model-symbol { display: none; }
+#model-pill.unset > .i:first-of-type { display: inline-block; }
 .options-toggle[aria-expanded=true] { background: var(--hover); color: var(--ink); }
 #start { width: 34px; height: 34px; padding: 0; border-radius: 50%; }
 #start svg.i { width: 17px; height: 17px; stroke-width: 2.2; }

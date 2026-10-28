@@ -3269,7 +3269,8 @@ function syncModelBanner(): void {
   const needsModel = parseMode(select("mode").value) !== "offline";
   el("model-banner").hidden = modelReady || !needsModel;
 }
-el("model-banner-setup").addEventListener("click", () => openSettings("models"));
+// The card's main button opens the same model menu as the composer's model button.
+el("model-banner-setup").addEventListener("click", event => { event.stopPropagation(); (el("model-pill") as HTMLButtonElement).click(); });
 /** A provider chosen from the composer opens straight on its panel in Settings → Models. */
 let pendingProvider: string | null = null;
 for (const chip of document.querySelectorAll?.<HTMLButtonElement>(".model-chip") ?? []) {
