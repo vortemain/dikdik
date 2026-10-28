@@ -1,6 +1,7 @@
 """The computer's own browser: public-only proxy, page text, and when it is used."""
 
 import os
+import sys
 import socket
 import tempfile
 import threading
@@ -40,6 +41,11 @@ class ProxyTests(unittest.TestCase):
 
 
 class PageTextTests(unittest.TestCase):
+    def test_browser_output_is_drained_before_process_exit(self):
+        result = host_browser._run([sys.executable, "-c", "import sys; sys.stdout.write('x' * 200000)"], None, 5)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result.stdout), 200000)
+
     def test_text_without_scripts_or_styles(self):
         title, text = page_text("<html><head><title> Hello  page </title><style>p{}</style></head><body>"
                                 "<script>alert(1)</script><h1>Big</h1><p>One &amp; two</p><noscript>x</noscript></body></html>")

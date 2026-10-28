@@ -101,6 +101,12 @@ class ModelResolutionTests(unittest.TestCase):
             sent = opener.return_value.open.call_args.args[0]
         self.assertIsNone(sent.get_header("Authorization"))
 
+    def test_explicit_missing_key_on_local_profile_still_reports_error(self):
+        self.profile(provider="local", endpoint="http://localhost:11434/v1")
+        self.assertFalse(self.engine.models.describe()["configured"])
+        with self.assertRaisesRegex(ValueError, "is not stored"):
+            self.engine.models.resolve()
+
     def test_azure_sends_api_key_header_and_needs_an_endpoint(self):
         self.secrets.set("azure-key", b"azure-secret")
         self.profile(provider="azure", credential_secret_ref="azure-key")

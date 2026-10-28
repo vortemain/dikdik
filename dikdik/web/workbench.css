@@ -1,0 +1,81 @@
+/* Workspace surfaces use the same theme tokens as the rest of Dikdik. */
+.vscode-logo { width: 18px; height: 18px; object-fit: contain; flex: 0 0 auto; vertical-align: middle; }
+.vscode-action, .vscode-mention { display: inline-flex; align-items: center; gap: 7px; }
+.vscode-action .vscode-logo { padding: 2px; box-sizing: content-box; }
+#message .vscode-logo { margin-right: 7px; }
+.workbench-toolbar { display: flex; align-items: center; gap: 8px; min-height: 38px; flex-shrink: 0; padding: 0 9px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.workbench-title { font-size: 11px; color: var(--muted); }
+.workbench-toolbar .vscode-action { font-size: 11px; }
+.files-grid { display: grid; grid-template-columns: minmax(140px, var(--explorer-width, 184px)) 4px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+.files-grid .explorer { min-width: 0; min-height: 0; background: var(--sidebar); border-right: 0; }
+.explorer-head { flex: 0 0 40px; min-height: 40px; padding: 0 9px 0 16px; font-size: 10px; font-weight: 500; letter-spacing: .09em; }
+.explorer-project { flex: 0 0 28px; min-height: 28px; padding: 0 10px; background: var(--surface-2); }
+.explorer-project strong { font-size: 10px; letter-spacing: .04em; font-weight: 600; }
+.explorer-stack { padding: 6px 12px; gap: 4px; }
+.stack-chip { border-radius: 3px; background: transparent; border: 1px solid var(--line); color: var(--muted); font-size: 9px; padding: 0 4px; }
+.explorer .file-search { flex-shrink: 0; margin: 5px 8px 10px; height: 27px; padding: 0 6px; border-radius: 3px; }
+.explorer .file-search input { width: 100%; min-width: 0; height: 25px; font-size: 11px; padding: 0 5px 0 25px; }
+.explorer .file-search .i { left: 7px; width: 13px; height: 13px; }
+.explorer .file-list { display: flex; flex-direction: column; flex: 1 1 auto; align-items: stretch; max-height: none !important; height: auto !important; min-height: 0; padding: 0 0 16px; border: 0; overflow: auto; }
+.file-tree .tree-row, .file-list .file-search-result { flex: 0 0 27px; min-height: 27px; height: 27px; border-radius: 0; padding: 0 8px 0 calc(10px + var(--depth, 0) * 16px); gap: 5px; font: 12px/27px var(--sans); }
+.file-tree .tree-row:not(.tree-dir) { padding-left: calc(29px + var(--depth, 0) * 16px); }
+.file-tree .tree-row .file-symbol { width: 17px; height: 17px; }
+.file-tree .tree-row .tree-chevron { width: 14px; height: 14px; }
+.file-tree .tree-row:hover { background: var(--hover); }
+.file-tree .tree-row[aria-selected="true"] { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
+.files-grid > .tree-resize { display: block; width: 4px; height: auto; margin: 0; cursor: col-resize; background: var(--line); }
+.files-grid > .tree-resize:hover, .files-grid > .tree-resize:focus-visible { background: var(--accent); }
+.files-pane.explorer-hidden .files-grid { grid-template-columns: minmax(0, 1fr); }
+.files-pane.explorer-hidden .explorer, .files-pane.explorer-hidden .tree-resize { display: none; }
+.editor { background: var(--surface); overflow: hidden; }
+.editor .file-tabs { gap: 0; padding: 0; min-height: 36px; background: var(--sidebar); }
+.editor .file-tab { border: 0; border-right: 1px solid var(--line); border-top: 2px solid transparent; border-radius: 0; padding: 0 6px 0 10px; gap: 4px; flex-shrink: 0; }
+.editor .file-tab[aria-selected="true"] { background: var(--surface); border-top-color: var(--accent); }
+.editor .file-tab-name { font-size: 12px; max-width: 180px; padding: 7px 1px; }
+.editor .file-tab-pin { width: 18px; }
+.editor .file-tab-close { opacity: .55; }
+.editor .file-tab:hover .file-tab-close, .editor .file-tab[aria-selected="true"] .file-tab-close { opacity: 1; }
+.editor .code-block, .editor .code-head, .editor pre { background: var(--surface); }
+.editor .code-head { min-height: 32px; gap: 6px; border: 0; padding: 0 9px; flex-wrap: wrap; }
+.editor .code-head .code-lang { min-width: 0; font-size: 11px; margin-right: auto; flex: 1 1 140px; overflow: hidden; }
+.editor .code-head .copy { font-size: 10px; padding: 4px; }
+.editor .code-head .vscode-action > span { display: none; }
+.editor .code-head .vscode-logo { width: 16px; height: 16px; }
+#file-view { padding: 12px 0 30px; font: 12px/1.8 var(--mono); tab-size: 4; }
+.editor pre.numbered .ln { min-height: 21.6px; padding-left: 54px; }
+.editor pre.numbered .ln::before { width: 40px; padding-right: 12px; border-right: 0; }
+.editor-status { flex: 0 0 auto; min-height: 25px; align-items: center; justify-content: flex-end; gap: 12px; padding: 3px 9px; font-size: 10px; background: var(--sidebar); }
+.editor-status .language-mode { max-width: 140px; font-size: 10px; }
+
+/* Integrated terminal: flat chrome, shell typography, and an inline prompt. */
+.terminal-panel { background: var(--surface); color: var(--ink); }
+.terminal-toolbar { min-height: 39px; padding: 0 12px; gap: 12px; background: var(--sidebar); border-color: var(--line); }
+.terminal-heading { align-self: stretch; display: flex; align-items: center; border-bottom: 1px solid var(--accent); font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; }
+.terminal-session { color: var(--muted); font-size: 11px; gap: 6px; }
+.terminal-session .i { width: 14px; height: 14px; }
+.terminal-session strong { font-weight: 400; }
+.terminal-toolbar button { color: var(--muted); font-size: 11px; }
+.terminal-toolbar button:hover { background: var(--hover); color: var(--ink); }
+.terminal-screen { scrollbar-color: var(--line-strong) transparent; }
+#terminal-view { padding: 14px 18px; color: var(--ink-2); font: 12px/1.7 var(--mono); }
+.terminal-welcome { padding: 18px; color: var(--ink-2); font: 12px/1.7 var(--mono); }
+.terminal-welcome p { font-size: 12px; margin: 0 0 6px; }
+.terminal-welcome strong { color: var(--accent); font-weight: 500; }
+.terminal-welcome small { font: 10.5px/1.8 var(--mono); color: var(--faint); max-width: none; }
+.terminal-form { padding: 8px 16px 14px; background: var(--surface); border-top: 1px solid var(--line); }
+.terminal-options { font: 10px var(--sans); color: var(--muted); margin-bottom: 8px; }
+.terminal-options input { background: transparent; color: var(--ink-2); border: 1px solid var(--line); border-radius: 3px; padding: 4px 6px; }
+.terminal-prompt { gap: 8px; padding: 4px 0; background: transparent; border: 0; border-radius: 0; }
+.terminal-prompt:focus-within { box-shadow: none; border: 0; }
+.terminal-prompt > span { color: var(--accent); }
+.terminal-prompt .terminal-prompt-path { font: 11px var(--mono); color: var(--tok-fn); max-width: 120px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.terminal-prompt input { color: var(--ink); font: 12px var(--mono); caret-color: var(--accent); }
+.terminal-prompt input::placeholder { color: var(--faint); }
+.terminal-run, .terminal-stop { border-radius: 3px; padding: 4px 6px; background: var(--accent-soft); color: var(--accent); }
+.terminal-stop { background: var(--danger-soft); color: var(--danger); }
+@container (max-width: 470px) {
+  .files-grid { grid-template-columns: minmax(130px, var(--explorer-width, 145px)) 4px minmax(0, 1fr); }
+  .workbench-title { display: none; }
+  .editor .code-head .copy > span, .file-tab-pin { display: none; }
+  .editor-status { gap: 6px; }
+}

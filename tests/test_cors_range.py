@@ -59,7 +59,9 @@ class CorsRangeTests(unittest.TestCase):
         self.assertEqual(status, 206)
 
     def test_range_out_of_bounds(self):
-        status, body, headers = self.call("GET", "/app.js", {"Range": "bytes=999999-"})
+        from dikdik.server import WEB
+        beyond_end = (WEB / "app.js").stat().st_size + 1
+        status, body, headers = self.call("GET", "/app.js", {"Range": f"bytes={beyond_end}-"})
         self.assertEqual(status, 416)
 
     def test_no_range_returns_full_file(self):

@@ -1,5 +1,40 @@
 # Architecture decisions
 
+## ADR-007: Offline language grammars and shared editor symbols
+
+The owner's request for broad language support and actual file/provider symbols
+replaces the small handwritten tokenizer and text badges. Pin Highlight.js
+11.12.0, Material Icon Theme 5.39.0 and Lobe Icons static SVG 1.95.1 as development
+dependencies. Bundle the grammar engine and all 193 included grammars into app.js;
+ship SVG files and filename/folder mappings locally with their notices. There are
+no browser npm imports, CDN requests, telemetry or new Python runtime packages.
+This is a specific exception to the earlier no bundled third-party UI runtime
+rule: the full grammar engine is shipped, not an additional installed service.
+The application still starts without Bun or npm.
+
+Highlighting uses a custom text-token emitter, so source never goes through
+innerHTML. Token concatenation must equal the original source; unknown languages,
+grammar failures and files over 300,000 characters fall back to plain text.
+Language selection covers all bundled grammars. This is syntax highlighting,
+not a promise of a language server, compiler, debugger or installed toolchain for
+every language. Actual execution uses the user's tools or the existing Docker images.
+
+Use the serving connection's endpoint to choose a provider logo. An OpenAI-compatible
+gateway is not necessarily OpenAI; custom providers receive a neutral symbol.
+The official Microsoft stable icon identifies external-editor actions.
+
+Broaden the text-file indexing policy in both Python and Rust. A policy-version
+check rejects older installed native binaries that would silently omit languages.
+`.dikdikignore` adds the same conservative exclusion semantics as `.gitignore`,
+so large generated assets can stay versioned without entering model snapshots.
+Size limits, hidden/credential exclusions and symlink checks still apply.
+
+The manual terminal now follows the task's approved local or Docker runtime.
+Local commands require project trust and execution consent, stream durable output,
+and retain process-tree cancellation and output/time limits. Each command starts
+a fresh shell; full-screen interactive programs and persistent PTY sessions are
+not implemented. The terminal and editor inherit Dikdik's theme tokens.
+
 ## ADR-001: One Python process, SQLite, static browser client
 
 Accepted for the first local vertical slice. Python 3.13 is installed and no

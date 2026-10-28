@@ -27,8 +27,54 @@ pub const EXCLUDED: &[&str] = &[
 
 /// Suffixes eligible for text snapshotting, mirroring repository.py TEXT.
 pub const TEXT_SUFFIXES: &[&str] = &[
-    ".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".toml", ".md", ".txt",
-    ".yaml", ".yml", ".css", ".html", ".rs", ".lock",
+    ".abnf", ".ada", ".adb", ".adoc", ".ads", ".ahk", ".apib", ".applescript", ".as", ".asc",
+    ".asciidoc", ".asm", ".astro", ".au3", ".avdl", ".awk", ".bash", ".bat", ".bib", ".blade",
+    ".bnf", ".c", ".capnp", ".cbl", ".cc", ".ceylon", ".cfg", ".cjs", ".cl", ".clj",
+    ".cljc", ".cljs", ".cls", ".cmake", ".cmd", ".cnf", ".cob", ".coffee", ".comp", ".conf",
+    ".cpp", ".cr", ".cs", ".csh", ".css", ".csv", ".csx", ".cts", ".cu", ".cucumber",
+    ".cuh", ".cxx", ".d", ".dart", ".dhall", ".di", ".diff", ".dts", ".ebnf", ".edn",
+    ".el", ".elm", ".erb", ".erl", ".ex", ".exs", ".f", ".f03", ".f08", ".f77",
+    ".f90", ".f95", ".feature", ".fish", ".for", ".frag", ".fs", ".fsi", ".fsx", ".gcode",
+    ".gemspec", ".geom", ".glsl", ".gms", ".go", ".gql", ".gradle", ".graphql", ".groovy", ".gsp",
+    ".gss", ".gvy", ".h", ".hack", ".haml", ".handlebars", ".haxe", ".hbs", ".hcl", ".hh",
+    ".hlsl", ".hpp", ".hrl", ".hs", ".htm", ".html", ".http", ".hx", ".hxx", ".hy",
+    ".icl", ".ics", ".iml", ".inc", ".ini", ".ino", ".j2", ".jade", ".java", ".jinja",
+    ".jinja2", ".jison", ".jl", ".js", ".json", ".jsonc", ".jsonl", ".jsx", ".ksh", ".kt",
+    ".kts", ".latex", ".ld", ".lds", ".lean", ".less", ".lhs", ".liquid", ".lisp", ".litcoffee",
+    ".ll", ".lock", ".log", ".lsl", ".lsp", ".lua", ".m", ".mak", ".markdown", ".mat",
+    ".md", ".mdx", ".mediawiki", ".metal", ".mjs", ".mk", ".ml", ".mli", ".mm", ".mo",
+    ".mod", ".monkey", ".move", ".mts", ".mustache", ".n", ".ncl", ".nim", ".nims", ".nix",
+    ".odin", ".org", ".osa", ".p6", ".pas", ".patch", ".pde", ".pgsql", ".php", ".php3",
+    ".php4", ".php5", ".phtml", ".pl", ".pm", ".pod", ".pony", ".pp", ".prf", ".prg",
+    ".pri", ".pro", ".properties", ".proto", ".ps", ".ps1", ".psd1", ".psm1", ".pug", ".purs",
+    ".py", ".pyi", ".pyw", ".q", ".qml", ".r", ".rake", ".raku", ".rb", ".re",
+    ".rei", ".rib", ".rkt", ".rmd", ".roboconf", ".robot", ".rq", ".rs", ".rst", ".s",
+    ".sass", ".sc", ".scala", ".scm", ".scpt", ".scss", ".sed", ".sh", ".slim", ".sol",
+    ".sparql", ".sql", ".sqlite", ".ss", ".st", ".step", ".stp", ".sty", ".styl", ".sum",
+    ".sv", ".svelte", ".svg", ".svh", ".swift", ".tap", ".tcl", ".tesc", ".tese", ".tex",
+    ".tf", ".tfvars", ".thrift", ".tk", ".toml", ".ts", ".tsv", ".tsx", ".ttl", ".turtle",
+    ".txt", ".typ", ".v", ".vala", ".vapi", ".vb", ".vbs", ".vert", ".vhd", ".vhdl",
+    ".vim", ".vimrc", ".vue", ".vy", ".wat", ".wgsl", ".wikitext", ".xhtml", ".xml", ".xsd",
+    ".xsl", ".xslt", ".yaml", ".yml", ".zig", ".zsh",
+];
+
+pub const TEXT_NAMES: &[&str] = &[
+    "authors",
+    "brewfile",
+    "containerfile",
+    "copying",
+    "dockerfile",
+    "gemfile",
+    "gnumakefile",
+    "jenkinsfile",
+    "justfile",
+    "licence",
+    "license",
+    "makefile",
+    "procfile",
+    "rakefile",
+    "readme",
+    "vagrantfile",
 ];
 
 /// Credential-like names are never indexed (glob semantics on the lowercased name).
@@ -108,10 +154,11 @@ pub struct Rule {
 /// .gitignore subset matching repository.py: plain lines, globs, no negations
 /// (a negation never re-includes excluded content), largest 64KiB file.
 fn load_ignore(dir: &Path, base: &str, rules: &mut Vec<Rule>) {
-    let ignore = dir.join(".gitignore");
-    let Ok(meta) = std::fs::symlink_metadata(&ignore) else { return };
+    for filename in [".gitignore", ".dikdikignore"] {
+    let ignore = dir.join(filename);
+    let Ok(meta) = std::fs::symlink_metadata(&ignore) else { continue };
     if !meta.is_file() || meta.len() > 65_536 {
-        return;
+        continue;
     }
     if let Ok(content) = std::fs::read_to_string(&ignore) {
         for line in content.lines() {
@@ -130,6 +177,7 @@ fn load_ignore(dir: &Path, base: &str, rules: &mut Vec<Rule>) {
             let base = if base.is_empty() { base.to_string() } else { format!("{base}/") };
             rules.push(Rule { base, pattern: line.as_bytes().to_vec() });
         }
+    }
     }
 }
 
@@ -279,9 +327,11 @@ fn walk(
         } else if file_type.is_file() {
             let suffix = match path.extension() {
                 Some(ext) => format!(".{}", ext.to_string_lossy().to_lowercase()),
-                None => continue,
+                None => String::new(),
             };
-            if !text_suffixes().contains(suffix.as_str()) {
+            let lower = name.to_lowercase();
+            if !text_suffixes().contains(suffix.as_str()) && !TEXT_NAMES.contains(&lower.as_str())
+                && !lower.starts_with("dockerfile.") && !lower.starts_with("containerfile.") {
                 continue;
             }
             let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };

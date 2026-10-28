@@ -7,10 +7,12 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
+from urllib.parse import quote
 from pathlib import Path
 
 from dikdik.engine import Engine
-from dikdik.projects import check_clone_url
+from dikdik.projects import check_clone_url, list_folders, pick_folder
 from dikdik.server import make_server
 from dikdik.store import Store
 
@@ -52,6 +54,18 @@ class ProjectTests(unittest.TestCase):
                 return task
             time.sleep(0.1)
         self.fail("task did not finish")
+
+    def test_folder_browser_lists_directories_without_switching_projects(self):
+        status, listing = self.call("GET", "/api/projects/folders?path=" + quote(str(self.base)))
+        self.assertEqual(status, 200)
+        self.assertEqual({item["name"] for item in listing["folders"]}, {"alpha", "beta", "data"})
+        self.assertEqual(listing["path"], str(self.base.resolve()))
+        self.assertEqual(self.call("GET", "/api/projects")[1]["current"]["name"], "alpha")
+        self.assertEqual(self.call("GET", "/api/projects/folders")[1]["path"], str(self.base.resolve()))
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+        self.addCleanup(conn.close)
+        conn.request("GET", "/api/projects/folders")
+        self.assertEqual(conn.getresponse().status, 401)
 
     def test_switching_keeps_each_projects_conversations_apart(self):
         task = self.finished_task()
@@ -129,6 +143,45 @@ class ProjectTests(unittest.TestCase):
         for bad in ("http://github.com/x", "https://user:pw@github.com/x", "https://token@github.com/x", "-uhack", "ext::sh -c x", ""):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 check_clone_url(bad)
+
+
+class FolderChooserTests(unittest.TestCase):
+    def test_folders_only_unicode_sorting_and_parent_navigation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ("zeta", "Alpha", "café"):
+                (root / name).mkdir()
+            (root / "file.txt").write_text("not a folder")
+            result = list_folders(str(root))
+            self.assertEqual([item["name"] for item in result["folders"]], ["Alpha", "café", "zeta"])
+            self.assertEqual(result["parent"], str(root.parent))
+            empty = list_folders(str(root / "café"))
+            self.assertEqual((empty["folders"], empty["truncated"]), ([], False))
+            self.assertIn(str(Path.home()), [item["path"] for item in empty["locations"]])
+            self.assertIsNone(list_folders(root.anchor)["parent"])
+            with patch("dikdik.projects.FOLDER_LIMIT", 2):
+                limited = list_folders(str(root))
+            self.assertTrue(limited["truncated"])
+            self.assertEqual(len(limited["folders"]), 2)
+
+    def test_bad_paths_and_access_failures_are_actionable(self):
+        for path in (None, "", "relative/folder", "nul\0path", "x" * 1001):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                list_folders(path)
+        with tempfile.TemporaryDirectory() as temp:
+            with patch("dikdik.projects.os.scandir", side_effect=PermissionError("private details")):
+                with self.assertRaisesRegex(ValueError, "Check the path and your access") as failure:
+                    list_folders(temp)
+            self.assertNotIn("private details", str(failure.exception))
+
+    def test_native_failure_is_not_reported_as_user_cancellation(self):
+        with patch("dikdik.projects.sys.platform", "win32"), patch("dikdik.projects.subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess([], 1, "", "native failure")
+            with self.assertRaisesRegex(ValueError, "could not be shown"):
+                pick_folder("Elijah's folder")
+            self.assertIn("Elijah''s folder", run.call_args.args[0][-1])
+            run.return_value = subprocess.CompletedProcess([], 0, "", "")
+            self.assertIsNone(pick_folder())
 
 
 class SharedStoreTests(unittest.TestCase):

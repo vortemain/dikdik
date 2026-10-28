@@ -92,8 +92,11 @@ class ModelResolver:
         connection = db.execute("SELECT * FROM connections WHERE id=?", (profile["connection_id"],)).fetchone()
         if connection is None:
             raise ValueError(f"The provider connection for model profile “{profile['name']}” was deleted. Edit the profile to link another")
-        return {**profile, "provider": connection["provider"], "endpoint": profile["endpoint"] or connection["endpoint"],
-                "credential_secret_ref": connection_ref(connection["id"]), "connection_name": connection["name"]}
+        endpoint = profile["endpoint"] or connection["endpoint"]
+        return {**profile, "provider": connection["provider"], "endpoint": endpoint,
+                "credential_secret_ref": connection_ref(connection["id"]), "connection_name": connection["name"],
+                "_key_optional": connection["provider"] == "local" and
+                (urlsplit(endpoint or "").hostname or "").lower() in LOOPBACK_HOSTS}
 
     @staticmethod
     def _public(profile: dict, base: str) -> dict:
@@ -120,7 +123,7 @@ class ModelResolver:
                     return {"configured": False, "source": "none", "problem": str(exc)}
             info = self._public(profile, self._base(profile))
             ref = profile["credential_secret_ref"]
-            if ref and ref not in {item["ref"] for item in self.secrets.list()}:
+            if ref and ref not in {item["ref"] for item in self.secrets.list()} and not profile.get("_key_optional"):
                 return {"configured": False, **info, "problem": f"API key “{ref}” is not stored. Add it under Settings → API keys"}
             if not ref and profile["provider"] != "local":
                 return {"configured": False, **info, "problem": f"Model profile “{profile['name']}” has no API key. Add one under Settings → API keys and select it on the profile"}
@@ -135,13 +138,16 @@ class ModelResolver:
         base = self._base(profile)
         ref = profile["credential_secret_ref"]
         if ref:
+            auth = "api-key" if profile["provider"] == "azure" else "bearer"
             try:
                 key = self.secrets.reveal(ref).decode("utf-8")
             except KeyError:
-                raise ValueError(f"API key “{ref}” for model profile “{profile['name']}” is not stored. Add it under Settings → API keys") from None
+                if profile.get("_key_optional"):
+                    key, auth = "", "none"
+                else:
+                    raise ValueError(f"API key “{ref}” for model profile “{profile['name']}” is not stored. Add it under Settings → API keys") from None
             except UnicodeDecodeError:
                 raise ValueError(f"API key “{ref}” is not valid text") from None
-            auth = "api-key" if profile["provider"] == "azure" else "bearer"
         elif profile["provider"] == "local":
             key, auth = "", "none"
         else:

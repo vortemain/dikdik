@@ -9,7 +9,28 @@ from pathlib import Path, PurePosixPath
 
 
 EXCLUDED = {"node_modules", "__pycache__", "dist", "build", "vendor", "venv"}
-TEXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".toml", ".md", ".txt", ".yaml", ".yml", ".css", ".html", ".rs", ".lock"}
+TEXT = {"." + ext for ext in """
+py pyi pyw ts tsx mts cts js jsx mjs cjs json jsonc jsonl toml md markdown mdx txt rst adoc asciidoc
+yaml yml css scss sass less styl html htm xhtml xml xsl xslt xsd svg vue svelte astro rs lock
+go mod sum java kt kts scala sc cs csx fs fsx fsi vb vbs swift m mm h c cc cpp cxx hpp hxx hh ino
+rb erb rake gemspec php php3 php4 php5 phtml blade pl pm pod r rmd jl lua nim nims zig dart
+sh bash zsh fish ksh csh ps1 psm1 psd1 bat cmd sql pgsql sqlite graphql gql proto thrift
+ex exs erl hrl clj cljs cljc edn el lisp lsp scm ss rkt hs lhs ml mli re rei elm purs p6 raku
+pas pp d di f for f77 f90 f95 f03 f08 cob cbl ada adb ads v sv svh vhd vhdl asm s inc
+cmake mk mak gradle groovy gvy gsp properties ini cfg conf cnf hcl tf tfvars nix dhall
+tex latex bib sty cls typ org wikitext mediawiki diff patch feature cucumber robot
+awk sed ahk au3 applescript osa scpt coffee litcoffee sol move vy wgsl glsl vert frag geom tesc tese comp
+cl cu cuh metal vala vapi hx haxe hack hh pug jade haml slim mustache hbs handlebars liquid
+q qml pro pri prf vim vimrc tcl tk tsv csv log abnf as asc apib avdl bnf capnp ceylon cr dts
+ebnf gcode gms gss http hlsl hy icl ics iml j2 jinja jinja2 jison ld lds lean ll lsl mat
+mo monkey n ncl odin pde pony prg ps rib roboconf rq sparql st step stp tap ttl turtle wat
+""".split()}
+TEXT_NAMES = {"dockerfile", "containerfile", "makefile", "gnumakefile", "justfile", "jenkinsfile", "gemfile", "rakefile", "procfile", "vagrantfile", "brewfile", "license", "licence", "readme", "authors", "copying"}
+
+
+def is_text_file(path: Path | PurePosixPath) -> bool:
+    name = path.name.lower()
+    return path.suffix.lower() in TEXT or name in TEXT_NAMES or name.startswith(("dockerfile.", "containerfile."))
 
 # Optional Rust accelerator (crates/dikdik-index). If the `dikdik_index`
 # extension is importable, `inventory()` uses it and falls back to the
@@ -25,6 +46,10 @@ except ImportError:
         import dikdik_index as _rust_index  # type: ignore[import-not-found]
     except ImportError:
         _rust_index = None
+# Old installed native binaries used a narrower set of file types. Do not let
+# an otherwise healthy accelerator silently hide new languages or ignore rules.
+if _rust_index is not None and getattr(_rust_index, "TEXT_POLICY_VERSION", 0) != 2:
+    _rust_index = None
 INDEXER = "rust" if _rust_index is not None else "python"
 SECRET = ("*secret*", "*credential*", "*.pem", "*.key", "*.p12", "*.pfx", "*id_rsa*", "*id_ed25519*", "*.env*", "*token*")
 RESERVED_NAMES = {"con", "prn", "aux", "nul", "conin$", "conout$"} | {f"{prefix}{number}" for prefix in ("com", "lpt") for number in range(1, 10)}
@@ -43,13 +68,14 @@ def approved_root(value: str) -> Path:
 
 def _ignore_rules(directory: Path, root: Path, inherited: list[tuple[str, str]]) -> list[tuple[str, str]]:
     rules = list(inherited)
-    ignore = directory / ".gitignore"
-    if ignore.is_file() and not ignore.is_symlink() and ignore.stat().st_size <= 65536:
-        base = directory.relative_to(root).as_posix()
-        for line in ignore.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = line.strip()
-            if line and not line.startswith(("#", "!")):
-                rules.append(("" if base == "." else base + "/", line.strip("/")))
+    for filename in (".gitignore", ".dikdikignore"):
+        ignore = directory / filename
+        if ignore.is_file() and not ignore.is_symlink() and ignore.stat().st_size <= 65536:
+            base = directory.relative_to(root).as_posix()
+            for line in ignore.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line and not line.startswith(("#", "!")):
+                    rules.append(("" if base == "." else base + "/", line.strip("/")))
     return rules
 
 
@@ -61,7 +87,7 @@ def _new_path(value: str) -> PurePosixPath:
     if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 1024:
         raise ValueError("New file path must contain 1–1024 UTF-8 bytes")
     path = PurePosixPath(value)
-    if path.is_absolute() or path.as_posix() != value or len(path.parts) > 41 or path.suffix.lower() not in TEXT:
+    if path.is_absolute() or path.as_posix() != value or len(path.parts) > 41 or not is_text_file(path):
         raise ValueError("New file requires a canonical relative supported text path")
     for part in path.parts:
         normalized = unicodedata.normalize("NFKC", part).lower()
@@ -192,7 +218,7 @@ def _inventory_python(root: Path) -> dict[str, str]:
                     continue
                 if entry.is_dir(follow_symlinks=False):
                     walk(path, rules, depth + 1)
-                elif entry.is_file(follow_symlinks=False) and path.suffix.lower() in TEXT:
+                elif entry.is_file(follow_symlinks=False) and is_text_file(path):
                     size = entry.stat(follow_symlinks=False).st_size
                     if size > 256000:
                         raise ValueError(f"Text file exceeds 256KB: {rel}")

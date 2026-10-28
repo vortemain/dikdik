@@ -115,6 +115,7 @@ fn excluded() -> Vec<&'static str> {
 
 #[pymodule]
 fn dikdik_index(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add("TEXT_POLICY_VERSION", 2)?;
     module.add_function(wrap_pyfunction!(scan, module)?)?;
     module.add_function(wrap_pyfunction!(scan_changed, module)?)?;
     module.add_function(wrap_pyfunction!(to_state, module)?)?;

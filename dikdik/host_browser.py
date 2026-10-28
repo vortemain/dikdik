@@ -189,6 +189,17 @@ def page_text(markup: str) -> tuple[str, str]:
 def _run(argv: list[str], cancel, timeout: float) -> subprocess.CompletedProcess | None:
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, creationflags=flags)
+    # Drain while the browser runs: --dump-dom can fill the pipe and prevent
+    # the browser from ever exiting. Keep only a bounded UTF-8 DOM prefix.
+    chunks, size = [], 0
+    def read():
+        nonlocal size
+        for chunk in iter(lambda: process.stdout.read1(65536), b""):
+            if size < 2 * 1024 * 1024:
+                chunks.append(chunk[:2 * 1024 * 1024 - size])
+            size += len(chunk)
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
     deadline = time.monotonic() + timeout
     while process.poll() is None:
         if (cancel is not None and cancel.is_set()) or time.monotonic() > deadline:
@@ -197,9 +208,12 @@ def _run(argv: list[str], cancel, timeout: float) -> subprocess.CompletedProcess
             else:
                 process.kill()
             process.wait(timeout=10)
+            reader.join(timeout=5)
+            process.stdout.close()
             return None
         time.sleep(0.1)
-    out = process.stdout.read()
+    reader.join(timeout=5)
+    out = b"".join(chunks)
     process.stdout.close()
     return subprocess.CompletedProcess(argv, process.returncode, out, b"")
 
@@ -216,7 +230,7 @@ def capture(url: str, cancel=None, browser: str | None = None) -> dict:
         base = [browser, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
                 "--disable-extensions", "--disable-sync", "--disable-background-networking", "--mute-audio",
                 f"--user-data-dir={profile}", f"--proxy-server={proxy.address}", "--proxy-bypass-list=<-loopback>",
-                "--window-size=1440,900", "--hide-scrollbars"]
+                "--window-size=1440,900", "--hide-scrollbars", "--timeout=20000"]
         shot = profile / "shot.png"
         done = _run([*base, f"--screenshot={shot}", url], cancel, PAGE_TIMEOUT)
         if done is None:

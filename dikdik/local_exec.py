@@ -10,6 +10,7 @@ whether a command may run: the engine asks the user before calling run().
 from __future__ import annotations
 
 import os
+import codecs
 import shutil
 import signal
 import subprocess
@@ -73,8 +74,9 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
 
     def read():
         nonlocal size
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
         for raw in iter(lambda: process.stdout.read1(CHUNK), b""):
-            text = raw.decode("utf-8", "replace")
+            text = decoder.decode(raw)
             if size < output_limit:
                 kept = text[: output_limit - size]
                 output.append(kept)
@@ -83,6 +85,11 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
             size += len(text)
             if size >= output_limit:
                 over.set()
+        tail = decoder.decode(b"", final=True)
+        if tail and size < output_limit:
+            output.append(tail)
+            if on_chunk is not None:
+                on_chunk(tail)
 
     reader = threading.Thread(target=read, daemon=True)
     reader.start()

@@ -11,6 +11,8 @@ import json
 import sqlite3
 import time
 import urllib.parse
+import hashlib
+from .model_discovery import discover_models
 
 from .agent_profiles import AgentProfiles
 from .automation import validate_schedule
@@ -21,7 +23,7 @@ from .mcp import OAUTH_PREFIX, McpError, McpStore, oauth_ref, test_server
 from .mcp_catalog import catalog as mcp_library, install as mcp_install
 from .mcp_oauth import OAuthJobs
 from .connections import ConnectionStore, secret_ref as connection_ref
-from .model_catalog import add_custom, catalog, live_models, provider_info
+from .model_catalog import add_custom, catalog, provider_info
 from .profiles import ApiError, ProfileStore
 from .providers import chat_completion
 from .routing import STRATEGIES, RouterStore
@@ -198,14 +200,19 @@ def build_routes(engine_or_stores):
             elif not info.get("public_models") and not info.get("no_key"):
                 raise ValueError(f"Connect {info['name']} first")
             endpoint = connections.get(current["connection"])["endpoint"] if current["connection"] else ""
-            return 200, {"provider": info["id"], "models": live_models({**info, "base": endpoint or info["base"]}, key)}
+            return 200, {"provider": info["id"], **discover_models({**info, "base": endpoint or info["base"]}, key)}
         if method == "POST" and parts[3] == "use":
+            if not current["connection"] and info.get("no_key"):
+                connect(info["id"], {})
+                current = catalog(stores.store, connections.list())["providers"][info["id"]]
             if not current["connection"]:
                 raise ValueError(f"Connect {info['name']} first")
             model = body.get("model")
             if not isinstance(model, str) or not model.strip() or len(model) > 200:
                 raise ValueError("Choose a model")
-            name = f"{info['name']} · {model.strip()}"[:128]
+            name = f"{info['name']} · {model.strip()}"
+            if len(name) > 64:
+                name = name[:53] + " · " + hashlib.sha256(name.encode()).hexdigest()[:8]
             existing = next((p for p in profiles.list_profiles()[1] if p["name"] == name), None)
             if existing is None:
                 status, created = profiles.create({"name": name, "provider": info["kind"], "model": model.strip(),

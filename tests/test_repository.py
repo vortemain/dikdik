@@ -28,6 +28,21 @@ class RepositoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "256KB"):
             inventory(self.root)
 
+    def test_languages_and_extensionless_build_files_are_visible_and_creatable(self):
+        from dikdik.repository import can_create_file
+        names = ["query.sql", "main.go", "App.java", "main.kt", "app.php", "run.ps1", "app.dart", "script.lua",
+                 "main.exs", "main.swift", "main.cpp", "app.vue", "build.gradle", "main.tf", "app.nix", "Dockerfile", "Makefile"]
+        for name in names:
+            self.assertTrue(can_create_file(self.root, name), name)
+            self.write(name, "text\n")
+        self.assertEqual(set(inventory(self.root)), set(names))
+
+    def test_dikdikignore_skips_large_generated_assets_without_changing_git_rules(self):
+        self.write(".dikdikignore", "generated/\n!generated/big.js\n")
+        self.write("generated/big.js", "x" * 256001)
+        self.write("main.sql", "SELECT 1;")
+        self.assertEqual(list(inventory(self.root)), ["main.sql"])
+
     def test_symlink_is_not_followed(self):
         self.write("app.py", "x = 1")
         try:

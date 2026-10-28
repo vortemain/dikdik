@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { grammarFor, highlight, highlightLines, HIGHLIGHT_LIMIT } from "../../dikdik/web/highlight";
+import { detectLanguage, grammarFor, highlight, highlightLines, supportedLanguages, HIGHLIGHT_LIMIT } from "../../dikdik/web/highlight";
 
 const SAMPLES: Record<string, string> = {
   python: 'import os\n\n@cache\ndef add(a, b):\n    """Sum.\n    Two lines."""\n    return a + b  # done\nprint(f"x={add(1, 2)}", None)\n',
@@ -30,17 +30,51 @@ test("python parts are recognised", () => {
   expect(kinds("# done")).toContain("comment");
   expect(kinds("@cache")).toContain("meta");
   expect(kinds("None")).toContain("builtin");
-  expect(highlight("add(1)", "python")[0]).toEqual(["fn", "add"]);
+  expect(highlight("def add(a):", "python")).toContainEqual(["fn", "add"]);
 });
 
 test("json keys differ from values, and unknown languages stay plain", () => {
   const tokens = highlight(SAMPLES.json!, "json");
   expect(tokens).toContainEqual(["attr", '"name"']);
   expect(tokens).toContainEqual(["string", '"dikdik"']);
-  expect(tokens).toContainEqual(["builtin", "true"]);
+  expect(tokens).toContainEqual(["keyword", "true"]);
   expect(highlight("x", "cobol")).toEqual([["", "x"]]);
-  expect(grammarFor("TSX")).toBe("javascript");
+  expect(grammarFor("TSX")).toBe("typescript");
   expect(highlight("x".repeat(HIGHLIGHT_LIMIT + 1), "python")).toHaveLength(1);
+});
+
+test("all bundled grammars preserve exact hostile and Unicode source without HTML", () => {
+  expect(supportedLanguages().length).toBeGreaterThanOrEqual(190);
+  const source = '<script>alert("🙂 & <img src=x onerror=alert(1)>")</script>\n\t你好\r\n';
+  for (const language of supportedLanguages()) {
+    expect(highlight(source, language).map(([, text]) => text).join("")).toBe(source);
+  }
+});
+
+test("distinct grammars cover common languages previously treated as C, Java or Bash", () => {
+  const samples = [
+    ["php", "<?php function greet($name) { return \"Hi $name\"; }"],
+    ["sql", "SELECT name FROM users WHERE id = 1; -- query"],
+    ["powershell", 'Get-ChildItem -Path "$env:USERPROFILE" | Where-Object { $_.Name -eq "test" }'],
+    ["kotlin", 'fun main() { val name: String = "Hello"; println(name) }'],
+    ["swift", 'func greet(name: String) -> String { return "Hello" }'],
+    ["dart", 'void main() { final name = "Hello"; print(name); }'],
+    ["lua", 'local function greet(name) return "Hi" .. name end'],
+    ["elixir", 'defmodule Hello do\n  def greet(name), do: "Hello"\nend'],
+    ["haskell", 'module Main where\nmain = putStrLn "Hello"'],
+    ["scala", 'object Hello { def main(args: Array[String]): Unit = println("Hi") }'],
+    ["r", 'library(stats)\nx <- c(1, 2, 3) # data'],
+    ["dockerfile", 'FROM python:3.13\nWORKDIR /app\nCOPY . .'],
+  ];
+  for (const [language, source] of samples) {
+    const tokens = highlight(source!, language!);
+    expect(grammarFor(language!)).toBe(language!);
+    expect(tokens.some(([kind]) => kind !== "")).toBe(true);
+    expect(tokens.map(([, text]) => text).join("")).toBe(source!);
+  }
+  expect(detectLanguage("C:\\app\\query.sql").lang).toBe("sql");
+  expect(detectLanguage("src/main.dart").lang).toBe("dart");
+  expect(detectLanguage("src/main.exs").lang).toBe("elixir");
 });
 
 test("a comment spanning lines stays a comment on every line", () => {

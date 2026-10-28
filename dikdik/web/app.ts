@@ -3,12 +3,15 @@ import { attachmentList, contextUsage, goalState, isResumable, openConfirmations
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, SlashCommand, TaskRequest, DiffReview, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
-import { keysPane, modelsPane } from "./models-pane";
+import { keysPane, modelsPane, type ModelProfile } from "./models-pane";
+import { modelPicker } from "./model-picker";
+import { folderPicker } from "./folder-picker";
 import { skillsPane } from "./skills-pane";
 import { pluginsPane } from "./plugins-pane";
 import { mcpPane } from "./mcp-pane";
-import { detectLanguage, fileFacts, highlight, highlightLines, projectStack, type Token } from "./highlight";
+import { detectLanguage, fileFacts, highlight, highlightLines, languageLabel, supportedLanguages, projectStack, type Token } from "./highlight";
 import { providersPane } from "./providers-pane";
+import { fileIcon, folderIcon, providerIcon, providerId, refreshFileIcons, vscodeLogo } from "./icons";
 import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, workspacePath } from "./organise";
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
@@ -50,6 +53,7 @@ let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsEleme
 let showAllMessages = false, projectFileSet = new Set<string>();
 const expandedDirs = new Set<string>();
 let openTabs: string[] = [], fileText = "", filePreview = false;
+const languageModes = new Map<string, string>();
 let projectImages: string[] = [], pinnedTabs = new Set<string>(), tabsRestored = false;
 let diffMode = "diff", diffNewKey = "";
 let exposedSecrets = 0;
@@ -113,11 +117,8 @@ function copyButton(getText: () => string, label = "Copy"): HTMLButtonElement {
 }
 
 // --- code blocks and diffs --------------------------------------------------
-const LANGUAGES: Record<string, string> = { py: "python", ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx", json: "json", md: "markdown", rs: "rust", toml: "toml", yml: "yaml", yaml: "yaml", sh: "bash", css: "css", html: "html", go: "go", java: "java", c: "c", cpp: "cpp", rb: "ruby" };
 function languageFor(path: unknown): string {
-  if (typeof path !== "string") return "";
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  return LANGUAGES[ext] ?? "";
+  return typeof path === "string" ? detectLanguage(path).lang : "";
 }
 function looksLikeDiff(text: string): boolean {
   return /^(diff --git |--- |@@ )/m.test(text) && /^[+-]/m.test(text);
@@ -136,10 +137,12 @@ function diffLines(text: string): HTMLElement[] {
 function tokenNodes(tokens: Token[]): Node[] {
   return tokens.map(([kind, value]) => kind ? make("span", `tok tok-${kind}`, value) : document.createTextNode(value));
 }
-function codeBlock(text: string, lang = "", options: { wrap?: boolean } = {}): HTMLElement {
+function codeBlock(text: string, lang = "", options: { wrap?: boolean; filename?: string } = {}): HTMLElement {
   const block = make("div", options.wrap ? "code-block wrap" : "code-block");
   const head = make("div", "code-head");
-  head.append(make("span", "code-lang", lang || "text"), copyButton(() => text));
+  const label = make("span", "code-lang", options.filename || lang || "text");
+  label.prepend(fileIcon(options.filename || `snippet.${lang}`, lang));
+  head.append(label, copyButton(() => text));
   const pre = make("pre"), code = make("code");
   if (lang === "diff" || (!lang && looksLikeDiff(text))) code.append(...diffLines(text));
   else code.append(...tokenNodes(highlight(text, lang)));
@@ -169,7 +172,7 @@ function inline(text: string): Node[] {
       const target = workspacePath(token.slice(1, -1), projectFileSet);
       if (target) {
         const link = make("button", "path-link"); link.type = "button"; link.title = `Open ${target.path} in Files`;
-        link.append(make("code", "", token.slice(1, -1)));
+        link.append(fileIcon(target.path), make("code", "", token.slice(1, -1)));
         link.onclick = () => { void openFileFromChat(target.path, target.line); };
         nodes.push(link);
       } else nodes.push(make("code", "", token.slice(1, -1)));
@@ -342,7 +345,7 @@ function evidenceBlocks(msg: ChatMessage, path = ""): HTMLElement[] {
     return blocks;
   }
   if (msg.kind === "agent_tool_call" && toolName(msg) === "create_file" && detailField(details, "content")) {
-    blocks.push(codeBlock(detailField(details, "content"), languageFor(path)));
+    blocks.push(codeBlock(detailField(details, "content"), languageFor(path), { filename: path }));
     return blocks;
   }
   if (msg.body) blocks.push(codeBlock(msg.body, msg.kind === "agent_tool_result" ? languageFor(path) : "", { wrap: msg.kind !== "agent_tool_result" }));
@@ -361,7 +364,7 @@ function stepRow(msg: ChatMessage): { li: HTMLLIElement; body: HTMLElement } {
   const label = stepLabel(msg);
   const details = make("details", "step");
   const summary = make("summary");
-  const badge = make("span", "step-icon"); badge.append(icon(label.icon));
+  const badge = make("span", "step-icon"); badge.append(label.icon === "file" && label.arg ? fileBadge(label.arg) : icon(label.icon));
   summary.append(badge, make("span", "step-title", label.title));
   if (label.arg) summary.append(make("span", "step-arg", label.arg));
   const chevron = icon("chevron"); chevron.setAttribute("class", "i step-chevron");
@@ -703,7 +706,7 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
     const call = index >= 0 ? pendingCalls.splice(index, 1)[0] : undefined;
     if (call && msg.body) {
       const label = call.body.parentElement?.querySelector(".step-arg")?.textContent ?? "";
-      call.body.append(codeBlock(msg.body, name === "read_file" ? languageFor(label) : ""));
+      call.body.append(codeBlock(msg.body, name === "read_file" ? languageFor(label) : "", name === "read_file" ? { filename: label } : {}));
       if (call.body.parentElement) {
         setClass(call.body.parentElement, "step-static", false);
         if (msg.state === "tool_failed") setClass(call.body.parentElement, "step-failed", true);
@@ -815,6 +818,7 @@ function renderReview(taskId: string, state: string, result: unknown): void {
       if (path === null) control.dataset.all = "true";
       else control.dataset.path = path;
       if (status) control.dataset.status = status;
+      if (path) control.prepend(fileBadge(path));
       control.onclick = () => { selectedFile = path; showReviewSelection(); };
       controls.push(control);
     };
@@ -867,18 +871,76 @@ function openCanvas(tab: string): void {
 }
 function changedPaths(): Set<string> { return new Set(review.files.map(file => file.path)); }
 
+let terminalClearedTask = "", terminalClearedSeq = 0, terminalHistoryIndex = -1, terminalDraft = "", terminalSubmitting = false;
+let terminalContinuing = new Set<string>();
 function renderTerminal(): void {
-  const view = terminalTranscript(liveEvents);
+  const view = terminalTranscript(liveEvents.filter(event => selected !== terminalClearedTask || event.seq > terminalClearedSeq
+    || event.kind === "terminal_command" && terminalContinuing.has(String(event.data.command_id))));
   const terminal = el("terminal-view");
   const empty = el("terminal-empty");
-  terminal.textContent = view.text;
+  const screen = el("terminal-screen"), stick = nearBottom(screen);
+  if (terminal.textContent !== view.text) terminal.textContent = view.text;
   terminal.hidden = !view.commands.length;
   empty.hidden = !!view.commands.length;
-  empty.textContent = selectedState && (!isTerminal(selectedState) || selectedState === "failed")
-    ? "Waiting for runtime to start..."
-    : "No terminal output yet. Commands run by the agent will appear here.";
-  if (view.commands.some(command => command.running)) terminal.scrollTop = terminal.scrollHeight;
+  const running = terminalTranscript(liveEvents).commands.some(command => command.running);
+  el("terminal-project").textContent = projectName || "your project";
+  el("terminal-prompt-path").textContent = [projectName, input("terminal-cwd").value.trim()].filter(Boolean).join("/") || "project";
+  el("terminal-runtime").textContent = taskRequest?.verification === "local" || !selected ? "Local terminal" : "Docker terminal";
+  el("terminal-state").textContent = running ? "Running…" : "Ready";
+  button("terminal-stop").disabled = !running;
+  button("terminal-run").disabled = running || terminalSubmitting;
+  if (stick) screen.scrollTop = screen.scrollHeight;
 }
+
+async function workspaceSession(): Promise<string> {
+  await ensureTrusted(true);
+  const session = await api<{ id: string }>("/api/terminal/sessions", { approve_execution: true });
+  selectTask(session.id); await loadHistory(); await observe(true);
+  return session.id;
+}
+button("terminal-new").onclick = () => { void workspaceSession().then(() => input("terminal-command").focus()).catch(error => message(String(error), true)); };
+button("terminal-copy").onclick = () => { void copyText(el("terminal-view").textContent ?? "", button("terminal-copy")); };
+button("terminal-clear").onclick = () => {
+  terminalClearedTask = selected ?? ""; terminalClearedSeq = liveSeq;
+  terminalContinuing = new Set(terminalTranscript(liveEvents).commands.filter(command => command.running).map(command => command.id));
+  renderTerminal();
+};
+async function stopTerminal(): Promise<void> {
+  if (!selected) return;
+  const task = selected;
+  try {
+    const running = terminalTranscript(liveEvents).commands.filter(command => command.running);
+    if (running.some(command => command.source === "agent")) await api(`/api/tasks/${task}/cancel`, {});
+    await Promise.all(running.filter(command => command.source === "manual")
+      .map(command => api(`/api/tasks/${task}/bash/commands/${command.id}/stop`, {})));
+    watching = true; await observe(true);
+  } catch (error) { message(error instanceof Error ? error.message : "Could not stop command", true); }
+}
+button("terminal-stop").onclick = () => { void stopTerminal(); };
+el("terminal-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const command = input("terminal-command").value.trim();
+  if (!command || terminalSubmitting) return;
+  terminalSubmitting = true; renderTerminal();
+  try {
+    const task = selected && taskRequest?.approve_execution === true ? selected : await workspaceSession();
+    await api(`/api/tasks/${task}/bash/start`, { command, cwd: input("terminal-cwd").value.trim(), timeout: 300 });
+    if (selected === task) { input("terminal-command").value = ""; terminalHistoryIndex = -1; watching = true; await observe(true); }
+  } catch (error) { message(error instanceof Error ? error.message : "Could not run command", true); }
+  finally { terminalSubmitting = false; renderTerminal(); input("terminal-command").focus(); }
+});
+input("terminal-command").addEventListener("keydown", (event: KeyboardEvent) => {
+  if (event.ctrlKey && event.key.toLowerCase() === "c" && !input("terminal-command").value) { event.preventDefault(); void stopTerminal(); }
+  if (event.ctrlKey && event.key.toLowerCase() === "l") { event.preventDefault(); button("terminal-clear").click(); }
+  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+  const history = terminalTranscript(liveEvents).commands.map(command => command.command).reverse();
+  if (!history.length) return;
+  event.preventDefault();
+  if (terminalHistoryIndex === -1) terminalDraft = input("terminal-command").value;
+  terminalHistoryIndex = Math.max(-1, Math.min(history.length - 1, terminalHistoryIndex + (event.key === "ArrowUp" ? 1 : -1)));
+  input("terminal-command").value = terminalHistoryIndex < 0 ? terminalDraft : history[terminalHistoryIndex] ?? "";
+});
+input("terminal-cwd").addEventListener("input", () => renderTerminal());
 
 function usageValue(value: number | undefined): string {
   return value === undefined ? "Not reported" : value.toLocaleString();
@@ -931,25 +993,28 @@ function renderUsage(): void {
 }
 
 let browserIndex: number | null = null;  // a page from this conversation's history; null follows the latest
+let browserOpening: { task: string; url: string } | null = null, browserText = false;
 function renderBrowser(): void {
   const latest = browserView(liveEvents), pages = browserHistory(liveEvents);
   const index = browserIndex !== null && browserIndex < pages.length ? browserIndex : pages.length - 1;
   const page = pages[index];
-  const view = { ...latest, ...(page && browserIndex !== null ? { url: page.url, title: page.title, screenshot: page.screenshot } : {}) };
+  const view = { ...latest, ...(page && browserIndex !== null ? { url: page.url, title: page.title, screenshot: page.screenshot, text: page.text } : {}) };
+  const busy = latest.status === "running" || browserOpening?.task === selected;
   el("browser-current-url").textContent = view.url || "No URL loaded";
-  el("browser-title").textContent = latest.status === "running" ? "Loading…" : view.title || "New tab";
+  el("browser-title").textContent = busy ? "Loading…" : view.title || "New tab";
   const address = input("browser-url");
-  if (document.activeElement !== address && view.url) address.value = view.url;
+  if (document.activeElement !== address) address.value = browserOpening?.task === selected ? browserOpening.url : view.url;
   setClass(el("browser-lock"), "secure", view.url.startsWith("https:"));
-  el("browser-progress").hidden = latest.status !== "running";
+  el("browser-lock").title = view.url.startsWith("https:") ? "Captured over HTTPS" : "Public web preview";
+  el("browser-progress").hidden = !busy;
   button("browser-back").disabled = !(index > 0);
   button("browser-forward").disabled = !(index >= 0 && index < pages.length - 1);
-  button("browser-reload").disabled = !selected || !view.url || latest.status === "running";
+  button("browser-reload").disabled = !view.url || busy;
   const link = el("browser-external") as HTMLAnchorElement;
   link.hidden = !view.url; link.href = view.url || "#";
   button("browser-external-empty").hidden = !!view.url;
   el("browser-empty").hidden = !!view.screenshot;
-  const mount = el("browser-snapshot"); mount.hidden = !view.screenshot;
+  const mount = el("browser-snapshot"); mount.hidden = !view.screenshot || browserText;
   if (mount.dataset.screenshot !== view.screenshot) {
     mount.dataset.screenshot = view.screenshot;
     mount.replaceChildren();
@@ -959,11 +1024,35 @@ function renderBrowser(): void {
       mount.append(image);
     }
   }
-  el("browser-status").textContent = latest.status === "running" ? "Opening page…" : latest.error ? latest.error
-    : view.screenshot ? `A picture of the page as Dikdik saw it${pages.length > 1 ? ` · page ${index + 1} of ${pages.length}` : ""}. Web content is untrusted.` : "";
-  button("browser-open").disabled = !selected || view.status === "running";
-  button("browser-stop").disabled = view.status !== "running";
+  el("browser-status").textContent = busy ? "Capturing page…" : latest.error ? latest.error
+    : view.screenshot ? `Captured page · ${index + 1} of ${pages.length} · Open ↗ to use links and forms` : "Public web · Captures layout and text";
+  setClass(el("browser-status"), "browser-error", !!latest.error && !busy);
+  button("browser-open").disabled = busy;
+  button("browser-stop").disabled = !busy;
+  const history = select("browser-history"), signature = pages.map(p => p.screenshot).join(",");
+  if (history.dataset.pages !== signature) {
+    history.dataset.pages = signature;
+    history.replaceChildren(...(pages.length ? pages.map((p, i) => {
+      const option = make("option", "", p.title || new URL(p.url).hostname); option.value = String(i); return option;
+    }) : [make("option", "", "No captured pages")]));
+  }
+  history.value = String(index); history.disabled = !pages.length;
+  button("browser-text-toggle").disabled = !view.screenshot;
+  button("browser-text-toggle").setAttribute("aria-pressed", String(browserText));
+  el("browser-page-text").hidden = !browserText || !view.screenshot;
+  el("browser-page-text").textContent = view.text || "No readable text was captured from this page.";
 }
+select("browser-history").addEventListener("change", () => { browserIndex = Number(select("browser-history").value); renderBrowser(); });
+select("browser-zoom").addEventListener("change", () => {
+  const zoom = select("browser-zoom").value, mount = el("browser-snapshot");
+  mount.style.width = zoom === "fit" ? "100%" : `${1440 * Number(zoom) / 100}px`;
+  mount.style.flexShrink = "0";
+});
+button("browser-text-toggle").onclick = () => { browserText = !browserText; renderBrowser(); };
+button("browser-example").onclick = () => { void openPage("https://example.com/"); };
+el("browser-viewport").addEventListener("keydown", (event: KeyboardEvent) => {
+  if (event.ctrlKey && event.key.toLowerCase() === "l") { event.preventDefault(); input("browser-url").focus(); input("browser-url").select(); }
+});
 
 async function loadPlan(task: string): Promise<void> {
   const epoch = viewEpoch;
@@ -1025,18 +1114,21 @@ el('planner-create').addEventListener('click', () => { void enterPlanning().catc
 el('planner-build').addEventListener('click', () => { void buildReviewedPlan(); });
 
 async function openPage(url: string): Promise<void> {
-  if (!selected) return message("Choose a conversation first.", true);
-  const task = selected;
-  browserIndex = null;
-  button("browser-open").disabled = true; button("browser-stop").disabled = false;
-  el("browser-status").textContent = "Opening page…";
+  if (browserOpening?.task === selected && selected) return;
+  let task: string | null = null;
   try {
+    task = selected ?? await workspaceSession();
+    browserIndex = null; browserOpening = { task, url }; renderBrowser();
     // Typing an address and pressing Go is the user's own explicit request for this one page.
-    await api(`/api/tasks/${task}/browser`, { url, approve_browser: true, approve_execution: true });
+    const capture = api(`/api/tasks/${task}/browser`, { url, approve_browser: true, approve_execution: true });
+    watching = true; startStream(task);
+    await capture;
+    browserOpening = null;
     if (selected === task) { watching = true; await observe(); }
   } catch (error) { message(error instanceof Error ? error.message : "Browser capture failed", true); }
   finally {
-    if (selected === task) { button("browser-open").disabled = false; button("browser-stop").disabled = true; }
+    if (browserOpening?.task === task) browserOpening = null;
+    renderBrowser();
   }
 }
 el("browser-form").addEventListener("submit", event => {
@@ -1083,7 +1175,8 @@ function renderFileList(): void {
     return;
   }
   const nodes: HTMLElement[] = matches.slice(0, 400).map(path => {
-    const item = make("button", "", path);
+    const item = make("button", "file-search-result");
+    item.append(fileBadge(path), make("span", "", path));
     item.type = "button";
     item.title = path;
     item.setAttribute("role", "option");
@@ -1105,7 +1198,7 @@ async function showFile(path: string, version: string): Promise<void> {
     rememberTab(path);
     for (const folder of parentFolders(path)) expandedDirs.add(folder);
     el("file-name").replaceChildren(...path.split("/").flatMap((part, index, parts) =>
-      index < parts.length - 1 ? [make("span", "crumb", part), make("span", "crumb-sep", "›")] : [make("span", "crumb crumb-file", part)]));
+      index < parts.length - 1 ? [make("span", "crumb", part), make("span", "crumb-sep", "›")] : [fileBadge(path), make("span", "crumb crumb-file", part)]));
     el("open-editor").hidden = false;
     const markdown = /\.(md|markdown)$/i.test(path);
     el("file-preview").hidden = !markdown;
@@ -1113,25 +1206,40 @@ async function showFile(path: string, version: string): Promise<void> {
     showFilePreview();
     renderFileTabs();
     const language = detectLanguage(path, data.text);
-    const lines = highlightLines(data.text, language.lang);
+    const mode = languageModes.get(path) ?? language.lang;
     const facts = fileFacts(data.text);
     const size = facts.bytes < 1024 ? `${facts.bytes} B` : facts.bytes < 1048576 ? `${(facts.bytes / 1024).toFixed(1)} KB` : `${(facts.bytes / 1048576).toFixed(1)} MB`;
     el("editor-status").replaceChildren(...[`${facts.lines} lines`, facts.indent, "UTF-8", facts.eol, size, language.label]
       .map((text, index) => make("span", index === 5 ? "status-lang" : "", text)));
-    el("editor-status").hidden = false;
-    if (lines.length > 1 && !lines[lines.length - 1]!.length) lines.pop();
-    el("file-view").replaceChildren(...lines.map((line, index) => {
-      const span = make("span", "ln");
-      span.append(...tokenNodes(line), document.createTextNode("\n"));
-      span.dataset.n = String(index + 1);
-      return span;
+    const modes = make("select", "language-mode"); modes.setAttribute("aria-label", "File language mode");
+    const automatic = make("option", "", `Auto · ${language.label}`); automatic.value = "auto";
+    const plain = make("option", "", "Plain Text"); plain.value = "";
+    modes.append(automatic, plain, ...supportedLanguages().sort((a, b) => languageLabel(a).localeCompare(languageLabel(b))).map(id => {
+      const option = make("option", "", languageLabel(id)); option.value = id; return option;
     }));
+    modes.value = languageModes.has(path) ? mode : "auto";
+    modes.onchange = () => {
+      if (modes.value === "auto") languageModes.delete(path); else languageModes.set(path, modes.value);
+      renderFileCode(data.text, modes.value === "auto" ? language.lang : modes.value);
+    };
+    el("editor-status").querySelector(".status-lang")?.replaceChildren(modes);
+    el("editor-status").hidden = false;
+    renderFileCode(data.text, mode);
     el("copy-file").hidden = false;
     const changed = changedPaths().has(path) && !!selected;
     el("file-version").hidden = !changed;
     for (const node of el("file-version").querySelectorAll<HTMLElement>("button")) node.setAttribute("aria-pressed", String(node.dataset.version === data.version));
     renderFileList();
   } catch (error) { message(error instanceof Error ? error.message : "Could not open the file", true); }
+}
+
+function renderFileCode(text: string, language: string): void {
+  const lines = highlightLines(text, language);
+  if (lines.length > 1 && !lines[lines.length - 1]!.length) lines.pop();
+  el("file-view").replaceChildren(...lines.map((line, index) => {
+    const span = make("span", "ln"); span.append(...tokenNodes(line), document.createTextNode("\n"));
+    span.dataset.n = String(index + 1); return span;
+  }));
 }
 
 interface GitInfo {
@@ -1287,6 +1395,7 @@ async function applyChanges(): Promise<void> {
 
 // --- task lifecycle / polling ---------------------------------------------
 function resetConversation(): void {
+  terminalHistoryIndex = -1; terminalDraft = ""; input("terminal-command").value = "";
   rendered = new Set(); pendingCalls = []; lastRole = ""; renderedDiff = ""; applyStep = "idle"; lastApplied = [];
   confirmCards.clear(); confirmDecisions.clear(); secretCards.clear(); taskRequest = null; stepGroup = null; showAllMessages = false;
   el("goal-banner").hidden = true; el("context-meter").hidden = true; el("pause").hidden = true; el("side-answer").hidden = true;
@@ -1368,6 +1477,7 @@ function message(value: string, error = false): void {
   const m = el("message");
   if (messageTimer !== undefined) clearTimeout(messageTimer);
   m.textContent = value;
+  if (/\bVS Code\b/.test(value)) m.prepend(vscodeLogo());
   m.className = error ? "error" : "";
   m.hidden = false;
   messageTimer = setTimeout(() => { m.hidden = true; }, error ? 7000 : 3500);
@@ -1406,13 +1516,29 @@ el('draft-retry').addEventListener('click', () => { void composerDrafts.resolve(
 globalThis.addEventListener?.('beforeunload', event => { if (composerDrafts.hasUnsaved()) { event.preventDefault(); (event as BeforeUnloadEvent).returnValue = ''; } });
 
 // The composer names the model the next task will use, or says what's missing.
+interface ModelChoice extends ModelProfile {}
+async function modelChoices(): Promise<ModelChoice[]> {
+  const [profiles, connections] = await Promise.all([
+    api<ModelChoice[]>("/api/profiles"),
+    api<{ id: string; endpoint: string }[]>("/api/connections").catch(() => []),
+  ]);
+  return profiles.map(profile => ({ ...profile, endpoint: profile.endpoint || connections.find(c => c.id === profile.connection_id)?.endpoint || "" }));
+}
 async function loadModel(): Promise<void> {
-  const info = await api<ActiveModel>("/api/model");
+  const chosen = modelOverride?.id ?? null;
+  const info = await api<ActiveModel>("/api/model" + (chosen ? `?profile=${encodeURIComponent(chosen)}` : ""));
+  if (chosen !== (modelOverride?.id ?? null)) return;
+  const profiles = await modelChoices().catch(() => []);
+  if (chosen !== (modelOverride?.id ?? null)) return;
   const pill = el("model-pill");
   setClass(pill, "unset", !info.configured);
   modelReady = info.configured;
   el("model-label").textContent = modelOverride ? modelOverride.name : info.configured ? info.model ?? "Model" : "Set up a model";
   setClass(pill, "override", modelOverride !== null);
+  const profile = modelOverride ? profiles.find(p => p.id === modelOverride?.id) : profiles.find(p => p.is_default);
+  let mark = el("model-symbol");
+  if (!mark) { mark = make("span"); mark.id = "model-symbol"; pill.prepend(mark); }
+  mark.replaceChildren(providerIcon(profile ? providerId(profile.provider, profile.endpoint) : ""));
   pill.title = info.configured
     ? info.source === "profile" ? `${info.model} · ${info.provider_name} (profile “${info.profile}”). Change it in Settings → Models.` : `${info.model} from server environment variables`
     : info.problem ?? "No model is set up";
@@ -1762,7 +1888,8 @@ async function observe(force = false): Promise<void> {
     const known = lastTasks.find(item => item.id === id);
     if (isTerminal(task.state) || (known && known.state !== task.state)) await loadHistory();
     if (id !== selected || epoch !== viewEpoch) return;
-    if (isTerminal(task.state)) { watching = false; maybeTitle(id, task.state); }
+    const toolsRunning = terminalTranscript(liveEvents).commands.some(command => command.running) || browserView(liveEvents).status === "running" || browserOpening?.task === id;
+    if (isTerminal(task.state) && !toolsRunning) { watching = false; maybeTitle(id, task.state); }
     else startStream(id);
   } catch (error) {
     if (error instanceof Error) message(error.message, true);
@@ -1890,6 +2017,7 @@ function applyTheme(theme: string): void {
   if (!root) return;
   if (theme === "light" || theme === "dark") root.dataset.theme = theme;
   else delete root.dataset.theme;
+  refreshFileIcons();
 }
 const themeSelect = el("theme") as HTMLSelectElement;
 const savedTheme = storageGet("dikdik.theme") ?? "system";
@@ -2346,8 +2474,8 @@ function applyRunMode(): void {
   syncMode();
 }
 /** The first message in a project asks once whether Dikdik may work in this folder. */
-async function ensureTrusted(): Promise<void> {
-  if (runMode() === "classic" || projectTrusted) return;
+async function ensureTrusted(forceLocal = false): Promise<void> {
+  if ((!forceLocal && runMode() === "classic") || projectTrusted) return;
   const yes = confirm(`Trust “${projectName}”?\n\nDikdik will read this folder, send what it reads to your model provider, `
     + `edit its files and run commands here (asking first as your permission mode says). You can undo each turn.`);
   if (!yes) throw new Error("Dikdik only works in folders you trust. Choose Classic to work on an isolated copy instead.");
@@ -2733,7 +2861,7 @@ function renderTray(): void {
   tray.replaceChildren(...attached.map(file => {
     const chip = make("span", file.preview ? "tray-item tray-image" : "tray-item");
     if (file.preview) { const image = make("img"); image.src = file.preview; image.alt = ""; chip.append(image); }
-    else chip.append(icon("file"));
+    else chip.append(fileIcon(file.name));
     chip.append(make("span", "tray-name", file.name));
     const remove = make("button", "ghost icon tray-remove"); remove.type = "button";
     remove.setAttribute("aria-label", `Remove ${file.name}`); remove.title = "Remove";
@@ -2817,22 +2945,7 @@ select("confirmation-policy").addEventListener("change", () => { void saveAppSet
 input("condenser").addEventListener("change", () => { void saveAppSetting({ condenser: input("condenser").checked }); });
 
 // --- files: tree, tabs, Markdown preview, open from chat, resizable panel -------
-/** A small coloured badge per file type, like an editor's file icons (text only, no images). */
-const BADGES: Record<string, [string, string]> = {
-  py: ["PY", "py"], ts: ["TS", "ts"], tsx: ["TS", "ts"], js: ["JS", "js"], jsx: ["JS", "js"], mjs: ["JS", "js"], json: ["{}", "json"],
-  md: ["MD", "md"], rs: ["RS", "rs"], go: ["GO", "go"], java: ["JV", "java"], c: ["C", "c"], h: ["H", "c"], cpp: ["C+", "c"],
-  rb: ["RB", "rb"], sh: ["SH", "sh"], ps1: ["PS", "sh"], css: ["#", "css"], scss: ["#", "css"], html: ["<>", "html"], xml: ["<>", "html"],
-  svg: ["SV", "img"], png: ["IM", "img"], jpg: ["IM", "img"], gif: ["IM", "img"], yml: ["YM", "yaml"], yaml: ["YM", "yaml"],
-  toml: ["TM", "yaml"], lock: ["LK", "muted"], txt: ["TX", "muted"], env: ["EN", "muted"], cfg: ["CF", "muted"], ini: ["CF", "muted"],
-};
-function fileBadge(name: string): HTMLElement {
-  const lower = name.toLowerCase();
-  const ext = lower.includes(".") ? lower.split(".").pop() ?? "" : "";
-  const [label, kind] = lower === "dockerfile" ? ["DK", "sh"] : lower.startsWith(".git") ? ["GI", "muted"] : BADGES[ext] ?? ["·", "muted"];
-  const badge = make("span", `file-badge badge-${kind}`, label);
-  badge.setAttribute("aria-hidden", "true");
-  return badge;
-}
+function fileBadge(path: string): HTMLElement { return fileIcon(path, detectLanguage(path).lang); }
 async function openInEditor(path: string, line?: number): Promise<void> {
   try { await request("/api/files/open-in-editor", "POST", { path, ...(line ? { line } : {}) }); message(path === "." ? "Opened the project in VS Code." : `Opened ${path} in VS Code.`); }
   catch (error) { message(error instanceof Error ? error.message : "Could not open VS Code", true); }
@@ -2844,6 +2957,12 @@ el("open-editor").addEventListener("click", () => {
   void openInEditor(openFile, Number(first?.dataset.n ?? 1));
 });
 el("project-open-editor").addEventListener("click", () => { void openInEditor("."); });
+el("files-open-project").addEventListener("click", () => { void openInEditor("."); });
+el("files-toggle-explorer").addEventListener("click", () => {
+  const pane = el("files-toggle-explorer").closest(".files-pane") as HTMLElement | null;
+  const hidden = pane?.classList.toggle("explorer-hidden") ?? false;
+  el("files-toggle-explorer").setAttribute("aria-pressed", String(!hidden));
+});
 function treeRows(paths: string[], changed: Set<string>): HTMLElement[] {
   return fileTree(paths, expandedDirs).map(row => {
     const item = make("button", row.dir ? "tree-row tree-dir" : "tree-row");
@@ -2851,15 +2970,16 @@ function treeRows(paths: string[], changed: Set<string>): HTMLElement[] {
     item.title = row.path;
     item.style?.setProperty?.("--depth", String(row.depth));
     item.setAttribute("role", "treeitem");
+      item.setAttribute("aria-level", String(row.depth + 1));
     if (row.dir) {
       item.setAttribute("aria-expanded", String(row.open));
       const chevron = icon("chevron"); chevron.setAttribute("class", "i tree-chevron");
-      const folder = icon(row.open ? "folder-open" : "folder"); folder.setAttribute("class", "i tree-folder");
+      const folder = folderIcon(row.path, row.open);
       item.append(chevron, folder, make("span", "tree-name", row.name));
       item.onclick = () => { if (expandedDirs.has(row.path)) expandedDirs.delete(row.path); else expandedDirs.add(row.path); renderFileList(); };
     } else {
       item.setAttribute("aria-selected", String(row.path === openFile));
-      item.append(fileBadge(row.name), make("span", "tree-name", row.name));
+      item.append(fileBadge(row.path), make("span", "tree-name", row.name));
       if (changed.has(row.path)) item.dataset.changed = "true";
       item.onclick = () => { void showFile(row.path, changed.has(row.path) && selected ? "candidate" : "workspace"); };
     }
@@ -3217,7 +3337,10 @@ function resetStop(): void {
 // --- models: settings panes, the model picker on the pill, sandbox secrets ----------------
 const paneDeps = {
   request: <T>(path: string, method: string, body?: unknown) => request<T>(path, method, body),
-  make, message,
+  make, message, navigate: (page: string, provider?: string) => {
+    if (provider) el("panel-providers").dataset.selectedProvider = provider;
+    openSettings(page);
+  },
   changed: () => { void loadModel().catch(() => undefined); void loadExposedSecrets(); void ensureLists(true); },
 };
 /** A plugin's starting message, ready in the composer of a new task (sent only when the user presses Send). */
@@ -3247,44 +3370,16 @@ async function loadExposedSecrets(): Promise<void> {
   } catch { exposedSecrets = 0; }
   syncMode();
 }
-function closeModelMenu(): void { el("model-menu").hidden = true; }
-async function openModelMenu(): Promise<void> {
-  const menu = el("model-menu");
-  if (!menu.hidden) { closeModelMenu(); return; }
-  let profiles: { id: string; name: string; model: string; is_default: boolean }[] = [];
-  try { profiles = await api<typeof profiles>("/api/profiles"); } catch { /* the menu still offers Manage models */ }
-  const pick = (choice: { id: string; name: string } | null) => {
-    modelOverride = choice;
-    closeModelMenu();
-    message(choice ? `Using ${choice.name} for your next messages in this tab.` : "Back to the default model.");
-    void loadModel().catch(() => undefined);
-  };
-  const item = (label: string, detail: string, checked: boolean, run: () => void) => {
-    const node = make("button", "model-item"); node.type = "button";
-    node.setAttribute("role", "menuitemradio");
-    node.setAttribute("aria-checked", String(checked));
-    const mark = make("span", "model-check"); if (checked) mark.append(icon("check"));
-    node.append(mark, make("span", "model-name", label));
-    if (detail) node.append(make("span", "model-detail", detail));
-    node.onclick = run;
-    return node;
-  };
-  const fallback = profiles.find(profile => profile.is_default);
-  const manage = make("button"); manage.type = "button"; manage.setAttribute("role", "menuitem");
-  manage.append(icon("gear"), make("span", "", "Manage models…"));
-  manage.onclick = () => { closeModelMenu(); openSettings("models"); };
-  menu.replaceChildren(
-    item("Default", fallback ? `${fallback.name} · ${fallback.model}` : "from settings", modelOverride === null, () => pick(null)),
-    ...profiles.map(profile => item(profile.name, profile.model, modelOverride?.id === profile.id, () => pick({ id: profile.id, name: profile.name }))),
-    make("hr"), manage,
-  );
-  const box = el("model-pill").getBoundingClientRect();
-  menu.hidden = false;
-  const width = menu.offsetWidth, height = menu.offsetHeight;
-  menu.style.left = `${Math.max(8, Math.min(box.left, innerWidth - width - 8))}px`;
-  menu.style.top = `${box.top - height - 6 > 8 ? box.top - height - 6 : box.bottom + 6}px`;
-  menu.querySelector<HTMLButtonElement>("[aria-checked=true]")?.focus();
-}
+const chatModelPicker = modelPicker(el("model-menu"), el("model-pill"), {
+  ...paneDeps, profiles: modelChoices, selected: () => modelOverride?.id ?? null,
+  pick: choice => { modelOverride = choice; void loadModel().catch(() => undefined); },
+  manage: provider => {
+    if (provider) el("panel-providers").dataset.selectedProvider = provider;
+    openSettings("models");
+  },
+});
+function closeModelMenu(): void { chatModelPicker.close(); }
+async function openModelMenu(): Promise<void> { await chatModelPicker.open(); }
 if (typeof document.addEventListener === "function") {
   document.addEventListener("click", event => {
     const menu = el("model-menu");
@@ -3390,30 +3485,31 @@ function restoreTabs(): void {
   renderFileTabs();
 }
 const treeGrip = el("tree-resize");
-let treeDrag: { pointer: number; y: number; height: number } | null = null;
-function setTreeHeight(height: number | null): void {
-  const list = el("file-list");
-  if (height === null) { list.style?.removeProperty?.("max-height"); list.style?.removeProperty?.("height"); storageSet("dikdik.tree.height", ""); return; }
-  const clamped = Math.round(Math.max(80, Math.min(height, (globalThis.innerHeight || 900) * 0.7)));
-  list.style?.setProperty?.("max-height", "none");
-  list.style?.setProperty?.("height", `${clamped}px`);
-  storageSet("dikdik.tree.height", String(clamped));
+let treeDrag: { pointer: number; x: number; width: number } | null = null;
+function setExplorerWidth(width: number | null): void {
+  const grid = treeGrip.parentElement;
+  if (width === null) { grid?.style?.removeProperty?.("--explorer-width"); storageSet("dikdik.explorer.width", ""); return; }
+  const available = grid?.getBoundingClientRect?.().width || 600;
+  const clamped = Math.round(Math.max(140, Math.min(width, Math.min(340, available * 0.55))));
+  grid?.style?.setProperty?.("--explorer-width", `${clamped}px`);
+  treeGrip.setAttribute("aria-valuenow", String(clamped));
+  storageSet("dikdik.explorer.width", String(clamped));
 }
 {
-  const saved = Number(storageGet("dikdik.tree.height"));
-  if (saved > 0) setTreeHeight(saved);
+  const saved = Number(storageGet("dikdik.explorer.width"));
+  if (saved > 0) setExplorerWidth(saved);
 }
 treeGrip.addEventListener("pointerdown", (event: PointerEvent) => {
-  treeDrag = { pointer: event.pointerId, y: event.clientY, height: el("file-list").getBoundingClientRect?.().height ?? 200 };
+  treeDrag = { pointer: event.pointerId, x: event.clientX, width: treeGrip.previousElementSibling?.getBoundingClientRect?.().width ?? 190 };
   treeGrip.setPointerCapture?.(event.pointerId); event.preventDefault();
 });
-treeGrip.addEventListener("pointermove", (event: PointerEvent) => { if (treeDrag?.pointer === event.pointerId) setTreeHeight(treeDrag.height + event.clientY - treeDrag.y); });
+treeGrip.addEventListener("pointermove", (event: PointerEvent) => { if (treeDrag?.pointer === event.pointerId) setExplorerWidth(treeDrag.width + event.clientX - treeDrag.x); });
 for (const name of ["pointerup", "pointercancel", "lostpointercapture"]) treeGrip.addEventListener(name, () => { treeDrag = null; });
 treeGrip.addEventListener("keydown", (event: KeyboardEvent) => {
-  const height = el("file-list").getBoundingClientRect?.().height ?? 200;
-  if (event.key === "ArrowDown") setTreeHeight(height + 24);
-  else if (event.key === "ArrowUp") setTreeHeight(height - 24);
-  else if (event.key === "Home") setTreeHeight(null);
+  const width = treeGrip.previousElementSibling?.getBoundingClientRect?.().width ?? 190;
+  if (event.key === "ArrowRight") setExplorerWidth(width + 16);
+  else if (event.key === "ArrowLeft") setExplorerWidth(width - 16);
+  else if (event.key === "Home") setExplorerWidth(null);
   else return;
   event.preventDefault();
 });
@@ -3732,6 +3828,7 @@ function openProjects(form: string | null = null): void {
   if (form === "clone") void loadRepos();
   if (!projectsDialog.open) projectsDialog.showModal();
   void loadProjects().catch(error => projectStatus(error instanceof Error ? error.message : String(error), true));
+  if (form === "open") projectsDialog.querySelector<HTMLButtonElement>('[data-browse="project-open-path"]')?.click();
 }
 el("project-switch").addEventListener("click", () => openProjects());
 el("project-picker").addEventListener("click", () => openProjects());
@@ -3771,16 +3868,23 @@ el("project-repos-search").addEventListener("input", renderRepos);
 for (const tab of projectsDialog.querySelectorAll<HTMLElement>('[data-project-tab="clone"]')) tab.addEventListener("click", () => { void loadRepos(); });
 el("projects-close").addEventListener("click", () => projectsDialog.close());
 for (const button of projectsDialog.querySelectorAll<HTMLElement>("[data-project-tab]")) {
-  button.addEventListener("click", () => showProjectForm(button.getAttribute("aria-selected") === "true" ? null : button.dataset.projectTab ?? null));
+  button.addEventListener("click", () => {
+    const form = button.getAttribute("aria-selected") === "true" ? null : button.dataset.projectTab ?? null;
+    showProjectForm(form);
+    if (form === "open") projectsDialog.querySelector<HTMLButtonElement>('[data-browse="project-open-path"]')?.click();
+  });
 }
+const chooseProjectFolder = folderPicker({ make, request });
 for (const button of projectsDialog.querySelectorAll<HTMLButtonElement>("[data-browse]")) {
   button.addEventListener("click", async () => {
-    projectStatus("Choose a folder in the window that opened…");
+    const target = el(button.dataset.browse ?? "") as HTMLInputElement;
+    button.disabled = true;
+    projectStatus("");
     try {
-      const picked = await request<{ path: string | null }>("/api/projects/pick", "POST", {});
-      if (picked.path) (el(button.dataset.browse ?? "") as HTMLInputElement).value = picked.path;
-      projectStatus("");
+      const picked = await chooseProjectFolder(target.value.trim(), target.id === "project-open-path" ? "Open a project folder" : "Choose project location");
+      if (picked) { target.value = picked; target.dispatchEvent(new Event("input", { bubbles: true })); }
     } catch (error) { projectStatus(error instanceof Error ? error.message : String(error), true); }
+    finally { button.disabled = false; button.focus(); }
   });
 }
 el("project-open-form").addEventListener("submit", event => {

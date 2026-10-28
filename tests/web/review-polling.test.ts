@@ -22,6 +22,7 @@ class Node {
   // Like the real DOM, replacing children recomputes textContent (diff lines render as spans).
   replaceChildren(...children: Node[]) { this.children = children; this.textContent = children.map(child => child.textContent).join(""); this.replacements++; }
   append(...children: Node[]) { this.children.push(...children); }
+  prepend(...children: Node[]) { this.children.unshift(...children); }
   setAttribute(name: string, value: string) { this.attributes.set(name, value); }
   querySelectorAll() { return this.children.filter(child => child instanceof Button); }
 }
@@ -37,9 +38,9 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   };
   const nodes = new Map<string, Node>();
-  for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url", "attach-input", "condenser", "palette-input", "meta-folder", "meta-tags", "sounds", "git-name", "git-email", "secrets-approval", "agent-critic", "agent-memory", "agent-secrets"]) nodes.set(id, new Input());
-  for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-back", "browser-forward", "browser-reload", "browser-external-empty", "planner-create", "planner-build", "pause", "git-save"]) nodes.set(id, new Button());
-  for (const id of ["run-mode", "mode", "verification", "confirmation-policy", "task-sort", "task-since", "task-scope", "title-model"]) nodes.set(id, new Select());
+  for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url", "attach-input", "condenser", "palette-input", "meta-folder", "meta-tags", "sounds", "git-name", "git-email", "secrets-approval", "agent-critic", "agent-memory", "agent-secrets", "terminal-cwd", "terminal-command"]) nodes.set(id, new Input());
+  for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-back", "browser-forward", "browser-reload", "browser-external-empty", "planner-create", "planner-build", "pause", "git-save", "terminal-new", "terminal-copy", "terminal-clear", "terminal-stop", "terminal-run", "browser-text-toggle", "browser-example"]) nodes.set(id, new Button());
+  for (const id of ["run-mode", "mode", "verification", "confirmation-policy", "task-sort", "task-since", "task-scope", "title-model", "browser-history", "browser-zoom"]) nodes.set(id, new Select());
   for (const id of ["edits", "objective"]) nodes.set(id, new Textarea());
   const node = (id: string): Node => {
     if (!nodes.has(id)) nodes.set(id, new Node());

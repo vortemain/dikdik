@@ -2,8 +2,9 @@
 
 Every provider here speaks the OpenAI chat-completions protocol at its base URL
 (Azure with its own key header), so connecting one is: paste a key, pick a model.
-The model lists are starting suggestions; "Load all models" asks the provider
-itself (`GET <base>/models`) with the user's stored key, on request only.
+The model lists here are explicitly labelled suggestions. Selecting a provider
+loads its native directory, following pagination in model_discovery.py. Most
+directories require a key; OpenRouter and Cerebras also have public catalogs.
 Users can add their own OpenAI-compatible provider; registering it is what makes
 its URL acceptable for a profile, so arbitrary endpoints never slip in unannounced.
 """
@@ -17,6 +18,7 @@ import urllib.error
 import urllib.request
 import uuid
 from urllib.parse import urlsplit
+from .model_discovery import discover_models
 
 # kind: the stored profile/connection provider type (how requests authenticate).
 PROVIDERS = {
@@ -39,7 +41,7 @@ PROVIDERS = {
     "groq": {"name": "Groq", "kind": "openai", "base": "https://api.groq.com/openai/v1", "key_help": "https://console.groq.com/keys",
              "blurb": "Very fast open models", "models": ["moonshotai/kimi-k2-instruct", "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "qwen/qwen3-32b"]},
     "cerebras": {"name": "Cerebras", "kind": "openai", "base": "https://api.cerebras.ai/v1", "key_help": "https://cloud.cerebras.ai",
-                 "blurb": "Very fast open models", "models": ["qwen-3-coder-480b", "gpt-oss-120b", "llama-3.3-70b"]},
+                 "blurb": "Very fast open models", "public_models": True, "models": ["qwen-3-coder-480b", "gpt-oss-120b", "llama-3.3-70b"]},
     "together": {"name": "Together AI", "kind": "openai", "base": "https://api.together.xyz/v1", "key_help": "https://api.together.xyz/settings/api-keys",
                  "blurb": "Open models in the cloud", "models": ["Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8", "deepseek-ai/DeepSeek-V3.1", "meta-llama/Llama-3.3-70B-Instruct-Turbo"]},
     "fireworks": {"name": "Fireworks", "kind": "openai", "base": "https://api.fireworks.ai/inference/v1", "key_help": "https://fireworks.ai/account/api-keys",
@@ -52,7 +54,10 @@ PROVIDERS = {
     "qwen": {"name": "Qwen (Alibaba Cloud)", "kind": "openai", "base": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
              "key_help": "https://modelstudio.console.alibabacloud.com", "blurb": "Qwen models", "models": ["qwen3-coder-plus", "qwen-max", "qwen-plus"]},
     "perplexity": {"name": "Perplexity", "kind": "openai", "base": "https://api.perplexity.ai", "key_help": "https://www.perplexity.ai/settings/api",
-                   "blurb": "Models with web search", "models": ["sonar-pro", "sonar-reasoning-pro", "sonar"]},
+                   "blurb": "Legacy Sonar models", "models_unavailable": "The legacy Sonar endpoint does not publish a model directory. Use Perplexity Orchestrator for a live catalog, or enter a Sonar model ID.",
+                   "models": ["sonar-pro", "sonar-reasoning-pro", "sonar"]},
+    "perplexity-orchestrator": {"name": "Perplexity Orchestrator", "kind": "openai", "base": "https://api.perplexity.ai/orchestrator/v1",
+                              "key_help": "https://www.perplexity.ai/settings/api", "blurb": "Multi-provider chat models", "models": []},
     "ollama": {"name": "Ollama", "kind": "local", "base": "http://127.0.0.1:11434/v1", "key_help": "https://ollama.com/download",
                "blurb": "Models running on this computer", "no_key": True, "models": ["qwen3-coder:30b", "gpt-oss:20b", "llama3.2"]},
     "lmstudio": {"name": "LM Studio", "kind": "local", "base": "http://127.0.0.1:1234/v1", "key_help": "https://lmstudio.ai",
@@ -133,39 +138,15 @@ def catalog(store=None, connections: list[dict] | None = None) -> dict:
         entries += [provider_info(store, c["id"]) for c in custom_providers(store)]
     for entry in entries:
         match = connected.get(entry["base"]) if entry["base"] else None
-        if match is None and entry["id"] in {"openai", "anthropic"}:
+        if match is None and entry["id"] in {"openai", "anthropic", "azure"}:
             match = next((c for c in connections or [] if c["provider"] == entry["id"] and not c.get("endpoint")), None)
-        providers.append({**{k: v for k, v in entry.items() if k != "public_models"}, "connection": match and match["id"],
+        if match is None and entry["id"] == "azure":
+            match = next((c for c in connections or [] if c["provider"] == "azure"), None)
+        providers.append({**entry, "connection": match and match["id"],
                           "connection_name": match and match["name"], "key_set": bool(match and match.get("key_set"))})
     return {"default_provider": DEFAULT_PROVIDER, "providers": {p["id"]: p for p in providers}, "order": [p["id"] for p in providers]}
 
 
 def live_models(info: dict, key: str | None, timeout: float = 15) -> list[dict]:
-    """The provider's own model list (`GET <base>/models`), newest information first."""
-    if not info.get("base"):
-        raise ValueError("This provider needs its endpoint first")
-    headers = {"Accept": "application/json", "User-Agent": "dikdik"}
-    if key:
-        headers["api-key" if info.get("kind") == "azure" else "Authorization"] = key if info.get("kind") == "azure" else f"Bearer {key}"
-    if info["id"] == "anthropic":
-        headers.update({"x-api-key": key or "", "anthropic-version": "2023-06-01"})
-    request = urllib.request.Request(info["base"].rstrip("/") + "/models", headers=headers, method="GET")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as answer:
-            data = json.loads(answer.read(8_000_000))
-    except urllib.error.HTTPError as exc:
-        raise ValueError({401: "The provider rejected the key", 403: "The key is not allowed to list models",
-                          404: "This provider does not offer a model list; type the model name instead"}.get(exc.code, f"The provider answered HTTP {exc.code}")) from None
-    except (urllib.error.URLError, OSError, ValueError):
-        raise ValueError("Could not reach the provider" + (" — is it running on this computer?" if info.get("kind") == "local" else "")) from None
-    rows = data.get("data") if isinstance(data, dict) else data
-    models = []
-    for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
-            continue
-        pricing = row.get("pricing") if isinstance(row.get("pricing"), dict) else {}
-        models.append({"id": row["id"][:200], "name": str(row.get("name") or row.get("display_name") or row["id"])[:200],
-                       "context": row.get("context_length") or row.get("context_window") or None,
-                       "prompt_price": pricing.get("prompt"), "completion_price": pricing.get("completion"),
-                       "created": row.get("created") if isinstance(row.get("created"), (int, float)) else None})
-    return sorted(models, key=lambda m: -(m["created"] or 0))[:2000]
+    """Compatibility helper; the route also reports completeness and page counts."""
+    return discover_models(info, key, timeout)["models"]

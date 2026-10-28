@@ -100,6 +100,26 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("rejected the key", body["error"])
 
+    def test_chat_selection_does_not_change_an_existing_default_and_no_key_local_is_one_step(self):
+        self.call("POST", "/api/model-catalog/openrouter/connect", {"api_key": KEY})
+        self.call("POST", "/api/model-catalog/openrouter/use", {"model": "original-default"})
+        status, used = self.call("POST", "/api/model-catalog/ollama/use", {"model": "local-model", "default": False})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.engine.models.describe()["model"], "original-default")
+        config = self.engine.models.resolve(used["profile"])
+        self.assertEqual((config.model, config.key, config.auth), ("local-model", "", "none"))
+        self.assertTrue(self.engine.models.describe(used["profile"])["configured"])
+
+    def test_long_provider_model_ids_get_valid_distinct_profile_names(self):
+        self.call("POST", "/api/model-catalog/fireworks/connect", {"api_key": KEY})
+        first = "accounts/fireworks/models/" + "a" * 70
+        second = first[:-1] + "b"
+        self.assertEqual(self.call("POST", "/api/model-catalog/fireworks/use", {"model": first})[0], 200)
+        self.assertEqual(self.call("POST", "/api/model-catalog/fireworks/use", {"model": second})[0], 200)
+        names = [p["name"] for p in self.call("GET", "/api/profiles")[1]]
+        self.assertEqual(len(set(names)), 2)
+        self.assertTrue(all(len(name) <= 64 for name in names))
+
 
 if __name__ == "__main__":
     unittest.main()

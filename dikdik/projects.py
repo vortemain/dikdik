@@ -27,6 +27,7 @@ from .repository import approved_root
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,99}")
 SCP_URL = re.compile(r"[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._/~-]+")
 CLONE_TIMEOUT = 900
+FOLDER_LIMIT = 1000
 SAFE_GIT = ["-c", "core.hooksPath=" + os.devnull, "-c", "core.fsmonitor=false", "-c", "protocol.allow=never",
             "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "protocol.file.allow=always"]
 
@@ -66,14 +67,16 @@ def check_clone_url(url) -> str:
 def pick_folder(title: str = "Choose a project folder") -> str | None:
     """Show this computer's own folder picker (the server runs here). None if cancelled."""
     if sys.platform == "win32":
-        script = ("Add-Type -AssemblyName System.Windows.Forms;"
+        script = ("$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;"
+                  "Add-Type -AssemblyName System.Windows.Forms;"
                   "$owner = New-Object System.Windows.Forms.Form -Property @{TopMost=$true; ShowInTaskbar=$false};"
                   "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog;"
-                  f"$dialog.Description = '{title}'; $dialog.ShowNewFolderButton = $true;"
+                  f"$dialog.Description = '{title.replace(chr(39), chr(39) * 2)}'; $dialog.ShowNewFolderButton = $true;"
                   "if ($dialog.ShowDialog($owner) -eq 'OK') { [Console]::Out.Write($dialog.SelectedPath) }")
         command = ["powershell", "-NoProfile", "-STA", "-Command", script]
     elif sys.platform == "darwin":
-        command = ["osascript", "-e", f'POSIX path of (choose folder with prompt "{title}")']
+        prompt = title.replace("\\", "\\\\").replace('"', '\\"')
+        command = ["osascript", "-e", f'POSIX path of (choose folder with prompt "{prompt}")']
     elif shutil.which("zenity"):
         command = ["zenity", "--file-selection", "--directory", f"--title={title}"]
     elif shutil.which("kdialog"):
@@ -81,11 +84,47 @@ def pick_folder(title: str = "Choose a project folder") -> str | None:
     else:
         raise ValueError("No folder picker is available here; type or paste the folder path instead")
     try:
-        done = subprocess.run(command, capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
+        done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=600, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
         raise ValueError("The folder picker could not be shown; type or paste the folder path instead") from None
+    cancelled = (sys.platform == "darwin" and "(-128)" in done.stderr) or (sys.platform not in {"win32", "darwin"} and done.returncode == 1)
+    if done.returncode and not cancelled:
+        raise ValueError("The folder picker could not be shown; use Browse or paste the folder path instead")
     chosen = done.stdout.strip()
     return chosen or None
+
+
+def list_folders(path: str) -> dict:
+    """Local, authenticated folder chooser; works without an interactive desktop."""
+    if not isinstance(path, str) or not path.strip() or len(path) > 1000 or "\0" in path:
+        raise ValueError("Enter a folder path")
+    root = Path(path.strip()).expanduser()
+    if not root.is_absolute():
+        raise ValueError("Enter a full folder path")
+    try:
+        root = root.resolve(strict=True)
+        folders, truncated = [], False
+        with os.scandir(root) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir():
+                        folders.append({"name": entry.name, "path": str(root / entry.name)})
+                except OSError:
+                    continue
+                if len(folders) > FOLDER_LIMIT:
+                    truncated = True
+                    break
+        folders.sort(key=lambda item: item["name"].casefold())
+    except (OSError, RuntimeError, ValueError):
+        raise ValueError("Cannot open this folder. Check the path and your access, or choose another location.") from None
+    locations = [{"name": "Home", "path": str(Path.home())}]
+    try:
+        drives = os.listdrives() if hasattr(os, "listdrives") else [str(Path(root.anchor))]
+    except OSError:
+        drives = [root.anchor]
+    locations += [{"name": drive, "path": drive} for drive in drives]
+    return {"path": str(root), "parent": str(root.parent) if root != root.parent else None,
+            "folders": folders[:FOLDER_LIMIT], "locations": locations, "truncated": truncated}
 
 
 class Projects:

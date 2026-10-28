@@ -77,6 +77,7 @@ export interface TerminalCommandView {
   command: string;
   output: string;
   running: boolean;
+  source?: "manual" | "agent";
   exitCode?: number | null;
   status?: string;
 }
@@ -586,13 +587,17 @@ export function terminalTranscript(events: TaskEvent[]): TerminalView {
     if (event.kind === "terminal_command") {
       const command = textOf(data.command, 4000);
       if (!command || commands.has(id)) continue;
-      commands.set(id, { id, command, output: "", running: true });
+      commands.set(id, { id, command, output: "", running: true, source: data.kind === "command" ? "manual" : "agent" });
       order.push(id);
       continue;
     }
     const row = commands.get(id);
     if (!row) continue;
-    const chunk = textOf(data.output, 1024 * 1024);
+    // Shells may emit ANSI styling or window-title escapes. Never treat either
+    // as markup, and do not discard a whole output chunk merely for using color.
+    const raw = typeof data.output === "string" ? data.output.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "") : data.output;
+    const chunk = textOf(raw, 1024 * 1024);
     if (chunk && total < 1024 * 1024) {
       const kept = chunk.slice(0, 1024 * 1024 - total);
       row.output += kept;
@@ -603,6 +608,8 @@ export function terminalTranscript(events: TaskEvent[]): TerminalView {
       if (data.exit_code === null || typeof data.exit_code === "number") row.exitCode = data.exit_code as number | null;
       const status = textOf(data.status, 80);
       if (status) row.status = status;
+      const error = textOf(data.error, 1000);
+      if (error) row.output += (row.output.endsWith("\n") ? "" : "\n") + error + "\n";
     }
   }
   const list = order.map(id => commands.get(id)!).filter(Boolean);
@@ -643,14 +650,14 @@ export function taskChecklist(events: TaskEvent[]): { used: boolean; tasks: Chec
   }
   return { used, tasks };
 }
-export interface BrowserPage { url: string; title: string; screenshot: string }
+export interface BrowserPage { url: string; title: string; screenshot: string; text: string }
 /** Every page captured in this conversation, oldest first, for Back and Forward. */
 export function browserHistory(events: TaskEvent[]): BrowserPage[] {
   const pages: BrowserPage[] = [];
   for (const event of events) {
     if (event.kind !== "browser_result") continue;
     const one = browserView([event]);
-    if (one.screenshot) pages.push({ url: one.url, title: one.title, screenshot: one.screenshot });
+    if (one.screenshot) pages.push({ url: one.url, title: one.title, screenshot: one.screenshot, text: one.text });
   }
   return pages;
 }

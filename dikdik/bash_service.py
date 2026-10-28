@@ -1,9 +1,4 @@
-"""Persistent, task-scoped shell commands executed only in the Docker sandbox.
-
-The service deliberately has no host/global execution mode.  Every command is
-attached to a task whose request already contains explicit Docker consent, runs
-on a throwaway copy, has no network, and cannot write to the approved workspace.
-"""
+"""Durable command terminal, using the task's approved local or Docker runtime."""
 
 import json
 import threading
@@ -15,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .repository import inventory
 from .runners import IMAGES, run_shell
+from . import local_exec
 
 
 MAX_TIMEOUT = 300
@@ -75,6 +71,14 @@ class BashService:
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dikdik-bash")
         with self.store.connect() as db:
             db.executescript(_SCHEMA)
+            unfinished = db.execute("SELECT task_id,command_id FROM bash_events b WHERE kind='command' AND NOT EXISTS "
+                                    "(SELECT 1 FROM bash_events o WHERE o.command_id=b.command_id AND o.kind='output' "
+                                    "AND json_extract(o.data,'$.final')=1)").fetchall()
+        for row in unfinished:
+            self._insert(row["task_id"], row["command_id"], 1, "output", {
+                "output": "", "final": True, "status": "interrupted", "exit_code": None,
+                "error": "The service restarted before this command completed",
+            })
 
     def close(self):
         with self._lock:
@@ -91,8 +95,26 @@ class BashService:
         task = self.store.get(_task_id(task_id))
         approval = next((event['data']['approvals'] for event in reversed(task['events']) if event['kind'] == 'running' and isinstance(event['data'].get('approvals'), dict)), task['request'])
         if approval.get('approve_execution') is not True:
-            raise PermissionError("This task has no explicit Docker execution approval")
+            raise PermissionError("This task has no explicit execution approval")
         return task
+
+    def session(self, body):
+        """Explicitly open workspace tools without needing a model or agent turn."""
+        if not isinstance(body, dict) or body.get("approve_execution") is not True:
+            raise PermissionError("Explicit execution approval is required")
+        if not self.engine.trusted():
+            raise PermissionError("Trust this project before opening a local terminal")
+        task = self.store.create({"objective": "Workspace tools", "mode": "agent", "verification": "local",
+                                  "approve_execution": True, "approve_external": False})
+        self.store.state(task, "completed", {"summary": "Workspace tools ready.", "status": "answered", "turn_changed": False})
+        return {"id": task}
+
+    def _local_cwd(self, relative):
+        root = self.engine.root.resolve()
+        target = (root / relative).resolve()
+        if not target.is_relative_to(root) or not target.is_dir():
+            raise ValueError("cwd must be an existing directory inside this project")
+        return target
 
     def _files(self, task_id: str) -> dict[str, str]:
         artifact = self.engine.data / "artifacts" / task_id
@@ -127,8 +149,13 @@ class BashService:
         return {"command": command, "timeout": timeout, "image": image, "cwd": _relative_cwd(body.get("cwd"))}
 
     def start(self, task_id: str, body) -> dict:
-        self._approved_task(task_id)
+        task = self._approved_task(task_id)
         request = self._validate(body)
+        request["runtime"] = "local" if task["request"].get("verification") == "local" else "docker"
+        if request["runtime"] == "local":
+            if not self.engine.trusted():
+                raise PermissionError("Trust this project before running local commands")
+            self._local_cwd(request["cwd"])
         command_id = uuid.uuid4().hex
         key = f"{task_id}:{command_id}"
         cancel, done = threading.Event(), threading.Event()
@@ -147,6 +174,7 @@ class BashService:
             self._insert(task_id, command_id, 0, "command", {
                 "command": request["command"], "cwd": request["cwd"] or None,
                 "timeout": request["timeout"], "image": request["image"],
+                "runtime": request["runtime"],
             })
             self._pool.submit(self._run, task_id, command_id, request, cancel, done)
         except Exception:
@@ -180,6 +208,10 @@ class BashService:
                 return
             text = text[:MAX_OUTPUT - sent]
             sent += len(text)
+            if request.get("runtime") == "local":
+                order += 1
+                self._insert(task_id, command_id, order, "output", {"output": text, "final": False})
+                return
             buffered.append(text)
             joined = "".join(buffered)
             while len(joined) >= CHUNK_SIZE:
@@ -189,18 +221,23 @@ class BashService:
             buffered[:] = [joined]
 
         command = request["command"]
-        if request["cwd"]:
+        if request["cwd"] and request.get("runtime") != "local":
             # The path is already restricted to plain relative workspace segments.
             quoted = "'" + request["cwd"].replace("'", "'\\''") + "'"
             command = f"cd -- {quoted} && {command}"
         try:
-            result = ({"status": "cancelled", "exit_code": -15, "output": "", "changed": {}}
-                      if cancel.is_set() else run_shell(
+            if cancel.is_set():
+                result = {"status": "cancelled", "exit_code": -15, "output": "", "changed": {}}
+            elif request.get("runtime") == "local":
+                result = local_exec.run(self._local_cwd(request["cwd"]), command, cancel,
+                                        timeout=request["timeout"], on_chunk=chunk, output_limit=MAX_OUTPUT)
+            else:
+                result = run_shell(
                           self.engine.data / "bash" / command_id, self._files(task_id), command, cancel,
                           image=request["image"], timeout=request["timeout"],
                           name="dikdik-" + command_id, on_chunk=chunk, output_limit=MAX_OUTPUT,
-                      ))
-            if not buffered and result.get("output"):
+                      )
+            if not sent and result.get("output"):
                 chunk(str(result["output"]))
             if buffered and buffered[0]:
                 order += 1
@@ -209,6 +246,7 @@ class BashService:
             self._insert(task_id, command_id, order, "output", {
                 "output": "", "final": True, "exit_code": result.get("exit_code"),
                 "status": result.get("status"), "truncated": bool(result.get("output_truncated") or sent >= MAX_OUTPUT),
+                **({"error": result["output"]} if not sent and result.get("status") != "passed" and result.get("output") else {}),
                 **({"error": result["error"]} if isinstance(result.get("error"), str) else {}),
             })
         except Exception:
@@ -299,6 +337,11 @@ class BashService:
         """Dispatch `/api/tasks/<id>/bash/...`; return None for other paths."""
         split = urlsplit(raw_path)
         parts = [part for part in split.path.split("/") if part]
+        if method == "POST" and parts == ["api", "terminal", "sessions"]:
+            try:
+                return 201, self.session(body)
+            except PermissionError as exc:
+                return 403, {"error": str(exc)}
         if len(parts) < 4 or parts[:2] != ["api", "tasks"] or parts[3] != "bash":
             return None
         task_id = parts[2]

@@ -32,7 +32,7 @@ from .openapi import document as openapi_document
 from .server_state import ServerState
 from .api_keys import ApiKeyStore
 from .config import check_config_or_exit
-from .projects import Projects, check_location, pick_folder
+from .projects import Projects, check_location, pick_folder, list_folders
 from . import remote as remote_mode
 from . import git_accounts
 
@@ -45,8 +45,13 @@ STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
+    "/model-settings.css": ("model-settings.css", "text/css; charset=utf-8"),
     "/icon.svg": ("icon.svg", "image/svg+xml"),
     **{f"/fonts/{name}.woff2": (f"fonts/{name}.woff2", "font/woff2") for name in FONTS},
+    **{f"/assets/{path.relative_to(WEB / 'assets').as_posix()}":
+       (path.relative_to(WEB).as_posix(), "image/svg+xml")
+       for path in (WEB / "assets").glob("*/*.svg") if path.is_file() and not path.is_symlink()},
 }
 SESSION_AGE = 30 * 24 * 3600
 PAGE_CSP = ("default-src 'self'; style-src 'self'; script-src 'self'; font-src 'self'; img-src 'self' data:; "
@@ -535,6 +540,12 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if path == "/api/keys":
                     self.reply(200, {"keys": api_keys.list()})
                     return
+                if path == "/api/projects/folders":
+                    if remote:
+                        raise ValueError("Folder browsing is available only when Dikdik runs on this computer; type the server folder path instead")
+                    query = parse_qs(urlsplit(self.path).query)
+                    self.reply(200, list_folders(query.get("path", [str(engine.root.parent)])[0]))
+                    return
                 if path == "/api/projects":
                     self.reply(200, projects.describe())
                     return
@@ -611,7 +622,8 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     state, counts = engine.store.count_events(path.split("/")[3])
                     self.reply(200, {"state": state, **counts})
                 elif path == "/api/model":
-                    self.reply(200, engine.models.describe())
+                    profile = parse_qs(urlsplit(self.path).query).get("profile", [None])[0]
+                    self.reply(200, engine.models.describe(profile))
                 elif path == "/api/files/content":
                     query = parse_qs(urlsplit(self.path).query)
                     self.reply(200, engine.file_text(query.get("path", [""])[0], query.get("task", [None])[0]))

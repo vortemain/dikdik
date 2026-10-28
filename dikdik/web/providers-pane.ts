@@ -7,12 +7,15 @@
  * profiles, routers) stays available under "Advanced".
  */
 import type { PaneDeps } from "./models-pane";
+import { providerIcon } from "./icons";
 
 export interface CatalogProvider {
   id: string; name: string; kind: string; base: string; key_help: string; blurb: string; models: string[];
   connection: string | null; connection_name: string | null; key_set: boolean; no_key?: boolean; custom?: boolean;
+  public_models?: boolean;
+  models_unavailable?: string;
 }
-export interface LiveModel { id: string; name: string; context: number | null; prompt_price: string | null; completion_price: string | null }
+export interface LiveModel { id: string; name: string; context: number | null; prompt_price: string | null; completion_price: string | null; chat_supported?: boolean | null }
 
 /** "$0.15 / $0.60 per 1M tokens" from per-token prices, as OpenRouter lists them. */
 export function priceLabel(model: LiveModel): string {
@@ -30,8 +33,9 @@ export function contextLabel(tokens: number | null): string {
 
 export function providersPane(root: HTMLElement, deps: PaneDeps): () => Promise<void> {
   const { request, make, message } = deps;
-  let providers: CatalogProvider[] = [], selected = "", current = "", query = "";
+  let providers: CatalogProvider[] = [], selected = "", current = "", query = "", generation = 0;
   const live = new Map<string, LiveModel[]>();
+  const loading = new Set<string>(), errors = new Map<string, string>();
   const fail = (error: unknown) => message(error instanceof Error ? error.message : "Something went wrong", true);
   const button = (label: string, className: string, onclick: () => void) => {
     const node = make("button", className, label) as HTMLButtonElement; node.type = "button"; node.onclick = onclick; return node;
@@ -43,8 +47,26 @@ export function providersPane(root: HTMLElement, deps: PaneDeps): () => Promise<
       request<{ configured: boolean; model?: string; provider_name?: string; profile?: string }>("/api/model", "GET"),
     ]);
     providers = catalog.order.map(id => catalog.providers[id]!).filter(Boolean);
+    generation++; live.clear(); loading.clear(); errors.clear();
+    if (root.dataset.selectedProvider) { selected = root.dataset.selectedProvider; delete root.dataset.selectedProvider; }
     current = model.configured ? `${model.model ?? ""}${model.profile ? ` · ${model.profile}` : ""}` : "";
     render();
+    const provider = providers.find(p => p.id === selected);
+    if (provider) void fetchModels(provider);
+  }
+
+  async function fetchModels(provider: CatalogProvider, refresh = false): Promise<void> {
+    if (provider.models_unavailable) return;
+    if (loading.has(provider.id) || (!refresh && live.has(provider.id))) return;
+    if (!provider.connection && !provider.public_models && !provider.no_key) return;
+    const ticket = generation;
+    loading.add(provider.id); errors.delete(provider.id); render();
+    try {
+      const listing = await request<{ models: LiveModel[] }>(`/api/model-catalog/${encodeURIComponent(provider.id)}/models`, "GET");
+      if (ticket === generation) live.set(provider.id, listing.models);
+    }
+    catch (error) { if (ticket === generation) errors.set(provider.id, error instanceof Error ? error.message : "Could not load models"); }
+    finally { if (ticket === generation) { loading.delete(provider.id); if (selected === provider.id) render(); } }
   }
 
   async function use(provider: CatalogProvider, model: string): Promise<void> {
@@ -56,12 +78,16 @@ export function providersPane(root: HTMLElement, deps: PaneDeps): () => Promise<
     } catch (error) { fail(error); }
   }
 
-  function modelRow(provider: CatalogProvider, id: string, detail = ""): HTMLElement {
+  function modelRow(provider: CatalogProvider, id: string, detail = "", supported = true): HTMLElement {
     const row = make("li", "provider-model");
     const text = make("span", "provider-model-text");
     text.append(make("strong", "", id));
     if (detail) text.append(make("small", "", detail));
-    row.append(text, button(provider.connection ? "Use" : "Connect first", "ghost small", () => { if (provider.connection) void use(provider, id); }));
+    const useButton = button(!supported ? "Not chat" : provider.connection || provider.no_key ? "Use" : "Connect first", "ghost small", () => {
+      if (provider.connection || provider.no_key) void use(provider, id); else root.querySelector<HTMLInputElement>(".provider-connect input")?.focus();
+    });
+    useButton.disabled = !supported;
+    row.append(text, useButton);
     return row;
   }
 
@@ -88,6 +114,7 @@ export function providersPane(root: HTMLElement, deps: PaneDeps): () => Promise<
       try {
         await request(`/api/model-catalog/${encodeURIComponent(provider.id)}/connect`, "POST", { api_key: key.value.trim() || undefined, endpoint: endpoint.value.trim() || undefined });
         key.value = "";
+        live.delete(provider.id); errors.delete(provider.id);
         message(provider.connection ? `${provider.name} key replaced.` : `${provider.name} connected. Pick a model below.`);
         deps.changed?.(); await load();
       } catch (error) { fail(error); submit.disabled = false; }
@@ -96,23 +123,28 @@ export function providersPane(root: HTMLElement, deps: PaneDeps): () => Promise<
     // Models: suggestions, then the provider's own list on request.
     const list = make("ul", "provider-models");
     const models = live.get(provider.id);
+    let limit = 100;
+    const footer = make("div", "provider-models-foot");
     const search = make("input") as HTMLInputElement;
     search.placeholder = `Search ${provider.name} models`; search.value = query; search.className = "provider-search";
-    search.oninput = () => { query = search.value; paint(); };
+    search.oninput = () => { query = search.value; limit = 100; paint(); };
     const paint = () => {
       const needle = query.trim().toLowerCase();
-      const rows = models ? models.filter(m => !needle || m.id.toLowerCase().includes(needle) || m.name.toLowerCase().includes(needle)).slice(0, 200)
-        .map(m => modelRow(provider, m.id, [m.name !== m.id ? m.name : "", contextLabel(m.context), priceLabel(m)].filter(Boolean).join(" · ")))
+      const matches = models?.filter(m => !needle || m.id.toLowerCase().includes(needle) || m.name.toLowerCase().includes(needle));
+      const rows = matches ? matches.slice(0, limit)
+        .map(m => modelRow(provider, m.id, [m.name !== m.id ? m.name : "", contextLabel(m.context), priceLabel(m)].filter(Boolean).join(" · "), m.chat_supported !== false))
         : provider.models.filter(m => !needle || m.toLowerCase().includes(needle)).map(m => modelRow(provider, m));
-      list.replaceChildren(...(rows.length ? rows : [make("li", "muted", "No models match")]));
+      list.replaceChildren(...(rows.length ? rows : [make("li", "muted", loading.has(provider.id) ? "Loading provider model list…" : "No models match")]));
+      footer.replaceChildren();
+      if (matches) {
+        footer.append(make("span", "", `${Math.min(limit, matches.length)} of ${matches.length} models`));
+        if (matches.length > limit) footer.append(button("Show 100 more", "ghost small", () => { limit += 100; paint(); }));
+      }
     };
     const tools = make("div", "provider-models-head");
-    tools.append(make("strong", "", models ? `${models.length} models from ${provider.name}` : "Popular models"), search);
-    const loadAll = button(models ? "Reload list" : "Load all models", "ghost small", async () => {
-      loadAll.disabled = true; loadAll.textContent = "Loading…";
-      try { live.set(provider.id, (await request<{ models: LiveModel[] }>(`/api/model-catalog/${encodeURIComponent(provider.id)}/models`, "GET")).models); render(); }
-      catch (error) { fail(error); loadAll.disabled = false; loadAll.textContent = "Load all models"; }
-    });
+    tools.append(make("strong", "", models ? `${models.length} models from ${provider.name}` : loading.has(provider.id) ? "Loading model directory…" : "Suggested model IDs"), search);
+    const loadAll = button(loading.has(provider.id) ? "Loading…" : models ? "Refresh list" : "Load all models", "ghost small", () => { void fetchModels(provider, true); });
+    loadAll.disabled = !!provider.models_unavailable || loading.has(provider.id) || (!provider.connection && !provider.public_models && !provider.no_key);
     tools.append(loadAll);
     const custom = make("form", "provider-custom-model");
     const typed = make("input") as HTMLInputElement; typed.placeholder = "Or type any model name"; typed.setAttribute("aria-label", "Model name");
@@ -120,14 +152,14 @@ export function providersPane(root: HTMLElement, deps: PaneDeps): () => Promise<
     custom.append(typed, go);
     custom.addEventListener("submit", event => { event.preventDefault(); if (typed.value.trim() && provider.connection) void use(provider, typed.value.trim()); else if (!provider.connection) message(`Connect ${provider.name} first.`, true); });
     paint();
-    box.append(tools, list, custom);
+    const note = provider.models_unavailable || errors.get(provider.id) || (models ? "Live model directory from this provider. Model access and tool support depend on your account." : "Suggestions are not the full catalog. Connect this provider to load the models available to your account.");
+    box.append(tools, make("p", errors.has(provider.id) ? "provider-load-note error-text" : "provider-load-note", note), list, footer, custom);
     return box;
   }
 
   function avatar(provider: CatalogProvider): HTMLElement {
-    const letters = provider.name.replace(/[^A-Za-z0-9 ]/g, "").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-    const node = make("span", "provider-avatar", letters || "?");
-    node.dataset.hue = String([...provider.id].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 12);
+    const node = make("span", "provider-avatar");
+    node.append(providerIcon(provider.custom ? "" : provider.id));
     node.setAttribute("aria-hidden", "true");
     return node;
   }
@@ -169,7 +201,7 @@ export function providersPane(root: HTMLElement, deps: PaneDeps): () => Promise<
       text.append(make("strong", "", provider.name), make("small", "", provider.connection ? "Connected" : provider.blurb));
       card.append(avatar(provider), text);
       if (provider.connection) card.dataset.connected = "true";
-      card.onclick = () => { selected = selected === provider.id ? "" : provider.id; query = ""; render(); reveal(); };
+      card.onclick = () => { selected = selected === provider.id ? "" : provider.id; query = ""; render(); reveal(); if (selected) void fetchModels(provider); };
       grid.append(card);
     }
     const plus = make("button", "provider-card provider-add") as HTMLButtonElement;

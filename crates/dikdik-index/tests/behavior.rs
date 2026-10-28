@@ -146,7 +146,23 @@ fn non_text_suffixes_are_not_inventoried() {
     fs::write(dir.join("notes.TXT"), "t").unwrap(); // case-insensitive suffix
     let entries = scan(&dir);
     let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
-    assert_eq!(paths, ["app.py", "notes.TXT"]);
+    assert_eq!(paths, ["MAKEFILE", "app.py", "notes.TXT"]);
+    cleanup(&dir);
+}
+
+#[test]
+fn language_files_and_dikdikignore_follow_the_shared_policy() {
+    let dir = sandbox("languages");
+    for name in ["query.sql", "main.go", "app.php", "run.ps1", "main.dart", "main.swift", "Dockerfile"] {
+        fs::write(dir.join(name), "sample").unwrap();
+    }
+    fs::create_dir(dir.join("generated")).unwrap();
+    fs::write(dir.join("generated/huge.js"), "x".repeat(300000)).unwrap();
+    fs::write(dir.join(".dikdikignore"), "generated/\n!generated/huge.js\n").unwrap();
+    let entries = scan(&dir);
+    assert_eq!(entries.len(), 7);
+    assert!(entries.iter().all(|entry| !entry.path.starts_with("generated/")));
+    assert!(entries.iter().any(|entry| entry.path == "Dockerfile"));
     cleanup(&dir);
 }
 

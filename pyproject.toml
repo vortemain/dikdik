@@ -13,7 +13,7 @@ dependencies = []
 dikdik = "dikdik.server:main"
 
 [tool.setuptools.package-data]
-dikdik = ["web/*", "web/fonts/*", "browser_runtime/*", "dikdik_index*"]
+dikdik = ["web/*", "web/fonts/*", "web/assets/*", "web/assets/files/*", "web/assets/providers/*", "web/assets/brands/*", "browser_runtime/*", "dikdik_index*"]
 
 [tool.setuptools.packages.find]
 include = ["dikdik", "dikdik.*"]

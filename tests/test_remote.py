@@ -86,6 +86,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.call("POST", "/api/session", {"token": "tok"}, auth=False)[0], 429)  # even the right one, for a while
 
     def test_desktop_only_features_are_off_and_projects_stay_inside_the_root(self):
+        self.assertEqual(self.call("GET", "/api/projects/folders")[0], 400)
         self.assertEqual(self.call("POST", "/api/projects/pick", {})[0], 400)
         self.assertEqual(self.call("POST", "/api/files/open-in-editor", {"path": "a.py"})[0], 400)
         self.assertEqual(self.call("POST", "/api/projects/open", {"path": str(self.outside)})[0], 400)

@@ -26,8 +26,15 @@ holder before publication or distribution. This file is a status record, not
 legal advice or a replacement license.
 
 Runtime Python dependencies: none beyond Python's standard library.
+The editor bundles Highlight.js 11.12.0 (BSD-3-Clause) and its 193 language
+grammars at build time, plus SVG assets/associations from Material Icon Theme
+5.39.0 (MIT) and Lobe Icons static SVG 1.95.1 (MIT). These are pinned development
+packages; a running installation needs neither npm nor an external CDN. Full
+notices ship under `dikdik/web/assets/`, alongside the source record for the
+unmodified Microsoft Visual Studio Code stable icon. See
+[`assets/NOTICES.md`](dikdik/web/assets/NOTICES.md).
 The private Bun frontend package uses `UNLICENSED` to avoid asserting an
-owner-unapproved license grant. Its only third-party frontend development
+owner-unapproved license grant. Its frontend compiler development
 dependency is TypeScript 6.0.3 (Apache-2.0), published 2026-04-16; registry
 timestamp and locked integrity were verified before installation. It is a build/
 type-check tool, not copied DIKDIK runtime code. Bun has its own MIT license.

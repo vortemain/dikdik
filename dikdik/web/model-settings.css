@@ -1,0 +1,99 @@
+/* Model selection and credentials share the application's light/dark tokens. */
+#model-pill { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; max-width: 220px; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; line-height: 1.4; }
+#model-pill:hover, #model-pill[aria-expanded="true"] { background: var(--surface-2); border-color: var(--line); }
+#model-label { flex: 1 1 auto; min-width: 0; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+#model-symbol { flex: 0 0 auto; overflow: visible; }
+#model-pill .model-chevron { flex: 0 0 12px; width: 12px; height: 12px; color: var(--faint); transform: rotate(90deg); }
+.model-picker { position: fixed; z-index: 65; display: flex; flex-direction: column; min-height: 140px; padding: 0; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); overflow: hidden; }
+.model-picker[hidden] { display: none; }
+.picker-head { flex: 0 0 auto; min-height: 46px; display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
+.picker-head > strong { font-size: 13px; font-weight: 600; flex: 1; }
+.picker-head > .provider-symbol { width: 18px; height: 18px; }
+.picker-close, .picker-back { border: 0; background: transparent; color: var(--muted); width: 24px; height: 24px; padding: 0; font-size: 20px; border-radius: 5px; }
+.picker-close:hover, .picker-back:hover { background: var(--hover); }
+.picker-search { position: relative; flex: 0 0 auto; margin: 0 12px 8px; }
+.picker-search input { width: 100%; height: 33px; padding: 6px 10px 6px 30px; font: 12px var(--sans); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; }
+.picker-search input:focus { background: var(--surface); border-color: var(--accent); outline: none; box-shadow: 0 0 0 2px var(--accent-soft); }
+.picker-search-icon { position: absolute; left: 9px; top: 4px; color: var(--faint); font-size: 18px; pointer-events: none; }
+.picker-results { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 6px 6px; scrollbar-width: thin; }
+.picker-section { display: flex; justify-content: space-between; align-items: center; padding: 10px 8px 5px; margin: 0; color: var(--faint); font: 500 10px/1.4 var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+.picker-section button { padding: 0; font-size: 10px; }
+.picker-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 8px; border: 0; background: transparent; border-radius: 6px; text-align: left; color: var(--ink); }
+.picker-row:hover:not(:disabled), .picker-row:focus-visible { background: var(--hover); outline: none; }
+.picker-row[aria-pressed="true"] { background: var(--accent-soft); }
+.picker-row:disabled { opacity: .5; cursor: default; }
+.picker-row .provider-symbol { width: 22px; height: 22px; }
+.picker-row-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.picker-row-text strong { display: block; font: 500 12px/1.4 var(--sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-row-text small { display: block; color: var(--muted); font: 10.5px/1.4 var(--sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-mark { flex: 0 0 16px; text-align: center; color: var(--faint); font-size: 18px; }
+.picker-mark.selected { color: var(--accent); font-size: 13px; }
+.picker-notice { padding: 18px 14px; margin: 0; font-size: 12px; line-height: 1.7; color: var(--muted); }
+.picker-notice.error-text { color: var(--danger); }
+.picker-connect { margin: 0 14px 14px; }
+.picker-more { display: block; width: 100%; padding: 9px; border: 0; border-radius: 5px; color: var(--accent); background: var(--accent-soft); font-size: 11px; }
+.picker-footer { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--line); background: var(--surface); }
+.picker-footer > span { color: var(--faint); font-size: 10px; }
+.picker-footer > button { font-size: 10.5px; padding: 2px 0; color: var(--muted); }
+
+.credential-vault { max-width: 760px; }
+.vault-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 4px 0 22px; }
+.vault-intro h3 { margin: 0 0 7px; font-size: 20px; font-weight: 500; letter-spacing: -.03em; }
+.vault-intro p { font-size: 12px; line-height: 1.7; color: var(--muted); max-width: 40ch; margin: 0; }
+.vault-security { flex-shrink: 0; padding: 5px 8px; background: var(--accent-soft); border-radius: 5px; color: var(--accent); font-size: 9.5px; white-space: nowrap; }
+.vault-section { margin: 0 0 26px; }
+.vault-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 35px; margin-bottom: 9px; }
+.vault-section-head h4 { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; margin: 0; }
+.vault-section-head > button { font-size: 11px; }
+.vault-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; font-size: 10px; font-weight: 400; }
+.vault-provider-list { display: grid; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.vault-provider { display: flex; align-items: center; gap: 12px; padding: 13px 14px; min-height: 66px; background: var(--surface); }
+.vault-provider + .vault-provider { border-top: 1px solid var(--line); }
+.vault-provider .provider-symbol { width: 24px; height: 24px; }
+.vault-provider-empty { padding: 17px; font-size: 12px; line-height: 1.7; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: 8px; }
+.vault-key-text { flex: 1; min-width: 0; display: grid; gap: 5px; }
+.vault-key-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.vault-key-text small { font-size: 10px; line-height: 1.5; color: var(--faint); }
+.vault-connected { display: flex; align-items: center; gap: 5px; color: var(--accent); font-size: 10px; }
+.vault-connected::before { content: ""; width: 5px; height: 5px; background: currentColor; border-radius: 50%; }
+.vault-key-list { list-style: none; padding: 0; margin: 0; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.vault-key { padding: 0; background: var(--surface); }
+.vault-key + .vault-key { border-top: 1px solid var(--line); }
+.vault-key-row { display: flex; align-items: center; gap: 12px; min-height: 72px; padding: 14px; }
+.vault-key-symbol { display: inline-grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); border-radius: 8px; font-size: 16px; }
+.vault-masked { color: var(--faint); font: 12px var(--mono); letter-spacing: 1px; margin-right: 4px; }
+.vault-key-row > button, .vault-provider > button { padding: 5px 9px; border: 1px solid var(--line); font-size: 10.5px; border-radius: 5px; }
+.vault-search { width: 100%; margin: 0 0 10px; height: 33px; font-size: 11px; border-radius: 6px; background: var(--surface); }
+.vault-empty { padding: 32px 24px; text-align: center; background: var(--surface); }
+.vault-empty strong { font-size: 13px; font-weight: 500; }
+.vault-empty p { max-width: 45ch; margin: 7px auto 0; color: var(--muted); font-size: 11.5px; line-height: 1.8; }
+.vault-form { padding: 18px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 14px; }
+.vault-form h4 { font-size: 12px; margin: 0 0 14px; }
+.vault-form-fields { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(180px, 1.5fr); gap: 14px; }
+.vault-field { flex: 1; min-width: 0; display: grid; gap: 7px; }
+.vault-field label { color: var(--ink-2); font-size: 11px; font-weight: 500; }
+.vault-field input { width: 100%; height: 35px; border-radius: 5px; padding: 7px 10px; font-size: 12px; background: var(--surface); }
+.vault-form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.vault-form-actions > span { margin-right: auto; color: var(--faint); font-size: 10px; max-width: 30ch; }
+.vault-error { color: var(--danger); font-size: 11px; margin: 10px 0 0; }
+.vault-editor { padding: 16px 18px; border-top: 1px solid var(--line); background: var(--surface-2); }
+.vault-edit-row { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 15px; }
+.vault-edit-row > button { height: 35px; font-size: 11px; }
+.vault-advanced { border-top: 1px solid var(--line); padding-top: 12px; }
+.vault-advanced summary { color: var(--muted); font-size: 11px; }
+.vault-advanced > p { font-size: 11px; line-height: 1.8; color: var(--muted); margin: 10px 0; max-width: 58ch; }
+.vault-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.vault-editor-actions > button { font-size: 10.5px; }
+.vault-delete { color: var(--danger); margin-left: auto; }
+.vault-delete-note { font-size: 11px; color: var(--danger); margin-right: auto; }
+.vault-access-note { padding: 0 14px 12px 58px; margin: 0; font-size: 10px; color: var(--muted); }
+.vault-footnote { margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--faint); font-size: 10.5px; line-height: 1.8; }
+.provider-models-foot { padding: 8px 0; display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); }
+.provider-load-note { font-size: 11px; line-height: 1.7; color: var(--muted); margin: 0; }
+@media (max-width: 620px) {
+  .vault-intro { flex-direction: column; gap: 10px; }
+  .vault-form-fields { grid-template-columns: 1fr; }
+  .vault-masked, .vault-connected { display: none; }
+  .vault-key-row, .vault-provider { gap: 9px; padding: 12px; }
+  .vault-edit-row { flex-wrap: wrap; }
+}

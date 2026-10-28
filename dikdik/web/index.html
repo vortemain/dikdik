@@ -7,6 +7,8 @@
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/workbench.css">
+  <link rel="stylesheet" href="/model-settings.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -214,7 +216,7 @@
               <label class="pill classic-only" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="plan">Plan</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
               <label class="pill classic-only" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="docker">Docker tests</option><option value="local">On this computer</option></select></label>
               <label id="agent-profile-pill" class="pill" title="Agent profile"><span class="sr-only">Agent profile</span><svg class="i"><use href="#i-book"/></svg><select id="agent-profile"><option value="">Default agent</option></select></label>
-              <button id="model-pill" class="ghost small model-pill" type="button" title="Model used by model and agent tasks"><svg class="i"><use href="#i-cpu"/></svg><span id="model-label">Model</span></button>
+              <button id="model-pill" class="ghost small model-pill" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="model-menu" title="Choose a model"><svg class="i"><use href="#i-cpu"/></svg><span id="model-label">Model</span><svg class="i model-chevron"><use href="#i-chevron"/></svg></button>
               <button id="options-toggle" class="ghost icon options-toggle" type="button" aria-expanded="false" aria-controls="options-panel" aria-label="Mode options" title="Mode options"><svg class="i"><use href="#i-sliders"/></svg></button>
               <span class="composer-spacer"></span>
               <button id="context-meter" class="ghost small context-meter" type="button" hidden title="Context used at the last model call. Click to condense older turns."><span class="meter-ring" aria-hidden="true"><span id="context-fill"></span></span><span id="context-label">0%</span></button>
@@ -267,6 +269,7 @@
         </div>
       </div>
       <div class="canvas-body files-pane" data-pane="files" hidden>
+       <div class="workbench-toolbar"><button id="files-toggle-explorer" class="ghost icon" type="button" aria-label="Toggle Explorer" aria-pressed="true" title="Toggle Explorer"><svg class="i"><use href="#i-sidebar"/></svg></button><span class="workbench-title">Workspace</span><span class="grow"></span><button id="files-open-project" class="ghost small vscode-action" type="button" title="Open this project in VS Code"><img class="vscode-logo" src="/assets/brands/vscode.svg" alt="" aria-hidden="true"><span>Open in VS Code</span></button></div>
        <div class="files-grid">
         <aside class="explorer" aria-label="Explorer">
           <div class="explorer-head"><span>Explorer</span><button id="explorer-collapse" class="ghost icon" type="button" title="Collapse folders" aria-label="Collapse folders"><svg class="i"><use href="#i-list"/></svg></button></div>
@@ -275,7 +278,7 @@
           <label class="file-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Find a file</span><input id="file-search" type="search" placeholder="Search files by name" autocomplete="off"></label>
           <div id="file-list" class="file-list file-tree" role="tree" aria-label="Workspace files"></div>
         </aside>
-        <div id="tree-resize" class="tree-resize" role="separator" aria-orientation="horizontal" aria-label="Resize the file tree; arrow keys resize, Home resets" tabindex="0" title="Drag to resize"></div>
+        <div id="tree-resize" class="tree-resize" role="separator" aria-orientation="vertical" aria-label="Resize Explorer; Left and Right resize, Home resets" tabindex="0" title="Drag to resize Explorer"></div>
         <section class="editor" aria-label="Editor">
         <div id="file-tabs" class="file-tabs" role="tablist" aria-label="Open files" hidden></div>
         <div class="diff-view">
@@ -287,7 +290,7 @@
                 <button type="button" data-version="candidate" aria-pressed="false">Candidate</button>
               </div>
               <button id="file-preview" class="copy" type="button" hidden aria-pressed="false"><svg class="i"><use href="#i-eye"/></svg><span>Preview</span></button>
-              <button id="open-editor" class="copy" type="button" hidden title="Open this file in VS Code at the first visible line"><svg class="i"><use href="#i-pencil"/></svg><span>Open in VS Code</span></button>
+              <button id="open-editor" class="copy vscode-action" type="button" hidden title="Open this file in VS Code at the first visible line"><img class="vscode-logo" src="/assets/brands/vscode.svg" alt="" aria-hidden="true"><span>Open in VS Code</span></button>
               <button id="copy-file" class="copy" type="button" hidden><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button>
             </div>
             <pre id="file-view" class="numbered" tabindex="0"></pre>
@@ -302,12 +305,25 @@
         <div id="git-panel" class="git-panel"><p class="muted">Loading Git status…</p></div>
       </div>
       <div class="canvas-body terminal-panel" data-pane="terminal" hidden>
-        <p id="terminal-empty" class="canvas-empty">No terminal output yet. Commands run by the agent will appear here.</p>
-        <pre id="terminal-view" tabindex="0" aria-label="Sandbox command output" hidden></pre>
+        <div class="terminal-toolbar">
+          <span class="terminal-heading">Terminal</span><span class="terminal-session"><svg class="i"><use href="#i-terminal"/></svg><strong id="terminal-runtime">Project terminal</strong></span>
+          <span class="grow"></span>
+          <button id="terminal-new" class="ghost small" type="button" title="Open a new local terminal session">＋ New</button>
+          <button id="terminal-copy" class="ghost icon" type="button" aria-label="Copy terminal output" title="Copy output"><svg class="i"><use href="#i-copy"/></svg></button>
+          <button id="terminal-clear" class="ghost icon" type="button" aria-label="Clear terminal display" title="Clear display"><svg class="i"><use href="#i-trash"/></svg></button>
+        </div>
+        <div class="terminal-screen" id="terminal-screen">
+          <div id="terminal-empty" class="terminal-welcome"><p>Terminal ready in <strong id="terminal-project">your project</strong></p><small>↑ ↓ command history · Ctrl+C stop · Ctrl+L clear<br>Each command starts a fresh shell in the folder below.</small></div>
+          <pre id="terminal-view" tabindex="0" aria-label="Terminal output" hidden></pre>
+        </div>
+        <form id="terminal-form" class="terminal-form">
+          <div class="terminal-options"><label for="terminal-cwd">Folder</label><input id="terminal-cwd" placeholder="Project root" aria-label="Command working directory relative to project" autocomplete="off" spellcheck="false"><span id="terminal-state" role="status">Ready</span></div>
+          <div class="terminal-prompt"><span class="terminal-prompt-path" id="terminal-prompt-path" aria-hidden="true">project</span><span aria-hidden="true">❯</span><input id="terminal-command" aria-label="Terminal command" placeholder="Enter a command…" maxlength="4000" autocomplete="off" spellcheck="false" required><button id="terminal-run" class="terminal-run" type="submit">Run ↵</button><button id="terminal-stop" class="terminal-stop" type="button" disabled title="Stop running commands (Ctrl+C)">Stop</button></div>
+        </form>
       </div>
       <div class="canvas-body browser-panel" data-pane="browser" hidden>
         <div class="browser-window">
-          <div class="browser-tabbar"><span class="browser-tab"><svg class="i"><use href="#i-globe"/></svg><span id="browser-title">New tab</span></span><span id="browser-current-url" class="sr-only">No URL loaded</span></div>
+          <div class="browser-tabbar"><span class="browser-tab"><svg class="i"><use href="#i-globe"/></svg><span id="browser-title">New tab</span></span><span class="browser-mode">Web preview</span><span id="browser-current-url" class="sr-only">No URL loaded</span></div>
           <form id="browser-form" class="browser-toolbar">
             <button id="browser-back" class="ghost icon" type="button" aria-label="Back" title="Back" disabled><svg class="i flip"><use href="#i-chevron"/></svg></button>
             <button id="browser-forward" class="ghost icon" type="button" aria-label="Forward" title="Forward" disabled><svg class="i"><use href="#i-chevron"/></svg></button>
@@ -319,11 +335,13 @@
             <button id="browser-external-empty" type="button" hidden disabled></button>
           </form>
           <div id="browser-progress" class="browser-progress" hidden><span></span></div>
-          <div class="browser-viewport">
-            <p id="browser-empty" class="canvas-empty">No page yet. Type an address above, or ask Dikdik to look something up on the web.</p>
+          <div class="browser-tools"><label class="sr-only" for="browser-history">Captured pages</label><select id="browser-history" aria-label="Captured page history"><option value="">No captured pages</option></select><span class="grow"></span><button id="browser-text-toggle" class="ghost small" type="button" aria-pressed="false" disabled>Page text</button><label class="sr-only" for="browser-zoom">Page zoom</label><select id="browser-zoom" aria-label="Page zoom"><option value="fit">Fit</option><option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option></select></div>
+          <div class="browser-viewport" id="browser-viewport">
+            <div id="browser-empty" class="browser-home"><span class="browser-home-icon"><svg class="i"><use href="#i-globe"/></svg></span><h3>A window to the web</h3><p>Explore a page alongside your project.</p><small>Enter a public URL above to capture its layout and text.</small><button id="browser-example" class="ghost small" type="button">Try example.com <span aria-hidden="true">↗</span></button></div>
             <div id="browser-snapshot" class="browser-snapshot" hidden></div>
+            <pre id="browser-page-text" class="browser-page-text" tabindex="0" aria-label="Captured page text" hidden></pre>
           </div>
-          <p id="browser-status" class="browser-status" role="status"></p>
+          <div class="browser-footer"><span class="browser-capture-dot" aria-hidden="true"></span><p id="browser-status" class="browser-status" role="status">Ready to explore</p></div>
         </div>
       </div>
       <div class="canvas-body planner-panel" data-pane="planner" hidden>
@@ -397,7 +415,7 @@
         </form>
         <ol id="agent-list" class="m4-list"></ol>
       </section>
-      <section class="settings-pane" data-pane="secrets" role="tabpanel" hidden><p class="lead">Keys and tokens are encrypted on this machine and never shown again after saving. Profiles, MCP servers and (when you allow it) sandbox commands use them by name.</p><div id="panel-secrets" class="m4-panel-mount"></div></section>
+      <section class="settings-pane" data-pane="secrets" role="tabpanel" hidden><div id="panel-secrets" class="m4-panel-mount"></div></section>
       <section class="settings-pane" data-pane="skills" role="tabpanel" hidden>
         <p class="lead">Reusable guidance the agent reads at the start of every task: conventions, how to run things, what to avoid. Project skills live in <code>.dikdik/skills/</code>; personal ones stay on this machine.</p>
         <form id="skill-form" class="skill-form">
@@ -481,7 +499,7 @@
         <ol id="auto-list" class="m4-list"></ol>
       </section>
       <section class="settings-pane" data-pane="platform" role="tabpanel" hidden>
-        <p class="lead">Server health, API keys, remote backends, webhooks and VS Code.</p>
+        <p class="lead">Server health, API keys, remote backends, webhooks and <span class="vscode-mention"><img class="vscode-logo" src="/assets/brands/vscode.svg" alt="" aria-hidden="true">VS Code</span>.</p>
         <div class="setting-row"><div><h4>Server status</h4><p id="plat-status">Checking…</p></div></div>
         <div class="setting-row"><div><h4>API keys</h4><p>Scoped keys for programmatic access.</p></div><button id="plat-key-add" class="secondary small" type="button">Create key</button></div>
         <div id="plat-keys" class="m4-list"></div>
@@ -489,7 +507,7 @@
         <div id="plat-backends" class="m4-list"></div>
         <div class="setting-row"><div><h4>Webhooks</h4><p>Opt-in HTTP callbacks on task completion.</p></div><button id="plat-webhook-add" class="secondary small" type="button">Add webhook</button></div>
         <div id="plat-webhooks" class="m4-list"></div>
-        <div class="setting-row"><div><h4>VS Code</h4><p id="plat-vscode">Checking…</p></div></div>
+        <div class="setting-row"><div><h4 class="vscode-mention"><img class="vscode-logo" src="/assets/brands/vscode.svg" alt="" aria-hidden="true">VS Code</h4><p id="plat-vscode">Checking…</p></div></div>
       </section>
       <section class="settings-pane" data-pane="acp" role="tabpanel" hidden>
         <p class="lead">External coding agents that speak ACP: Claude Code, Codex, Gemini CLI and OpenCode. They run on this computer, outside Docker, in a throwaway copy; their changes come back as a diff you apply.</p>
@@ -533,7 +551,7 @@
   <dialog id="projects-dialog" class="small-dialog wide-dialog projects-dialog" aria-labelledby="projects-title">
     <div class="settings-head"><h3 id="projects-title">Projects</h3><button id="projects-close" class="ghost icon" type="button" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
     <div class="projects-body">
-      <div class="projects-current"><span class="project-icon"><svg class="i"><use href="#i-folder"/></svg></span><div class="projects-current-text"><strong id="projects-current-name">—</strong><p id="projects-current-path" class="muted"></p></div><button id="project-open-editor" class="ghost small" type="button">Open in VS Code</button></div>
+      <div class="projects-current"><span class="project-icon"><svg class="i"><use href="#i-folder"/></svg></span><div class="projects-current-text"><strong id="projects-current-name">—</strong><p id="projects-current-path" class="muted"></p></div><button id="project-open-editor" class="ghost small vscode-action" type="button"><img class="vscode-logo" src="/assets/brands/vscode.svg" alt="" aria-hidden="true">Open in VS Code</button></div>
       <div class="projects-actions" role="tablist" aria-label="Start a project">
         <button class="secondary small" type="button" data-project-tab="open" role="tab"><svg class="i"><use href="#i-folder"/></svg>Open folder</button>
         <button class="secondary small" type="button" data-project-tab="new" role="tab"><svg class="i"><use href="#i-plus"/></svg>New project</button>

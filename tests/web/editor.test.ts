@@ -4,7 +4,7 @@ import { contextLabel, priceLabel } from "../../dikdik/web/providers-pane";
 
 test("languages come from names, extensions and #! lines", () => {
   expect(detectLanguage("src/app.tsx")).toEqual({ lang: "tsx", label: "TypeScript React" });
-  expect(detectLanguage("Dockerfile")).toEqual({ lang: "bash", label: "Dockerfile" });
+  expect(detectLanguage("Dockerfile")).toEqual({ lang: "dockerfile", label: "Dockerfile" });
   expect(detectLanguage("deploy/Dockerfile.prod").label).toBe("Dockerfile");
   expect(detectLanguage(".env.local").label).toBe("Environment");
   expect(detectLanguage("bin/run", "#!/usr/bin/env python3\nprint(1)")).toEqual({ lang: "python", label: "Python" });

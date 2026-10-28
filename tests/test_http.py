@@ -71,6 +71,16 @@ class HTTPTests(unittest.TestCase):
         self.assertFalse(info["configured"])
         self.assertIn("Settings", info["problem"])
 
+    def test_active_model_describes_chat_override_without_changing_default(self):
+        from dikdik.profiles import ProfileStore
+        profiles = ProfileStore(self.engine.store)
+        profiles.create({"name": "Default", "provider": "local", "model": "default-model", "endpoint": "http://localhost:11434/v1"})
+        _, selected = profiles.create({"name": "Chat", "provider": "local", "model": "chat-model", "endpoint": "http://localhost:1234/v1"})
+        self.assertEqual(self.call("GET", "/api/model?profile=" + selected["id"], auth=False)[0], 401)
+        info = json.loads(self.call("GET", "/api/model?profile=" + selected["id"])[2])
+        self.assertEqual((info["configured"], info["model"], info["profile"]), (True, "chat-model", "Chat"))
+        self.assertEqual(json.loads(self.call("GET", "/api/model")[2])["model"], "default-model")
+
     def wait_terminal(self, task):
         for _ in range(300):
             data = json.loads(self.call("GET", "/api/tasks/" + task)[2])

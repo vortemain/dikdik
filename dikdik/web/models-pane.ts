@@ -3,7 +3,7 @@
 
 type Request = <T>(path: string, method: string, body?: unknown) => Promise<T>;
 type Make = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) => HTMLElementTagNameMap[K];
-export interface PaneDeps { request: Request; make: Make; message: (text: string, error?: boolean) => void; changed?: () => void }
+export interface PaneDeps { request: Request; make: Make; message: (text: string, error?: boolean) => void; changed?: () => void; navigate?: (page: string, provider?: string) => void }
 
 export interface Connection { id: string; name: string; provider: string; endpoint: string; models: number; key_set: boolean }
 export interface ModelProfile {
@@ -395,72 +395,4 @@ export function modelsPane(root: HTMLElement, deps: PaneDeps): () => Promise<voi
   return refresh;
 }
 
-export function keysPane(root: HTMLElement, deps: PaneDeps): () => Promise<void> {
-  const { request, make, message } = deps;
-  let keys: SecretEntry[] = [], confirming = "", renaming = "";
-  const button = (label: string, className = "secondary", onclick?: () => void) => {
-    const node = make("button", className, label); node.type = "button";
-    if (onclick) node.onclick = onclick;
-    return node;
-  };
-  async function act(work: () => Promise<unknown>, done: string): Promise<void> {
-    try { await work(); message(done); confirming = ""; renaming = ""; await refresh(); deps.changed?.(); }
-    catch (error) { message(error instanceof Error ? error.message : "Something went wrong", true); }
-  }
-  async function refresh(): Promise<void> {
-    try { keys = await request<SecretEntry[]>("/api/secrets", "GET"); render(); }
-    catch (error) { root.replaceChildren(make("p", "error-text", `Could not open the key store: ${error instanceof Error ? error.message : "unknown error"}`)); }
-  }
-  function render(): void {
-    const form = make("form", "skill-form");
-    const grid = make("div", "skill-fields");
-    const nameLabel = make("label", "", "Name"); nameLabel.htmlFor = "key-name";
-    const name = make("input"); name.id = "key-name"; name.placeholder = "anthropic-work"; name.autocomplete = "off"; name.maxLength = 64;
-    const valueLabel = make("label", "", "Value"); valueLabel.htmlFor = "key-value";
-    const value = make("input"); value.id = "key-value"; value.type = "password"; value.placeholder = "Paste the key or token"; value.autocomplete = "off";
-    grid.append(nameLabel, name, valueLabel, value);
-    const save = button("Save key", "small"); save.type = "submit";
-    form.append(grid, make("p", "hint", "Saving under an existing name replaces its value; the old value is kept once so you can undo."), save);
-    form.onsubmit = event => {
-      event.preventDefault();
-      if (!value.value.trim()) { message("A key cannot be empty; delete it instead.", true); return; }
-      void act(() => request("/api/secrets", "POST", { ref: name.value.trim(), plaintext: value.value }), `Saved “${name.value.trim()}”.`);
-    };
-    const list = make("ul", "m4-list");
-    for (const item of keys) {
-      const row = make("li", "m4-row");
-      const head = make("p", "m4-title");
-      head.append(make("span", "m4-strong m4-mono", item.ref));
-      if (item.env) head.append(make("span", "m4-badge", `Sandbox: ${item.env}`));
-      row.append(head, make("span", "m4-meta", `Saved ${when(item.set_at)}${item.previous_set_at ? ` · previous value from ${when(item.previous_set_at)} kept` : ""}`));
-      const actions = make("span", "m4-actions");
-      if (item.previous_set_at) actions.append(button("Undo last change", "secondary", () => { void act(() => request(`/api/secrets/${encodeURIComponent(item.ref)}/restore`, "POST", {}), "Previous value restored."); }));
-      actions.append(button("Rename", "secondary", () => { renaming = item.ref; render(); }));
-      const env = make("input"); env.className = "env-input"; env.value = item.env; env.placeholder = "VARIABLE_NAME"; env.setAttribute("aria-label", `Sandbox variable for ${item.ref}`);
-      const envSave = button(item.env ? "Update variable" : "Expose to sandbox", "secondary", () => {
-        void act(() => request(`/api/secrets/${encodeURIComponent(item.ref)}`, "PATCH", { env: env.value.trim() || null }), env.value.trim() ? `Tasks that allow it will see ${env.value.trim()}.` : "No longer exposed to the sandbox.");
-      });
-      envSave.title = "Agent commands in Docker can read this as an environment variable, only in tasks where you allow sandbox secrets. Output is redacted.";
-      actions.append(env, envSave);
-      const confirmKey = `key:${item.ref}`;
-      actions.append(button(confirming === confirmKey ? "Delete for good" : "Delete", confirming === confirmKey ? "danger" : "secondary", () => {
-        if (confirming !== confirmKey) { confirming = confirmKey; render(); return; }
-        void act(() => request(`/api/secrets/${encodeURIComponent(item.ref)}`, "DELETE"), "Key deleted.");
-      }));
-      row.append(actions);
-      if (renaming === item.ref) {
-        const rename = make("form", "m4-actions");
-        const to = make("input"); to.value = item.ref; to.setAttribute("aria-label", "New name"); to.maxLength = 64;
-        const go = button("Save name", "small"); go.type = "submit";
-        rename.append(to, go, button("Cancel", "ghost small", () => { renaming = ""; render(); }));
-        rename.onsubmit = event => { event.preventDefault(); void act(() => request(`/api/secrets/${encodeURIComponent(item.ref)}/rename`, "POST", { to: to.value.trim() }), "Renamed. Profiles and MCP servers that used it now use the new name."); };
-        row.append(rename);
-        setTimeout(() => to.focus(), 0);
-      }
-      list.append(row);
-    }
-    if (!keys.length) list.append(make("li", "hint", "No keys stored yet."));
-    root.replaceChildren(form, list);
-  }
-  return refresh;
-}
+export { keysPane } from "./keys-pane";

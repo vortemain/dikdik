@@ -5,6 +5,13 @@ const event = (seq: number, kind: string, data: Record<string, unknown>): TaskEv
   ({ seq, task_id: "task", time: seq, kind, data });
 
 describe("terminal transcript", () => {
+  test("ANSI colors and title escapes cannot hide output or become markup", () => {
+    const view = terminalTranscript([
+      event(1, "terminal_command", { command_id: "color", command: "echo colored" }),
+      event(2, "terminal_output", { command_id: "color", output: "\x1b]0;title\x07\x1b[31mred <script>\x1b[0m\n", final: true, status: "failed", error: "Could not start shell" }),
+    ]);
+    expect(view.commands[0]?.output).toBe("red <script>\nCould not start shell\n");
+  });
   test("rebuilds ordered command output and final status after reload", () => {
     const events = [
       event(1, "terminal_command", { command_id: "one", command: "printf hi" }),
