@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025, macos-15, ubuntu-24.04]
+        os: [windows-2025, macos-15, macos-15-intel, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -25,7 +25,18 @@ jobs:
       - run: python -m pip install ".[desktop]" "pyinstaller>=6.22,<7"
       - if: runner.os == 'Linux'
         run: python -m pip install PySide6 qtpy
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0 xvfb
+          python -m playwright install-deps chromium
       - run: python scripts/build_desktop.py
+      - name: Smoke-test frozen desktop
+        if: runner.os != 'Linux'
+        run: python scripts/smoke_desktop.py
+      - name: Smoke-test frozen desktop under Xvfb
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python scripts/smoke_desktop.py
       - if: runner.os == 'Windows'
         shell: pwsh
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:DIKDIK_VERSION" scripts/desktop-installer.iss'
@@ -45,6 +56,6 @@ jobs:
           dpkg-deb --build --root-owner-group build/deb "dist/installers/Dikdik-${DIKDIK_VERSION}-Linux-amd64.deb"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: Dikdik-${{ runner.os }}
+          name: Dikdik-${{ matrix.os }}
           path: dist/installers/*
           if-no-files-found: error

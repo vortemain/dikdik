@@ -97,6 +97,11 @@ class BrowserSessions:
                         import playwright as playwright_package
                         from pathlib import Path
                         packaged = Path(playwright_package.__file__).parent / "driver" / "package" / ".local-browsers"
+                        import sys
+                        if getattr(sys, "frozen", False):
+                            executable_dir = Path(sys.executable).parent
+                            packaged = executable_dir.parent / "Resources" / "browser" if sys.platform == "darwin" else executable_dir / "browser"
+                            os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(packaged))
                         if packaged.is_dir():
                             os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
                         from playwright.sync_api import sync_playwright

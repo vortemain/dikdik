@@ -1,6 +1,7 @@
 """Build a self-contained desktop bundle on the target operating system."""
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import sys
 
@@ -8,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     # Ship the matching browser with each OS build; end users do not install it.
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+    browsers = ROOT / "build" / "browser-runtime"
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers)
     subprocess.run([sys.executable, "-m", "playwright", "install", "chromium", "--only-shell"], check=True)
     command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--windowed",
                "--name", "Dikdik", "--distpath", str(ROOT / "dist" / "desktop"),
@@ -26,6 +28,18 @@ def main():
         command += ["--osx-bundle-identifier", "org.dikdik.desktop"]
     command += [str(ROOT / "Dikdik.pyw")]
     subprocess.run(command, cwd=ROOT, check=True)
+    # Chromium's binaries already have their own loader paths and signatures.
+    # Copy the vendor runtime intact after freezing Python; rewriting its Mach-O
+    # load commands can exceed Chromium's reserved header space on macOS.
+    bundle = ROOT / "dist" / "desktop" / "Dikdik"
+    if sys.platform == "darwin":
+        bundle = bundle.with_suffix(".app")
+        destination = bundle / "Contents" / "Resources" / "browser"
+    else:
+        destination = bundle / "browser"
+    shutil.copytree(browsers, destination, dirs_exist_ok=True, symlinks=True)
+    if sys.platform == "darwin":
+        subprocess.run(["codesign", "--force", "--sign", "-", str(bundle)], check=True)
 
 if __name__ == "__main__":
     main()
