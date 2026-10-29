@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+if [ "$1" = remove ] && command -v apparmor_parser >/dev/null 2>&1 && [ -d /sys/kernel/security/apparmor ]; then
+  apparmor_parser -R /etc/apparmor.d/dikdik-browser || true
+fi

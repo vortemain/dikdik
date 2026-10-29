@@ -16,13 +16,14 @@ interactive actions retain page state. Clicks and form input follow the agent's
 action approval policy. Pages are untrusted data, and cannot grant permissions.
 Sessions start with empty cookies and are separate from your normal browser.
 
-The manually dispatched `Desktop installers` workflow builds on Windows,
-macOS and Linux, using `scripts/build_desktop.py` to bundle Python and application
-dependencies. It prepares Windows Setup, macOS DMG and Linux amd64 DEB artifacts.
-These are initial build definitions, not validated published releases. Native
-installation, renderer dependencies, signing and clean-machine testing still
-need verification on each target OS. Windows needs WebView2; Linux needs its
-listed system libraries. No Docker installation is required for the native
+The release workflow builds installers on Windows, Apple Silicon and Intel macOS,
+and Linux, using `scripts/build_desktop.py` to bundle Python and dependencies.
+It launches each frozen app, completes an authenticated task and opens a public
+page with bundled Chromium before creating installer artifacts. The same builds
+can be dispatched manually through `Desktop installers`.
+The installers are unsigned developer previews; clean-machine installation and
+native interaction checks remain separate from these automated launch checks.
+Windows needs WebView2; Linux needs its listed system libraries. No Docker installation is required for the native
 interactive browser. Builds bundle the matching Chromium runtime and native
 Dikdik window/application icons. Source installs can install Chromium with
 `python -m playwright install chromium`; Edge/Chrome is a fallback.
@@ -124,3 +125,9 @@ prove a banner was displayed.
 macOS requires a signed application bundle and notification permission. Linux
 requires a desktop notification service. These platforms need native release
 validation on their respective operating systems before publication.
+
+The Ubuntu 24.04+ Debian package installs a dedicated AppArmor compatibility
+profile for its root-owned Chromium executable. This permits the browser's
+namespace sandbox without disabling system-wide namespace restrictions or
+Chromium sandboxing. The package loads the profile on installation and removes
+it on uninstall.

@@ -90,7 +90,16 @@ def main():
                         os.killpg(process.pid, signal.SIGTERM)
                     except ProcessLookupError:
                         pass
-                process.wait(timeout=15)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Cocoa may defer Python signal handlers while its GUI loop
+                    # is idle. Stop only this fixture's isolated process group.
+                    if os.name != "nt":
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
+                    process.wait(timeout=5)
 
 
 if __name__ == "__main__":

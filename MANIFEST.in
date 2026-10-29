@@ -5,7 +5,7 @@ include Cargo.toml Cargo.lock package.json bun.lock tsconfig.json
 recursive-include docs *.md
 recursive-include crates *.toml *.rs
 recursive-include scripts *.py
-include scripts/desktop-installer.iss
+include scripts/desktop-installer.iss scripts/dikdik-browser.apparmor scripts/debian-postinst scripts/debian-prerm
 include scripts/requirements-release.txt
 recursive-include tests *.py *.ts
 recursive-include dikdik/web *.ts *.js *.css *.html *.svg *.json *.txt *.md *.woff2

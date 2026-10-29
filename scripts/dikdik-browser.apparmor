@@ -1,0 +1,9 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# Permit Chromium's own namespace sandbox on Ubuntu 24.04+. This profile
+# follows Ubuntu's browser compatibility profiles and grants no filesystem
+# privileges. The installed executable and its parent directories are root-owned.
+profile dikdik-browser /opt/dikdik/browser/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell flags=(unconfined) {
+  userns,
+}
