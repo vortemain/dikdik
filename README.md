@@ -109,7 +109,7 @@ Switch to **Ask before commands** when you are ready to implement. Review the ag
 | Mode | How it works |
 | --- | --- |
 | **Ask before commands** | The agent edits files in your project and asks before commands, web visits, and MCP calls. |
-| **Auto** | The agent works in your project and asks before actions classified as high risk. |
+| **Auto** (default) | The agent works and verifies in your trusted project without per-tool approval prompts. Explicit permission rules still apply. |
 | **Plan only** | Explore the repository and prepare a plan with read-only tools. |
 | **Classic** | Work on an isolated candidate, verify with Docker when approved, and review before applying changes. |
 

@@ -50,7 +50,7 @@ def detect_runners(files: dict[str, str]) -> list[dict]:
     return runners
 
 
-def detect_local_checks(files: dict[str, str]) -> list[dict]:
+def detect_local_checks(files: dict[str, str], *, include_static=False) -> list[dict]:
     """Declared tests first; otherwise use named static checks without calling them tests.
 
     Monorepos may declare scripts only in nested packages. Root scripts own their
@@ -105,14 +105,22 @@ def detect_local_checks(files: dict[str, str]) -> list[dict]:
     if "package.json" in test_manifests:
         test_manifests = ["package.json"]
     tests.extend(js_check(path, "test", "npm_test") for path in sorted(test_manifests))
-    if tests:
+    if tests and not include_static:
         return tests
+    static = []
+    seen_kinds = set()
     for script, kind in (("typecheck", "typecheck"), ("type-check", "typecheck"), ("check:types", "typecheck"), ("lint", "lint"), ("build", "build")):
         paths = [p for p, scripts in manifests.items() if scripts.get(script)]
         if "package.json" in paths:
             paths = ["package.json"]
         if paths:
-            return [js_check(path, script, kind) for path in sorted(paths)]
+            if not include_static:
+                return [js_check(path, script, kind) for path in sorted(paths)]
+            if kind not in seen_kinds:
+                static.extend(js_check(path, script, kind) for path in sorted(paths))
+                seen_kinds.add(kind)
+    if tests or static:
+        return tests + static
     # Keep established standalone Bun discovery when no declared script/check exists.
     return [r for r in detect_runners(files) if r["kind"] == "bun_test"]
 

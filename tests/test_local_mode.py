@@ -259,14 +259,20 @@ class LocalModeTests(unittest.TestCase):
         started = self.engine.start_background("echo first && sleep 0.3 && echo second")
         self.assertEqual(started["status"], "running")
         self.assertTrue(started["id"])
-        time.sleep(0.15)
         polled = self.engine.poll_background(started["id"])
+        deadline = time.monotonic() + 5
+        while "first" not in polled["output"] and polled["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.01)
+            polled = self.engine.poll_background(started["id"])
         self.assertEqual(polled["status"], "running")
         self.assertIn("first", polled["output"])
-        time.sleep(0.3)
-        # Give the drain thread a moment to read the final output after exit
-        time.sleep(0.1)
+        # Windows shell startup/drain time varies; wait for the actual completion
+        # signal rather than treating a fixed sleep as evidence of process exit.
         polled = self.engine.poll_background(started["id"])
+        deadline = time.monotonic() + 5
+        while polled["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.01)
+            polled = self.engine.poll_background(started["id"])
         self.assertIn("second", polled["output"])
         self.assertEqual(polled["status"], "exited")
 

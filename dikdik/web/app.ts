@@ -1,5 +1,5 @@
 import { browserHistory, browserView, buildTaskRequest, commandActivity, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
-import { attachmentList, contextUsage, costProjection, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
+import { attachmentList, confirmationForRunMode, contextUsage, costProjection, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, ChecklistItem, SlashCommand, TaskRequest, DiffReview, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
@@ -2892,18 +2892,18 @@ type RunMode = "ask" | "auto" | "plan" | "classic";
 let projectTrusted = false;
 function runMode(): RunMode {
   const value = select("run-mode").value;
-  return value === "auto" || value === "plan" || value === "classic" ? value : "ask";
+  return value === "ask" || value === "plan" || value === "classic" ? value : "auto";
 }
 const FOOTNOTES: Record<RunMode, string> = {
   ask: "Dikdik edits files in this folder and asks before running commands. Undo any turn.",
-  auto: "Dikdik edits files and runs commands in this folder; risky commands still ask. Undo any turn.",
+  auto: "Dikdik completes the task and runs checks without tool approval prompts. Undo any turn.",
   plan: "Plan only: Dikdik reads and plans, and changes nothing.",
   classic: "Dikdik works on an isolated copy. Your files change only when you apply.",
 };
 /** Ask/Auto/Plan set the classic controls underneath, so one request builder serves all four. */
 function applyRunMode(): void {
   const mode = runMode();
-  try { localStorage.setItem("dikdik.runMode", mode); } catch { void 0; }
+  try { localStorage.setItem("dikdik.runMode.v2", mode); } catch { void 0; }
   document.body?.classList?.toggle("run-simple", mode !== "classic");
   el("composer-footnote").textContent = FOOTNOTES[mode];
   if (mode === "classic") return;
@@ -2926,14 +2926,18 @@ async function ensureTrusted(forceLocal = false): Promise<void> {
 }
 select("run-mode").addEventListener("change", applyRunMode);
 try {
-  const saved = localStorage.getItem("dikdik.runMode");
-  if (saved) select("run-mode").value = saved;
+  // The old UI persisted its implicit Ask default on startup. Migrate that once;
+  // subsequent explicit choices, including Ask, remain authoritative.
+  const saved = localStorage.getItem("dikdik.runMode.v2");
+  const legacy = localStorage.getItem("dikdik.runMode");
+  const mode = saved ?? (legacy === "plan" || legacy === "classic" ? legacy : "auto");
+  select("run-mode").value = ["ask", "auto", "plan", "classic"].includes(mode) ? mode : "auto";
 } catch { void 0; }
 
 function composerRequest(text: string, goalMaxTurns?: number) {
   const simple = runMode();
   return buildTaskRequest({
-    confirmation: simple === "ask" ? "ask" : simple === "auto" ? "risky" : undefined,
+    confirmation: confirmationForRunMode(simple),
     modelProfile: modelOverride?.id, attachments: attached.map(file => file.id), goalMaxTurns,
     objective: text, mode: parseMode(select("mode").value),
     edits: textarea("edits").value, verification: parseVerification(select("verification").value),
@@ -3239,10 +3243,11 @@ async function resumeTask(): Promise<void> {
   if (!selected || !taskRequest) return;
   const r = taskRequest, task = selected;
   const chosen = modelOverride?.id ?? r.model_profile;
+  const confirmation = confirmationForRunMode(runMode()) ?? r.confirmation;
   const body = {
     verification: r.verification, approve_external: r.approve_external === true, approve_execution: r.approve_execution === true,
     ...(r.approve_browser ? { approve_browser: true } : {}), ...(r.agent_profile ? { agent_profile: r.agent_profile } : {}),
-    ...(r.confirmation ? { confirmation: r.confirmation } : {}), ...(chosen ? { model_profile: chosen } : {}),
+    ...(confirmation ? { confirmation } : {}), ...(chosen ? { model_profile: chosen } : {}),
   };
   try {
     await api(`/api/tasks/${encodeURIComponent(task)}/resume`, body);

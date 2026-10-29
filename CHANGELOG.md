@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.1 — 2026-10-30
+
+- Default the composer to Auto, migrating the old implicit Ask selection once while
+  preserving later explicit permission choices. Auto runs authorized tools without
+  per-tool prompts; explicit permission rules remain in force.
+- Recover repeated completion claims by running the host verifier through the
+  normal tool path. Shell test output alone cannot establish verified completion.
+- Clarify that the agent must call `run_tests` after its final edit and stop
+  repeating checks once the current files have passed verification.
+- Verify a completion reply immediately without extra model reminders. Reuse
+  successful verification until an edit or command invalidates it, and use small
+  revision-based loop signatures instead of serializing the project per tool.
+- Retry brief Windows sharing locks during atomic transcript saves so a transient
+  file lock does not turn a finished task into a checkpoint failure.
+- Own executable work instead of handing commands back to the user, verify test-only
+  requests without artificial edits, and reject redundant permission questions in Auto.
+- Add supervised local UI preview, desktop/mobile measurements, interaction assertions,
+  saved screenshots and cleanup. Design/build requests include declared static checks
+  alongside tests, and completion requires current browser evidence when applicable.
+
 ## 0.2.0 — 2026-10-29
 
 Desktop developer preview and combined agent update.

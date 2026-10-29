@@ -48,7 +48,7 @@ def assess(call: ToolCall) -> tuple[str, str]:
         return "high", "reads a secrets file such as .env"
     if call.name in READ_TOOLS:
         return "low", "reads or reports only"
-    if call.name == "run_command":
+    if call.name in {"run_command", "preview_app"}:
         command = str(call.arguments.get("command", ""))
         for pattern, reason in HIGH:
             if pattern.search(command):
@@ -72,7 +72,7 @@ def assess(call: ToolCall) -> tuple[str, str]:
     return "medium", "uses a tool"
 
 
-ACTION_TOOLS = {"run_command", "browser_click", "browser_fill", "browser_press", "browser_select"}
+ACTION_TOOLS = {"run_command", "preview_app", "browser_click", "browser_fill", "browser_press", "browser_select"}
 
 
 # --- structured permission rules -------------------------------------------------------
@@ -81,9 +81,9 @@ ACTION_TOOLS = {"run_command", "browser_click", "browser_fill", "browser_press",
 # can never add one). An unmatched call falls through to the normal policy.
 RULE_ACTIONS = {"*", "read", "edit", "create", "command", "browse"}
 RULE_GROUPS = {"read": READ_TOOLS, "edit": {"edit_file"}, "create": {"create_file"},
-               "command": {"run_command"}, "browse": {"browse_url", "web_fetch", "browser_click", "browser_fill", "browser_press", "browser_select", "browser_scroll", "browser_screenshot"}}
+               "command": {"run_command", "preview_app"}, "browse": {"preview_app", "browse_url", "web_fetch", "browser_click", "browser_fill", "browser_press", "browser_select", "browser_scroll", "browser_screenshot"}}
 RULE_SUBJECT = {"list_files": "path", "read_file": "path", "search_text": "path", "edit_file": "path",
-                "create_file": "path", "run_command": "command", "browse_url": "url"}
+                "create_file": "path", "run_command": "command", "preview_app": "command", "browse_url": "url"}
 RULE_NAME = re.compile(r"[a-z0-9_.-]{1,60}")
 
 

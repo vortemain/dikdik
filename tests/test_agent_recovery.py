@@ -50,6 +50,44 @@ class AgentRecoveryTests(unittest.TestCase):
                 pending = {item['id'] for item in message.get('tool_calls', [])}
         self.assertFalse(pending)
 
+    def test_completion_prose_runs_real_verification_once(self):
+        model = Script([self.edit(1), ModelResponse('<tool_call><finish></think>Done; all tests pass.', [])])
+        result = self.run_script(model)
+        self.assertEqual(result.state, 'completed')
+        self.assertTrue(result.tests_verified)
+        self.assertEqual(len(self.checked), 1)
+        self.assertEqual(result.tool_calls, 2)
+        self.assertEqual(result.model_calls, 2)
+        self.assert_protocol(result.transcript['messages'])
+
+    def test_completion_prose_cannot_override_failed_host_verification(self):
+        model = Script([self.edit(1), *[ModelResponse('All tests pass.', []) for _ in range(3)]])
+        result = run_agent(self.original, 'Fix the value', model,
+                           lambda files: {'kind': 'unittest', 'status': 'failed'},
+                           lambda kind, data: None, threading.Event())
+        self.assertEqual(result.state, 'failed')
+        self.assertFalse(result.tests_verified)
+        self.assertEqual(sum(c['kind'] == 'unittest' for c in result.checks), 1)
+
+    def test_host_verification_recovery_respects_tool_budget(self):
+        model = Script([self.edit(1), ModelResponse('Done.', []), ModelResponse('Done.', [])])
+        result = self.run_script(model, budget=AgentBudget(max_tool_calls=1))
+        self.assertEqual(result.state, 'paused')
+        self.assertFalse(result.tests_verified)
+        self.assertEqual(self.checked, [])
+
+    def test_host_verification_does_not_bypass_policy_or_retry_denial(self):
+        model = Script([self.edit(1), *[ModelResponse('Done.', []) for _ in range(3)]])
+        requested = []
+        def confirm(tool):
+            requested.append(tool.name)
+            return tool.name != 'run_tests', 'Blocked by policy'
+        result = self.run_script(model, confirm=confirm)
+        self.assertEqual(result.state, 'failed')
+        self.assertFalse(result.tests_verified)
+        self.assertEqual(requested, ['edit_file', 'run_tests'])
+        self.assertEqual(self.checked, [])
+
     def test_actual_folder_arguments_and_usage_above_old_32000_cap_complete(self):
         model = Script([
             call(1, 'list_files', 6000, path='client/src', limit=100, query='products'),
@@ -137,7 +175,8 @@ class AgentRecoveryTests(unittest.TestCase):
                 clock[0] += 7200
                 return ModelResponse('Investigation complete.', [], 2000000)
         with patch('dikdik.agent.time.monotonic', side_effect=lambda: clock[0]):
-            result = self.run_script(LongModel())
+            result = run_agent(self.original, 'Explain the current value', LongModel(), self.verify,
+                               lambda *args: None, threading.Event())
         self.assertEqual(result.state, 'completed', result.error)
         self.assertEqual(clock[0], 7200)
 

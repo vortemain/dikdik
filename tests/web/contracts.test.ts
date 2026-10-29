@@ -1,9 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { buildTaskRequest, isTerminal, modePolicy, parseMode, parseVerification, resultStatus } from "../../dikdik/web/contracts";
+import { buildTaskRequest, confirmationForRunMode, isTerminal, modePolicy, parseMode, parseVerification, resultStatus } from "../../dikdik/web/contracts";
 
 const base = { objective: "Fix addition", mode: "offline" as const, verification: "syntax" as const, approveExecution: false, approveExternal: false, edits: '[{"path":"calculator.py","before":"a-b","after":"a+b"}]' };
 
 describe("mode and permission boundaries", () => {
+  test("Auto overrides older Ask or risky policies with no tool prompts", () => {
+    const request = buildTaskRequest({ ...base, mode: "agent", verification: "local", approveExternal: true,
+      approveExecution: true, confirmation: confirmationForRunMode("auto") });
+    expect(request.confirmation).toBe("never");
+    expect(confirmationForRunMode("ask")).toBe("ask");
+    expect(confirmationForRunMode("classic")).toBeUndefined();
+  });
   test("offline preserves exact edits and does not forward stale approvals", () => {
     const request = buildTaskRequest({ ...base, approveExecution: true, approveExternal: true });
     expect(request.edits).toEqual([{ path: "calculator.py", before: "a-b", after: "a+b" }]);

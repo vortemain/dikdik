@@ -6,6 +6,25 @@ and the panel forwards clicks, typing, paste, scrolling and navigation. The
 agent uses that same task-scoped session. There is no popup browser window and
 no requirement to run Docker for this path.
 
+## Local application verification
+
+In local Auto mode, `preview_app` can start the project's development server,
+capture desktop (1440 × 900) and mobile (390 × 844) views, and exercise bounded
+click/fill/select/key actions with expected visible text. It reports JavaScript
+runtime errors, failed resources and horizontal overflow, saves screenshots in
+the task's browser history, then closes its browser and stops its server.
+An agent cannot satisfy a requested interaction merely by capturing a screenshot.
+These are measured checks of the supplied page and actions, not proof of aesthetic
+quality or every possible user journey.
+
+The command uses `{port}` for an unused port chosen by the host. A separate proxy
+maps `preview.dikdik.example` only to that assigned loopback port; arbitrary local
+URLs remain blocked. Preview execution requires the task's local execution and
+browser permissions and a profile that permits shell/browser work. Auto proceeds
+without per-tool prompts; explicit permission rules and the browser switch still apply.
+
+## Public browsing
+
 `web_fetch` returns real text, HTML or JSON through a bounded, credential-free
 public GET with validated redirects. `browse_url` loads the rendered page and
 returns text, a screenshot and CSS selectors for visible controls.

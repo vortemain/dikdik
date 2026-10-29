@@ -29,6 +29,8 @@ from pathlib import Path
 
 from .browser_network import public_url, resolve_public
 
+PREVIEW_HOST = "preview.dikdik.example"
+
 PAGE_TIMEOUT = 45
 TEXT_LIMIT = 20_000
 TUNNEL_LIMIT = 64 * 1024 * 1024   # bytes through one capture's proxy, both directions
@@ -94,6 +96,10 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
                     upstream.close()
                     return self._refuse(b"413 Request body too large or unsupported")
                 kept = [h for h in lines if not h.lower().startswith((b"proxy-", b"connection:", b"keep-alive:"))]
+                preview_port = getattr(self.server, "preview_port", None)
+                if preview_port and parts.hostname == PREVIEW_HOST:
+                    kept = [h for h in kept if not h.lower().startswith(b"host:")]
+                    kept.append(f"Host: 127.0.0.1:{preview_port}".encode())
                 request = f"{method} {path} HTTP/1.1\r\n".encode() + b"\r\n".join(kept) + b"\r\nConnection: close\r\n\r\n"
                 upstream.sendall(request + head.split(b"\r\n\r\n", 1)[1])
                 self._pipe(upstream)
@@ -104,6 +110,9 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
 
     def _open(self, url: str, host: str, port: int):
         try:
+            preview_port = getattr(self.server, "preview_port", None)
+            if preview_port and host == PREVIEW_HOST and port == 80:
+                return socket.create_connection(("127.0.0.1", preview_port), timeout=15)
             public_url(url)
             address = resolve_public(host, port)
             return socket.create_connection((address, port), timeout=15)
@@ -139,11 +148,14 @@ class PublicProxy(socketserver.ThreadingTCPServer):
     daemon_threads = True
     allow_reuse_address = False
 
-    def __init__(self, *, allow_http_writes=False):
+    def __init__(self, *, allow_http_writes=False, preview_port=None):
+        if preview_port is not None and (type(preview_port) is not int or not 1024 <= preview_port <= 65535):
+            raise ValueError("Preview port must be an assigned unprivileged port")
         super().__init__(("127.0.0.1", 0), _ProxyHandler)
         self.refused: list[str] = []
         self.bytes = 0
         self.allow_http_writes = allow_http_writes
+        self.preview_port = preview_port
         threading.Thread(target=self.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True).start()
 
     @property

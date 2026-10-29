@@ -42,7 +42,8 @@ ELEMENTS = """() => Array.from(document.querySelectorAll('a[href],button,input,t
 
 
 class BrowserSessions:
-    def __init__(self):
+    def __init__(self, *, preview_port=None):
+        self._preview_port = preview_port
         self._queue = queue.Queue(maxsize=16)
         self._thread = None
         self._lock = threading.Lock()
@@ -109,7 +110,7 @@ class BrowserSessions:
                     if browser is None:
                         if proxy:
                             proxy.close()
-                        proxy = PublicProxy(allow_http_writes=True)
+                        proxy = PublicProxy(allow_http_writes=True, preview_port=self._preview_port)
                         # A packaged Chromium is preferred. Source installations may use Edge/Chrome.
                         from pathlib import Path
                         shell_installed = any(packaged.glob("chromium_headless_shell-*"))
@@ -127,7 +128,11 @@ class BrowserSessions:
                             old["context"].close()
                         context = browser.new_context(viewport=self._viewport(args.get("viewport")),
                             accept_downloads=False, service_workers="block")
-                        state = {"context": context, "page": context.new_page(), "writes": False}
+                        state = {"context": context, "page": context.new_page(), "writes": False, "errors": [], "http_errors": []}
+                        def observe(page, state=state):
+                            page.on("pageerror", lambda error: state["errors"].append(str(error)[:500]) if len(state["errors"]) < 20 else None)
+                            page.on("response", lambda response: state["http_errors"].append({"url": response.url[:500], "status": response.status}) if response.status >= 400 and len(state["http_errors"]) < 20 else None)
+                        observe(state["page"])
                         def route(request_route, state=state):
                             try:
                                 public_url(request_route.request.url)
@@ -143,6 +148,7 @@ class BrowserSessions:
                         # Popups stay inside the managed page, never in another desktop window.
                         def popup(page, state=state):
                             state["page"] = page
+                            observe(page, state)
                             if len(state["context"].pages) > 4:
                                 state["context"].pages[0].close()
                             page.set_default_timeout(10000)
@@ -157,6 +163,7 @@ class BrowserSessions:
                     if selector is not None and (not isinstance(selector, str) or not 0 < len(selector) <= 2048):
                         raise ValueError("Provide a CSS selector of at most 2048 characters")
                     if action == "navigate":
+                        state["errors"].clear(); state["http_errors"].clear()
                         if args.get("viewport"):
                             page.set_viewport_size(self._viewport(args["viewport"]))
                         page.goto(public_url(args.get("url")), wait_until="domcontentloaded", timeout=45000)
@@ -183,6 +190,8 @@ class BrowserSessions:
                         page.locator(selector).select_option(self._text(args, "value"))
                     elif action == "scroll":
                         page.mouse.wheel(self._number(args, "x", -3000, 3000), self._number(args, "y", -3000, 3000))
+                    elif action == "wait_text":
+                        page.get_by_text(self._text(args, "text", 2000), exact=False).first.wait_for(state="visible", timeout=10000)
                     elif action == "back":
                         page.go_back(wait_until="domcontentloaded", timeout=30000)
                     elif action == "forward":
@@ -198,12 +207,14 @@ class BrowserSessions:
                     page = state["page"]
                     page.wait_for_timeout(120)
                     url = public_url(page.url)
-                    png = page.locator(selector).screenshot(timeout=10000) if action == "screenshot" and selector else page.screenshot(timeout=10000)
-                    if len(png) > 8 * 1024 * 1024:
+                    png = None if args.get("capture_screenshot") is False else page.locator(selector).screenshot(timeout=10000) if action == "screenshot" and selector else page.screenshot(timeout=10000)
+                    if png and len(png) > 8 * 1024 * 1024:
                         raise ValueError("Browser screenshot exceeded 8 MiB")
                     future.set_result({"status": "passed", "url": url, "title": page.title()[:300],
                         "text": page.locator("body").inner_text(timeout=5000)[:20000],
                         "elements": page.evaluate(ELEMENTS), "png": png,
+                        "runtime_errors": list(state["errors"]), "http_errors": list(state["http_errors"]),
+                        "layout": page.evaluate("() => ({width: innerWidth, height: innerHeight, scroll_width: document.documentElement.scrollWidth, visible_elements: document.body.querySelectorAll('*').length})"),
                         "interactive": not (action == "screenshot" and selector), "untrusted": True})
                 except Exception as exc:
                     if browser and not browser.is_connected():

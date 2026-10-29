@@ -20,6 +20,9 @@ export interface TaskRequest {
   approve_secrets?: boolean;
 }
 export type ConfirmationPolicy = "never" | "risky" | "ask" | "always";
+export function confirmationForRunMode(mode: string): ConfirmationPolicy | undefined {
+  return mode === "auto" ? "never" : mode === "ask" ? "ask" : undefined;
+}
 export interface AttachmentMeta { id: string; name: string; type: string; size: number }
 export interface AgentProfile {
   id: string; name: string; instructions: string; model_profile_id: string;

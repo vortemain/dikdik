@@ -83,6 +83,7 @@ class RuntimeChoiceTests(unittest.TestCase):
             engine = Engine(root, Path(temp) / "data")
             try:
                 with patch("dikdik.browser_service.subprocess.run", side_effect=OSError), \
+                        patch("dikdik.browser_service.interactive_available", return_value=False), \
                         patch("dikdik.host_browser.find_browser", return_value="C:/Edge/msedge.exe"):
                     info = engine.browser.info()
                     self.assertEqual((info["availability"], info["runtime"], info["network"]), ("host_ready", "this computer", "public_only_proxy"))

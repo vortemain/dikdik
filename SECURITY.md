@@ -11,10 +11,16 @@ no repository code runs on the host. What protects you instead:
   Dikdik may read it, send what it reads to your model provider, edit it and run
   commands there. Each request still carries explicit `approve_external` and
   `approve_execution` Booleans; the interface fills them only for a trusted folder.
-- **Permission modes.** *Ask* asks before every command, web visit and MCP call;
-  *Auto* asks only for high-risk commands (deleting, installing, network, rewriting
-  history); *Plan* only reads. *Always allow* remembers one exact command for one
+- **Permission modes.** *Ask* asks before commands, data-sending browser actions and MCP calls;
+  *Auto* executes the requested work without per-tool confirmation prompts in a
+  trusted project. Explicit allow/deny/ask rules remain authoritative. *Plan* only reads.
+  *Always allow* remembers one exact command for one
   project; the list is shown and can be cleared (`/api/commands/allowed`).
+- **Local UI verification.** `preview_app` starts a supervised project server on
+  an assigned ephemeral loopback port. A dedicated browser proxy maps only the
+  reserved preview hostname to that port. Other loopback, LAN and metadata URLs
+  remain denied; ordinary public browsing receives no local-access exception.
+  The preview browser uses a fresh profile and stops with its server after the check.
 - **Checkpoints and Undo.** Before a turn first changes a file, its previous content
   is recorded; Undo restores every file the turn changed, including files its
   commands changed, unless you changed it since. Writes never overwrite a file that
