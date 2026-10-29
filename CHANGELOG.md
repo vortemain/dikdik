@@ -1,0 +1,26 @@
+# Changelog
+
+## 0.1.0 — 2026-10-29
+
+First GitHub developer-preview release.
+
+- Original local-first coding workspace with Ask, Auto, Plan and Classic modes,
+  durable conversations, checkpoints, Undo, review and Git operations.
+- 34 bundled agent skills and six typed lifecycle events with ordered hooks,
+  explicit decisions, timeouts and correlated execution records. Plugins cannot
+  override runtime security policies or required approvals.
+- Provider error categories, bounded response recovery, non-streaming fallback,
+  adaptive output budgets and reasoning continuation support.
+- Context compaction that retains requirements, plans and useful findings;
+  resumed verification retains change and Undo evidence.
+- Local test/static-check discovery and explicit unavailable-verification status.
+- Readable Markdown, tables and charts, isolated HTML previews, themed dialogs
+  and improved workspace file browsing.
+- MIT licensing, third-party notices, portable Python distributions, SHA-256
+  checksums and a tested release workflow.
+
+The Python indexer is included in the portable wheel. The optional Rust
+accelerator can be built separately from the source distribution. Docker images,
+ACP CLIs, model accounts and external tools are not included. Production security
+review, broad live-provider evaluation and live Docker boundary verification
+remain open; this release is a developer preview.

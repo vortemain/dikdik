@@ -2,6 +2,25 @@
 
 **Small name. Serious intelligence.**
 
+[MIT license](LICENSE) · [Downloads and releases](https://github.com/vortemain/dikdik/releases) · [Changelog](CHANGELOG.md)
+
+## Install a release
+
+Download the wheel from [GitHub Releases](https://github.com/vortemain/dikdik/releases)
+and install it with Python 3.13 or newer:
+
+```powershell
+python -m pip install ./dikdik-0.1.0-py3-none-any.whl
+dikdik --version
+dikdik C:\Projects\my-app
+```
+
+The portable wheel includes the web interface, 34 bundled skills and third-party
+notices. It uses the Python repository indexer. The optional Rust accelerator can
+be built from the source distribution. Verify downloads with the release's
+`SHA256SUMS.txt`. See [release verification and maintenance](docs/RELEASING.md).
+Version 0.1.0 is a developer preview.
+
 > **Current direction:** DIKDIK's core is independently engineered in Python,
 > Bun/TypeScript and justified Rust components. OpenHands is a research and
 > comparative-testing reference, **not a shipped code dependency or renamed fork**.
@@ -424,7 +443,10 @@ checkouts and frontend development dependencies cannot be bundled as packages.
 [Security](SECURITY.md) · [Verification](docs/VERIFICATION.md) ·
 [License status](LICENSE-STATUS.md)
 
-**Release gates:** owner-selected license, real Docker boundary tests, live model
+Original Dikdik code is licensed under [MIT](LICENSE). Bundled dependencies, fonts
+and product marks retain their own terms; see [license status](LICENSE-STATUS.md).
+
+**Production readiness gates:** real Docker boundary tests, live model
 integration, immutable image pinning/review, stronger resource/secret controls,
 broader end-to-end evaluations, and an independent security review. This preview
 must not be exposed to a network or used with hostile repositories or secrets.

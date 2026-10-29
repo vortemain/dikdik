@@ -6,14 +6,25 @@ build-backend = "setuptools.build_meta"
 name = "dikdik"
 version = "0.1.0"
 description = "Small name. Serious intelligence. Evidence-first engineering workspace."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "dikdik/web/assets/LICENSE-*.txt", "dikdik/web/fonts/LICENSE-*.txt"]
 requires-python = ">=3.13"
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/vortemain/dikdik"
+Releases = "https://github.com/vortemain/dikdik/releases"
+Issues = "https://github.com/vortemain/dikdik/issues"
 
 [project.scripts]
 dikdik = "dikdik.server:main"
 
 [tool.setuptools.package-data]
 dikdik = ["web/*", "web/fonts/*", "web/assets/*", "web/assets/files/*", "web/assets/providers/*", "web/assets/brands/*", "browser_runtime/*", "dikdik_index*", "skills/*/SKILL.md"]
+
+[tool.setuptools.exclude-package-data]
+dikdik = ["*.pyd", "*.so", "*.dll", "*.dylib"]
 
 [tool.setuptools.packages.find]
 include = ["dikdik", "dikdik.*"]

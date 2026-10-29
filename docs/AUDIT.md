@@ -46,8 +46,8 @@ are not tests. Container integration requires a working Linux Docker daemon.
 ## Licensing and security constraints
 
 There is no retained upstream code and no runtime third-party Python dependency.
-No project distribution license was supplied; do not invent owner attribution
-or imply redistribution rights have been granted. See `LICENSE-STATUS.md`.
+At the initial audit no project distribution license had been supplied. The owner
+subsequently selected MIT on 2026-10-29; see `LICENSE` and `LICENSE-STATUS.md`.
 Python, browsers, operating systems, optional providers, and Docker images
 remain independently licensed. Image redistribution has not been approved or
 audited here. See `SECURITY.md` for actual boundaries and residual risks.

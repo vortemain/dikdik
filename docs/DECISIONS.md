@@ -91,9 +91,9 @@ loop, rather than a renamed upstream class or a wrapper around its runtime.
 Root Git ignores `upstream/` and `node_modules/`; Python package discovery allows
 only `dikdik` and `dikdik.*`. Wheel inspection and a fresh dependency-free install
 verify that the research SDK is not a hidden runtime requirement. The frontend
-package is private and `UNLICENSED`, not implicitly licensed under TypeScript's
-Apache-2.0 terms. No formal clean-room, exclusivity or legal-ownership guarantee is
-made. Actual distribution/copyright terms require the owner's decision.
+package remains private. The owner selected MIT on 2026-10-29 for original source;
+TypeScript retains its Apache-2.0 terms. No formal clean-room, exclusivity or
+legal-ownership guarantee is made. See the root LICENSE and LICENSE-STATUS.md.
 
 ## ADR-005: Candidate-specific completion and trustworthy failure reporting
 

@@ -1,7 +1,7 @@
 {
   "name": "dikdik-web",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "scripts": {
     "build:web": "bun build dikdik/web/app.ts --target browser --format iife --minify-whitespace --outfile dikdik/web/app.js",
     "assets:web": "python scripts/bundle_editor_assets.py",

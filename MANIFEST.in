@@ -1,0 +1,17 @@
+include LICENSE LICENSE-STATUS.md README.md SECURITY.md PROJECT_STATUS.md CHANGELOG.md
+include Dockerfile bunfig.toml .dikdikignore
+include Cargo.toml Cargo.lock package.json bun.lock tsconfig.json
+recursive-include docs *.md
+recursive-include crates *.toml *.rs
+recursive-include scripts *.py
+include scripts/requirements-release.txt
+recursive-include tests *.py *.ts
+recursive-include dikdik/web *.ts *.js *.css *.html *.svg *.json *.txt *.md *.woff2
+recursive-include dikdik/browser_runtime *
+recursive-include dikdik/skills SKILL.md
+global-exclude *.pyc *.pyd *.so *.dll *.dylib
+prune upstream
+prune node_modules
+prune .dikdik
+prune build
+prune dist
