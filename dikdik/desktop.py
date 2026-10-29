@@ -62,7 +62,27 @@ def run(server, link: str, data: Path, webview=None) -> None:
             from .notifications import DesktopNotifications
             notifications = DesktopNotifications(server, main_window, f"http://127.0.0.1:{server.server_port}")
             server.desktop_notifications = notifications
-        webview.start(func=notifications.start if notifications else None,
+        def _started():
+            # The EdgeChromium host can open behind the previous window on Windows; bring it forward,
+            # and never leave it minimized after the launcher exits. Maximize on launch.
+            for method in ("restore", "show"):
+                try:
+                    getattr(main_window, method)()
+                except Exception:
+                    pass
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+                    user32 = ctypes.windll.user32
+                    hwnd = user32.FindWindowW(None, "Dikdik")
+                    if hwnd:
+                        user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
+                        user32.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
+            if notifications:
+                notifications.start()
+        webview.start(func=_started,
                       private_mode=False, storage_path=str(storage), debug=False, icon=str(icon),
                       **({"gui": "edgechromium"} if sys.platform == "win32" else {}))
     finally:

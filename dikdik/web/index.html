@@ -167,7 +167,13 @@
           <button id="project-switch" class="project-text project-switch" type="button" title="Switch project" aria-haspopup="dialog"><h2 id="project-name">—</h2><p id="project-summary"></p></button>
           <button id="refresh" type="button" class="ghost icon" aria-label="Refresh inventory" title="Refresh inventory"><svg class="i"><use href="#i-refresh"/></svg></button>
         </div>
-        <button id="open-settings" class="foot-button" type="button"><svg class="i"><use href="#i-gear"/></svg>Settings</button>
+        <div class="foot-actions">
+          <button id="sidebar-update" class="foot-button update-indicator" type="button" hidden title="A newer Dikdik is available — click to update">
+            <svg class="i" aria-hidden="true"><use href="#i-download"/></svg><span>Update</span>
+            <span class="update-dot" aria-hidden="true"></span>
+          </button>
+          <button id="open-settings" class="foot-button" type="button"><svg class="i"><use href="#i-gear"/></svg>Settings</button>
+        </div>
       </div>
     </aside>
     <nav id="rail" class="rail" aria-label="Quick actions">
@@ -191,8 +197,6 @@
           <button id="toggle-canvas" class="ghost small changes-button" type="button" aria-pressed="false" aria-controls="canvas" hidden><svg class="i"><use href="#i-diff"/></svg><span class="label">Changes</span><span id="changes-count" class="count"></span></button>
         </div>
       </header>
-
-      <div id="progress-panel" class="progress-panel" role="status" aria-live="polite" hidden></div>
 
       <div id="thread" class="thread">
         <section class="welcome" aria-label="Welcome">
@@ -432,6 +436,7 @@
         <div class="setting-row"><div><h4>Desktop notifications</h4><p>Native alerts for finished tasks, failures, approvals and questions. Click an alert to open its task.</p></div><select id="notification-mode" aria-label="Desktop notifications"><option value="background">When I’m away from the task</option><option value="all">Always</option><option value="off">Off</option></select></div>
         <div class="setting-row"><div><h4>Task titles in notifications</h4><p>Include the task title and project name. Otherwise, alerts use generic text.</p></div><label class="check"><input id="notification-previews" type="checkbox">Show titles</label></div>
         <div class="setting-row"><div><h4>Notification delivery</h4><p id="notification-status" role="status">Checking desktop notification support…</p></div><button id="notification-test" class="small" type="button" disabled>Send test notification</button></div>
+        <div class="setting-row"><div><h4>Updates</h4><p>Installed Dikdik <span id="update-version">—</span>. <span id="update-detail">Click to check for a newer release.</span> <a id="update-notes" class="ghost" target="_blank" rel="noopener noreferrer" hidden>Release notes</a></p></div><button id="update-action" class="small" type="button">Check for updates</button></div>
         <div class="setting-row setting-stack"><div><h4>Git identity</h4><p>Name and email for commits made from the Git tab. Leave blank to use your Git configuration.</p></div>
           <form id="git-identity" class="inline-form"><label class="sr-only" for="git-name">Git name</label><input id="git-name" maxlength="100" placeholder="Your Name"><label class="sr-only" for="git-email">Git email</label><input id="git-email" type="email" maxlength="254" placeholder="you@example.com"><button id="git-save" class="small" type="submit" disabled>Save</button></form></div>
         <div class="setting-row"><div><h4>Conversation titles</h4><p>After the first finished turn, name the conversation with a short model-written title. Only conversations that already share content with a model are titled.</p></div><select id="title-model" aria-label="Title model"><option value="auto">The conversation’s model</option><option value="off">Off — use my first message</option></select></div>

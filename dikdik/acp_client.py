@@ -60,7 +60,7 @@ class AcpSession:
 
     # --- process -----------------------------------------------------------------
     def start(self) -> None:
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+        flags = (subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0)) if sys.platform == "win32" else 0
         try:
             self.process = subprocess.Popen(
                 self.command, cwd=self.cwd, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

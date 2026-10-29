@@ -204,6 +204,18 @@ class ControlTests(unittest.TestCase):
         self.assertFalse(needs_approval("always", "low", "read_file"))
         self.assertFalse(needs_approval("risky", "low", "edit_file"))
 
+    def test_read_only_fetches_do_not_ask(self):
+        # web_fetch and browse_url are read-only; they never prompt in the default Ask mode,
+        # and destructive/data-sending browser actions still do.
+        for name in ("web_fetch", "browse_url", "browser_scroll", "browser_screenshot"):
+            self.assertEqual(assess(ToolCall("x", name, {"url": "https://x.example"}))[0], "low", name)
+            self.assertFalse(needs_approval("ask", "low", name), name)
+            self.assertFalse(needs_approval("never", "low", name), name)
+            self.assertFalse(needs_approval("risky", "low", name), name)
+        self.assertTrue(needs_approval("ask", "high", "run_command"))  # commands still ask in Ask mode
+        self.assertTrue(needs_approval("ask", "high", "browser_click"))  # data-sending browser action asks
+        self.assertTrue(needs_approval("always", "low", "web_fetch"))  # Always mode confirms everything non-read
+
     def test_env_secret_reads_are_flagged(self):
         for path, flagged in [(".env", True), (".env.local", True), ("config/.env.production", True),
                               (".env.example", False), (".env.sample", False), (".env.template", False),
@@ -681,7 +693,7 @@ class ControlTests(unittest.TestCase):
 
     # --- settings -------------------------------------------------------------------------------------
     def test_app_settings(self):
-        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": False, "notifications": "background", "notification_previews": False, "router": "", "title_model": "auto", "event_retention_seconds": 0, "permission_rules": [], "formatter": {"enabled": False, "command": ""}, "warming": {"enabled": False, "interval_seconds": 240, "duration_seconds": 1800}})
+        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": True, "notifications": "background", "notification_previews": False, "router": "", "title_model": "auto", "event_retention_seconds": 0, "permission_rules": [], "formatter": {"enabled": False, "command": ""}, "warming": {"enabled": False, "interval_seconds": 240, "duration_seconds": 1800}})
         self.assertEqual(self.engine.update_app_settings({"confirmation": "risky"})["confirmation"], "risky")
         for bad in ({"confirmation": "sometimes"}, {"condenser": "yes"}, {"theme": "dark"}, {}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):

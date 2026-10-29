@@ -91,6 +91,18 @@ def shell_argv(command: str) -> tuple[list[str], str]:
     return ["powershell", "-NoProfile", "-NonInteractive", "-Command", command], "powershell"
 
 
+def _creation_flags(new_group: bool = True) -> int:
+    """Hide child console windows when Dikdik runs from its GUI launcher (pythonw).
+
+    A new process group is still created on Windows so the Stop button can
+    interrupt a running command; pipe handles are unaffected.
+    """
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    if new_group and os.name == "nt":
+        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+    return flags
+
+
 def _stop(process: subprocess.Popen) -> None:
     if process.poll() is not None:
         return
@@ -117,7 +129,7 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
     if not isinstance(command, str) or not command.strip() or len(command) > 4000:
         raise ValueError("Command must contain 1-4000 characters")
     argv, shell = shell_argv(command)
-    flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    flags = _creation_flags()
     started = time.monotonic()
     try:
         tree = _ProcessTree()
@@ -264,7 +276,7 @@ class BackgroundShells:
             raise ValueError("Command must contain 1-4000 characters")
         shell_id = uuid.uuid4().hex[:12]
         argv, shell_name = shell_argv(command)
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        flags = _creation_flags()
         process = subprocess.Popen(argv, cwd=root, env={**os.environ, **(env or {})}, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags,
                                    start_new_session=os.name != "nt")

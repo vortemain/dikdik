@@ -27,7 +27,8 @@ class AutomationGitSync:
         try:
             result = subprocess.run(["git", "-c", "core.hooksPath=NUL", *args], cwd=repository,
                                     capture_output=True, text=True, timeout=30, check=False,
-                                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, subprocess.SubprocessError) as exc:
             raise ValueError("Could not run Git for automation sync") from exc
         if check and result.returncode:
@@ -176,7 +177,8 @@ class AutomationGitSync:
             env = {**os.environ, "GIT_AUTHOR_NAME": "Dikdik Automations", "GIT_AUTHOR_EMAIL": "dikdik@local.invalid",
                    "GIT_COMMITTER_NAME": "Dikdik Automations", "GIT_COMMITTER_EMAIL": "dikdik@local.invalid", "GIT_TERMINAL_PROMPT": "0"}
             result = subprocess.run(["git", "-c", "core.hooksPath=NUL", "commit", "--no-verify", "-m", "Sync Dikdik automations", "--", directory],
-                                    cwd=repository, capture_output=True, text=True, timeout=30, env=env, check=False)
+                                    cwd=repository, capture_output=True, text=True, timeout=30, env=env, check=False,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if result.returncode:
                 raise ValueError((result.stderr or result.stdout or "Could not commit automation sync").strip()[:500])
             committed = True

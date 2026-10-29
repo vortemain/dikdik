@@ -183,7 +183,8 @@ def run_container(command: list[str], name: str, cancel: threading.Event, timeou
                 _send(cleaned)
     try:
         proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, shell=False,
-                                env={**os.environ, **env} if env else None)
+                                env={**os.environ, **env} if env else None,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except OSError:
         return {"status": "blocked", "error": "Docker CLI unavailable", "exit_code": None, "output": "", "seconds": 0.0}
 

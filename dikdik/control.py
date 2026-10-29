@@ -55,9 +55,9 @@ def assess(call: ToolCall) -> tuple[str, str]:
                 return "high", f"the command {reason}"
         return "medium", "runs a command"
     if call.name == "browse_url":
-        return "medium", "opens a public web page"
+        return "low", "opens a public web page (read-only navigation)"
     if call.name == "web_fetch":
-        return "medium", "fetches public web content"
+        return "low", "fetches public web content (read-only)"
     if call.name in {"browser_click", "browser_fill", "browser_press", "browser_select"}:
         return "high", "interacts with a website and may send data or submit a form"
     if call.name in {"browser_screenshot", "browser_scroll"}:
@@ -72,7 +72,7 @@ def assess(call: ToolCall) -> tuple[str, str]:
     return "medium", "uses a tool"
 
 
-ACTION_TOOLS = {"run_command", "browse_url", "web_fetch", "browser_click", "browser_fill", "browser_press", "browser_select", "browser_scroll", "browser_screenshot"}
+ACTION_TOOLS = {"run_command", "browser_click", "browser_fill", "browser_press", "browser_select"}
 
 
 # --- structured permission rules -------------------------------------------------------
@@ -141,8 +141,9 @@ def parse_rules(value) -> list:
 
 
 def needs_approval(policy: str, risk: str, tool: str | None = None) -> bool:
-    """never: no prompts; risky: high-risk actions only; ask: every command, web visit and
-    MCP call (edits are undoable, so they do not ask); always: every action that is not read-only."""
+    """never: no prompts; risky: high-risk (destructive) actions only; ask: every command,
+    data-sending browser action and MCP call (read-only fetches and observations do not ask);
+    always: every action that is not read-only."""
     if policy == "ask":
         return tool is not None and (tool in ACTION_TOOLS or tool.startswith("mcp__"))
     if policy == "always":

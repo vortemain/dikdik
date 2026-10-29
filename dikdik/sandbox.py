@@ -69,7 +69,8 @@ def cleanup_container(name: str) -> str | None:
     if not name.startswith("dikdik-") or len(name) != 39 or any(c not in "0123456789abcdef" for c in name[7:]):
         raise ValueError("Invalid container identity")
     try:
-        cleanup = subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=10, shell=False)
+        cleanup = subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=10, shell=False,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if cleanup.returncode and b"No such container" not in cleanup.stderr:
             return "Container cleanup not confirmed; inspect Docker manually"
     except (OSError, subprocess.TimeoutExpired):
@@ -84,7 +85,8 @@ def run_tests(snapshot: Path, cancel: threading.Event, timeout: float = 60, name
     output = bytearray()
     truncated = threading.Event()
     try:
-        proc = subprocess.Popen(docker_command(snapshot, name, nonce), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, shell=False)
+        proc = subprocess.Popen(docker_command(snapshot, name, nonce), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, shell=False,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except OSError:
         return {"kind": "unittest", "status": "blocked", "error": "Docker CLI unavailable", "exit_code": None}
 

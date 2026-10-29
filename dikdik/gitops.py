@@ -30,7 +30,8 @@ def _git(root: Path, *args: str, check: bool = True, timeout: float = TIMEOUT) -
     with tempfile.TemporaryDirectory() as no_hooks:
         try:
             done = subprocess.run(["git", "-C", str(root), *SAFE, "-c", f"core.hooksPath={no_hooks}", *args],
-                                  capture_output=True, timeout=timeout, env=env, shell=False, stdin=subprocess.DEVNULL)
+                                  capture_output=True, timeout=timeout, env=env, shell=False, stdin=subprocess.DEVNULL,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired:
             raise GitError("Git did not respond in time") from None
         except OSError:
@@ -159,7 +160,8 @@ def remote_info(root: Path) -> dict:
     if gh:
         try:
             signed_in = subprocess.run([gh, "auth", "status"], capture_output=True, timeout=15, stdin=subprocess.DEVNULL,
-                                       env={**os.environ, "GH_PROMPT_DISABLED": "1"}).returncode == 0
+                                       env={**os.environ, "GH_PROMPT_DISABLED": "1"},
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             signed_in = False
     return {"branch": branch or None, "branches": branches, "remotes": remotes, "upstream": upstream,
@@ -222,7 +224,8 @@ def create_pr(root: Path, body: dict) -> dict:
         args.append("--draft")
     env = {**os.environ, "GH_PROMPT_DISABLED": "1", "GIT_TERMINAL_PROMPT": "0"}
     try:
-        done = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=NETWORK_TIMEOUT, env=env, stdin=subprocess.DEVNULL)
+        done = subprocess.run(args, cwd=root, capture_output=True, text=True, timeout=NETWORK_TIMEOUT, env=env, stdin=subprocess.DEVNULL,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         raise GitError("GitHub did not answer in time") from None
     lines = (done.stdout + done.stderr).strip().splitlines()

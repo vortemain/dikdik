@@ -60,7 +60,7 @@ RESUMABLE = {"paused", "failed", "cancelled", "interrupted", "blocked"}
 LET_GO_GRACE = 2.0  # seconds a finished task's worker may still take to release; its deletion waits this long
 STOP_GRACE = 10.0   # seconds a running task gets to stop before its deletion reports back instead of deleting
 POLICIES = {"never", "risky", "ask", "always"}
-APP_DEFAULTS = {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": False, "router": "",
+APP_DEFAULTS = {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": True, "router": "",
                 "notifications": "background", "notification_previews": False,
                 "title_model": "auto", "event_retention_seconds": 0,  # 0 = keep forever; "auto": the conversation's own model; "off"; or a model profile id
                 "permission_rules": [],
@@ -1738,7 +1738,8 @@ class Engine:
                 return None
             import subprocess
             try:
-                subprocess.run(command.split() + [str(target)], capture_output=True, timeout=10, cwd=str(self.root))
+                subprocess.run(command.split() + [str(target)], capture_output=True, timeout=10, cwd=str(self.root),
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 return target.read_text(encoding="utf-8")
             except Exception:
                 return None

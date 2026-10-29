@@ -77,7 +77,8 @@ def capture(url: str, cancel: threading.Event, *, name: str) -> dict:
         return {"status": "cancelled", "error": "Browser capture cancelled"}
     try:
         proc = subprocess.Popen(browser_command(name), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, shell=False)
+                                stderr=subprocess.DEVNULL, shell=False,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except OSError:
         return {"status": "blocked", "error": "Docker CLI unavailable"}
     frames, overflow = queue.Queue(maxsize=68), threading.Event()

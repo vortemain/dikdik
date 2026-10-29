@@ -19,9 +19,7 @@ import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
 import { TerminalRenderer } from './terminal-render';
 import { runningTerminalCommands } from './contracts';
-import { deriveProgress } from './contracts';
 import { frameBatch } from './render-scheduler';
-import { renderProgress } from './progress';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
   const found = document.getElementById(id);
@@ -1452,21 +1450,6 @@ function renderChecklist(): void {
   if (view.used && !view.tasks.length) list.append(make('li', '', 'No checklist steps.'));
 }
 
-let progressTimer: ReturnType<typeof setInterval> | null = null;
-function updateProgress(): void {
-  const panel = el('progress-panel');
-  if (!panel) return;
-  const state = deriveProgress(liveEvents, Date.now() / 1000);
-  if (state.isRunning) {
-    const firstEvent = liveEvents[0];
-    const startTime = firstEvent ? firstEvent.time : Date.now() / 1000;
-    renderProgress(panel, state, Math.max(0, Math.round(Date.now() / 1000 - startTime)));
-    if (!progressTimer) progressTimer = setInterval(() => updateProgress(), 1000);
-  } else {
-    if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
-    panel.hidden = true; panel.replaceChildren();
-  }
-}
 async function enterPlanning(): Promise<void> {
   if (!selected) { select('mode').value = 'plan'; syncMode(); syncComposer(); textarea('objective').focus(); return; }
   if (!isTerminal(selectedState)) throw new Error('Wait for the current turn before planning.');
@@ -2278,7 +2261,6 @@ function startStream(id: string): void {
     if (record.kind === 'plan_updated') void loadPlan(id);
     if (record.kind === 'task_tracker') renderChecklist();
     if ((record.kind === "agent_model" || record.kind === "running") && canvasTab === "usage" && !el("canvas").hidden) renderUsage();
-    updateProgress();
     if (record.kind === "running" || isTerminal(record.kind)) {
       setState(record.kind);
       selectedState = record.kind;
@@ -2320,7 +2302,6 @@ async function observe(force = false): Promise<void> {
     setTitle(el("chat-title").textContent ?? "");
     setState(task.state);
     selectedState = task.state;
-    updateProgress();
     parentTask = typeof task.request.parent_task === 'string' ? task.request.parent_task : null;
     taskRequest = task.request;
     if (!observedTaskMode) {
@@ -3391,6 +3372,7 @@ async function loadAppSettings(): Promise<void> {
   input("notification-previews").checked = settings.notification_previews === true;
   input("notification-previews").disabled = settings.notifications === "off";
   void loadNotificationStatus();
+  void loadUpdateCheck();
   input("git-name").value = settings.git_name ?? "";
   input("git-email").value = settings.git_email ?? "";
   syncGitSave();
@@ -4473,3 +4455,55 @@ async function loadGitAccounts(): Promise<void> {
 
 // Register the panes for lazy loading on first open.
 Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps, git: loadGitAccounts });
+
+// --- desktop self-update --------------------------------------------------
+let updateAvailable: { latest: string; url: string } | null = null;
+const updateEl = (id: string): HTMLElement | null => document.getElementById(id);
+function showUpdateAvailable(latest: string, url: string): void {
+  updateAvailable = { latest, url };
+  const indicator = updateEl("sidebar-update") as HTMLButtonElement | null;
+  if (indicator) { indicator.hidden = false; indicator.title = `Dikdik ${latest} is available — click to update`; }
+  const action = updateEl("update-action") as HTMLButtonElement | null;
+  if (action) { action.textContent = `Download & install ${latest}`; action.disabled = false; }
+  const detail = updateEl("update-detail"); if (detail) detail.textContent = "A newer release is available.";
+  const notes = updateEl("update-notes") as HTMLAnchorElement | null;
+  if (notes) { notes.hidden = !url; if (url) notes.href = url; }
+}
+async function loadUpdateCheck(): Promise<void> {
+  try {
+    const info = await api<{ current: string; latest: string; available: boolean; url?: string; error?: string }>("/api/desktop/update/check");
+    const version = updateEl("update-version");
+    if (version) version.textContent = info.current ?? "";
+    if (info.available && info.latest) {
+      showUpdateAvailable(info.latest, info.url ?? "");
+    } else {
+      const action = updateEl("update-action") as HTMLButtonElement | null;
+      if (action) action.disabled = false;
+      const detail = updateEl("update-detail");
+      if (detail) detail.textContent = info.error ? "Could not check for updates right now." : "You’re on the latest release.";
+    }
+  } catch {
+    const detail = updateEl("update-detail"); if (detail) detail.textContent = "Could not check for updates right now.";
+  }
+}
+async function applyUpdate(): Promise<void> {
+  if (!updateAvailable) return;
+  const action = updateEl("update-action") as HTMLButtonElement | null;
+  if (action) { action.disabled = true; action.textContent = "Installing…"; }
+  const detail = updateEl("update-detail");
+  if (detail) detail.textContent = "Downloading and installing. Dikdik will restart.";
+  try {
+    const reply = await api<{ ok: boolean; restarting?: boolean; error?: string; latest?: string }>("/api/desktop/update/apply", {});
+    if (!reply.ok) throw new Error(reply.error || "The update could not be installed.");
+    if (detail) detail.textContent = "Restarting…";
+  } catch (error) {
+    if (action) { action.disabled = false; action.textContent = "Retry"; }
+    const text = error instanceof Error ? error.message : "The update could not be installed.";
+    if (detail) detail.textContent = text;
+    message(text, true);
+  }
+}
+const updateActionBtn = updateEl("update-action");
+if (updateActionBtn) updateActionBtn.addEventListener("click", () => { if (updateAvailable) void applyUpdate(); else void loadUpdateCheck(); });
+const sidebarUpdateBtn = updateEl("sidebar-update");
+if (sidebarUpdateBtn) sidebarUpdateBtn.addEventListener("click", () => openSettings("general", true));

@@ -489,6 +489,13 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 notifications = getattr(self.server, "desktop_notifications", None)
                 self.reply(200, notifications.status() if notifications else {"desktop": False, "ready": True, "available": False, "permission": "unavailable", "error": "Native notifications are available in the desktop application"})
                 return
+            if path == "/api/desktop/update/check":
+                from .updater import check as check_update
+                try:
+                    self.reply(200, check_update())
+                except Exception as exc:
+                    self.reply(200, {"current": DIKDIK_VERSION, "latest": "", "available": False, "error": str(exc)[:200]})
+                return
             answer = gateway.route("GET", path, {}, dict(self.headers))
             if answer is not None:
                 self.reply(*answer)
@@ -785,6 +792,17 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     if notifications is None:
                         raise ValueError("Open the desktop application to test native notifications")
                     self.reply(200, notifications.test())
+                    return
+                if path == "/api/desktop/update/apply":
+                    if self.api_key is not None:
+                        self.reply(403, {"error": "Use the desktop session to install updates"})
+                        return
+                    from .updater import apply as apply_update
+                    self.connection.settimeout(600)
+                    try:
+                        self.reply(200, apply_update())
+                    except Exception as exc:
+                        self.reply(200, {"ok": False, "error": str(exc)[:300]})
                     return
                 if path == '/api/previews':
                     if not isinstance(body, dict) or set(body) != {'html'}:

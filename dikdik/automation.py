@@ -199,7 +199,7 @@ class AutomationScheduler:
             result = subprocess.run(
                 ["git", "rev-parse", "--verify", event["ref"]], cwd=repository,
                 capture_output=True, text=True, timeout=5, check=False,
-            )
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, subprocess.SubprocessError) as exc:
             raise ValueError("Could not inspect the event repository") from exc
         revision = result.stdout.strip()
