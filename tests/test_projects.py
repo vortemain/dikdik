@@ -169,7 +169,7 @@ class FolderChooserTests(unittest.TestCase):
             (root / "file.txt").write_text("not a folder")
             result = list_folders(str(root))
             self.assertEqual([item["name"] for item in result["folders"]], ["Alpha", "café", "zeta"])
-            self.assertEqual(result["parent"], str(root.parent))
+            self.assertEqual(result["parent"], str(root.resolve().parent))
             empty = list_folders(str(root / "café"))
             self.assertEqual((empty["folders"], empty["truncated"]), ([], False))
             self.assertIn(str(Path.home()), [item["path"] for item in empty["locations"]])
@@ -222,6 +222,11 @@ class ProgramFolderTests(unittest.TestCase):
                 with self.subTest(path=path), self.assertRaisesRegex(ValueError, "program code"):
                     check_location(path, self.data)
             self.assertEqual(check_location(self.project, self.data), self.project.resolve())
+
+    def test_noncanonical_program_root_cannot_bypass_the_boundary(self):
+        with patch("dikdik.projects.program_root", return_value=self.install / "dikdik" / ".."):
+            with self.assertRaisesRegex(ValueError, "program code"):
+                check_location(self.install, self.data)
 
     def test_open_refuses_and_keeps_the_current_project(self):
         engine = Engine(self.project, self.data)

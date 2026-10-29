@@ -18,6 +18,8 @@ First GitHub developer-preview release.
   and improved workspace file browsing.
 - MIT licensing, third-party notices, portable Python distributions, SHA-256
   checksums and a tested release workflow.
+- Windows time-zone data is declared as a dependency, and project boundaries
+  normalize short/long path aliases before comparisons.
 
 The Python indexer is included in the portable wheel. The optional Rust
 accelerator can be built separately from the source distribution. Docker images,

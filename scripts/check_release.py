@@ -57,9 +57,12 @@ def check_release(directory, tag=None):
             raise ValueError(f"Wheel is missing runtime files: {sorted(missing)}")
         prefix = f"dikdik-{version}.dist-info/"
         metadata = BytesParser().parsebytes(archive.read(prefix + "METADATA"))
+        normalize = lambda value: re.sub(r"\s+", "", value).replace("'", '"')
+        dependencies = {normalize(value) for value in metadata.get_all("Requires-Dist", [])}
+        expected_dependencies = {normalize(value) for value in project["dependencies"]}
         if (metadata["Name"] != "dikdik" or metadata["Version"] != version
                 or metadata["Requires-Python"] != project["requires-python"]
-                or metadata["License-Expression"] != "MIT" or metadata.get_all("Requires-Dist")):
+                or metadata["License-Expression"] != "MIT" or dependencies != expected_dependencies):
             raise ValueError("Invalid package identity/license or unexpected runtime dependencies")
         if archive.read(prefix + "licenses/LICENSE") != (ROOT / "LICENSE").read_bytes():
             raise ValueError("Wheel root license differs from repository license")

@@ -12,6 +12,9 @@ tags and manual runs. It tests Python 3.13 on Windows and Linux, runs the fronte
 tests/typecheck/build, checks the committed browser bundle, builds distributions,
 validates metadata/notices, rejects private or native build files, installs the
 portable wheel outside the checkout and generates SHA-256 checksums.
+Windows tests install the declared `tzdata` dependency for named time zones;
+Linux uses its system IANA database. Project boundaries normalize Windows path
+aliases before comparisons.
 
 Actions are pinned to commit hashes. Test/package jobs have read-only repository
 permissions; only the tag publication job has write access. Tags must match the

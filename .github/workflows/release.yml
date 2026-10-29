@@ -33,6 +33,7 @@ jobs:
         with:
           bun-version: '1.4.0'
       - run: bun install --frozen-lockfile
+      - run: python -m pip install -e .
       - run: python -m unittest discover -s tests -v
       - run: bun run typecheck:web
       - run: bun run test:web

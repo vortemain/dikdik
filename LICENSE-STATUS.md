@@ -28,7 +28,10 @@ Original Dikdik code is MIT-licensed, copyright (c) 2026 vortemain and Dikdik
 contributors. This file records provenance and third-party terms; the root
 LICENSE contains the project's license text.
 
-Runtime Python dependencies: none beyond Python's standard library.
+Runtime Python code uses the standard library. Windows installations also depend
+on the Python-maintained `tzdata` package for IANA time-zone data (Apache-2.0 code,
+public-domain time-zone data). It is installed as a separate dependency and retains
+its own notices; it is not relicensed or bundled in Dikdik's wheel.
 The editor bundles Highlight.js 11.12.0 (BSD-3-Clause) and its 193 language
 grammars at build time, plus SVG assets/associations from Material Icon Theme
 5.39.0 (MIT) and Lobe Icons static SVG 1.95.1 (MIT). These are pinned development
@@ -41,7 +44,8 @@ dependency is TypeScript 6.0.3 (Apache-2.0), published 2026-04-16; registry
 timestamp and locked integrity were verified before installation. It is a build/
 type-check tool, not copied DIKDIK runtime code. Bun has its own MIT license.
 Packaging build requirement: setuptools >=77 (MIT; verify the exact resolved
-version if producing a distribution). Development tests require no packages.
+version if producing a distribution). Tests use standard-library unittest;
+install the project first so Windows also has its declared time-zone data.
 System prerequisites and optional tooling (Python, Docker, Git, browser) retain
 their own terms. The optional `python:3.13-slim` container includes separately
 licensed software; image notices, immutable digest selection, vulnerability

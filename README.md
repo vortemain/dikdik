@@ -20,6 +20,8 @@ notices. It uses the Python repository indexer. The optional Rust accelerator ca
 be built from the source distribution. Verify downloads with the release's
 `SHA256SUMS.txt`. See [release verification and maintenance](docs/RELEASING.md).
 Version 0.1.0 is a developer preview.
+On Windows, pip also installs `tzdata` so named time zones work without a system
+IANA database.
 
 > **Current direction:** DIKDIK's core is independently engineered in Python,
 > Bun/TypeScript and justified Rust components. OpenHands is a research and
@@ -142,8 +144,9 @@ a real ACP agent CLI. See [the parity audit](docs/PARITY.md) and
 
 ## Run without installation
 
-Prerequisite: **Python 3.13+**. No runtime Python packages, Node/Bun, database
-server, model key, or Docker are needed for the syntax-only workflow.
+Prerequisite: **Python 3.13+**. Installation also supplies `tzdata` on Windows for
+named time zones. Node/Bun, a database server, model key and Docker are not needed
+for the syntax-only workflow.
 
 Install it once from this folder, then start it inside any project, like `claude`:
 

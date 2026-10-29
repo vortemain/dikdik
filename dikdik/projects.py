@@ -51,6 +51,7 @@ def inside_program_folder(path: Path) -> bool:
     if root is None:
         return False
     try:
+        root = Path(root).resolve()
         target = Path(path).resolve()
     except (OSError, ValueError):
         return False
@@ -62,6 +63,8 @@ def check_location(root: Path, data: Path, limit: Path | None = None) -> Path:
         root = approved_root(str(root))
     except OSError:
         raise ValueError(f"{root} is not a folder this computer can open") from None
+    data = Path(data).resolve()
+    limit = Path(limit).resolve() if limit is not None else None
     if limit is not None and root != limit and limit not in root.parents:
         raise ValueError(f"On this server, projects live inside {limit}")
     if data == root or root in data.parents or data in root.parents:
@@ -161,7 +164,7 @@ class Projects:
         self.engine = engine
         self.data = engine.data
         self.on_switch = on_switch
-        self.limit = limit  # on a server: the folder every project must live in
+        self.limit = Path(limit).resolve() if limit is not None else None  # server project boundary
         self.lock = threading.Lock()
 
     def describe(self) -> dict:
