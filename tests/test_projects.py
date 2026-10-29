@@ -223,6 +223,18 @@ class ProgramFolderTests(unittest.TestCase):
                     check_location(path, self.data)
             self.assertEqual(check_location(self.project, self.data), self.project.resolve())
 
+    def test_frozen_installation_folder_cannot_become_the_initial_project(self):
+        for platform, relative in (("win32", "Dikdik.exe"), ("linux", "Dikdik"),
+                                   ("darwin", "Dikdik.app/Contents/MacOS/Dikdik")):
+            executable = self.install / relative
+            executable.parent.mkdir(parents=True, exist_ok=True)
+            root = self.install / "Dikdik.app" if platform == "darwin" else self.install
+            with (self.subTest(platform=platform), patch("sys.frozen", True, create=True),
+                  patch("sys.platform", platform), patch("sys.executable", str(executable))):
+                with self.assertRaisesRegex(ValueError, "program code"):
+                    check_location(root, self.data)
+                self.assertEqual(check_location(self.project, self.data), self.project.resolve())
+
     def test_noncanonical_program_root_cannot_bypass_the_boundary(self):
         with patch("dikdik.projects.program_root", return_value=self.install / "dikdik" / ".."):
             with self.assertRaisesRegex(ValueError, "program code"):

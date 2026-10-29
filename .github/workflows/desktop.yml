@@ -60,7 +60,7 @@ jobs:
           cp scripts/debian-postinst build/deb/DEBIAN/postinst
           cp scripts/debian-prerm build/deb/DEBIAN/prerm
           chmod 755 build/deb/DEBIAN/postinst build/deb/DEBIAN/prerm
-          printf 'Package: dikdik\nVersion: %s\nArchitecture: amd64\nMaintainer: Dikdik\nDepends: libegl1, libgl1, libxcb-cursor0, libxkbcommon0, libxkbcommon-x11-0, libxcb-icccm4, libxcb-keysyms1, libxcb-shape0, libxcb-xkb1, libpulse0, libnss3, libnspr4, libatk1.0-0t64, libatk-bridge2.0-0t64, libatspi2.0-0t64, libcups2t64, libdrm2, libxcomposite1, libxdamage1, libxfixes3, libxrandr2, libgbm1, libasound2t64, libpango-1.0-0, libcairo2, dbus-user-session, apparmor\nDescription: Dikdik desktop coding workspace\n' "$DIKDIK_VERSION" > build/deb/DEBIAN/control
+          printf 'Package: dikdik\nVersion: %s\nArchitecture: amd64\nMaintainer: Dikdik\nDepends: libegl1, libgl1, libxcb-cursor0, libxkbcommon0, libxkbcommon-x11-0, libxcb-icccm4, libxcb-keysyms1, libxcb-shape0, libxcb-xkb1, libpulse0, libnss3, libnspr4, libatk1.0-0t64, libatk-bridge2.0-0t64, libatspi2.0-0t64, libcups2t64, libdrm2, libxcomposite1, libxdamage1, libxfixes3, libxrandr2, libgbm1, libasound2t64, libpango-1.0-0, libcairo2, dbus-user-session, apparmor, zenity\nDescription: Dikdik desktop coding workspace\n' "$DIKDIK_VERSION" > build/deb/DEBIAN/control
           cp dikdik/web/icon.png build/deb/usr/share/icons/hicolor/512x512/apps/dikdik.png
           printf '[Desktop Entry]\nType=Application\nName=Dikdik\nExec=/opt/dikdik/Dikdik\nIcon=dikdik\nTerminal=false\nCategories=Development;\n' > build/deb/usr/share/applications/dikdik.desktop
           dpkg-deb --build --root-owner-group build/deb "dist/installers/Dikdik-${DIKDIK_VERSION}-Linux-amd64.deb"

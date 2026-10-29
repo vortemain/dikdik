@@ -35,6 +35,11 @@ SAFE_GIT = ["-c", "core.hooksPath=" + os.devnull, "-c", "core.fsmonitor=false", 
 def program_root() -> Path | None:
     """The folder that holds this Dikdik installation: a source checkout or an
     installed package's parent (site-packages). That code is never a project."""
+    if getattr(sys, "frozen", False):
+        executable = Path(sys.executable).resolve()
+        if sys.platform == "darwin" and executable.parent.name == "MacOS":
+            return executable.parents[2]  # The whole .app, not only Contents/Frameworks.
+        return executable.parent  # Include the launcher above PyInstaller's _internal.
     file = globals().get("__file__", "")
     if not file:
         return None
