@@ -59,7 +59,7 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual((self.engine.data / 'plans' / plan['task_id'] / 'PLAN.md').read_bytes(), PLAN.encode())
         self.assertEqual((self.root / 'app.py').read_bytes(), b'x = 1\n')
         self.assertFalse((self.root / 'PLAN.md').exists())
-        self.assertEqual(set(model.tools[0]), {'list_files', 'read_file', 'search_text', 'write_plan', 'task_tracker'})
+        self.assertEqual(set(model.tools[0]), {'list_files', 'read_file', 'search_text', 'read_skill', 'write_plan', 'task_tracker'})
         self.assertFalse(data['result']['tests_verified'])
         self.assertEqual(self.engine.store.get(plan['task_id'])['state'], 'draft')
 

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from .connections import SCHEMA as CONNECTION_SCHEMA, secret_ref as connection_ref
+from .model_catalog import NVIDIA_DEFAULT_MODEL, PROVIDERS as CATALOG_PROVIDERS
 from .profiles import LOOPBACK_HOSTS, migrate as migrate_profiles
 from .secrets_store import SecretsError
 
@@ -57,8 +58,12 @@ def from_environment() -> ModelConfig:
     endpoint = os.environ.get("DIKDIK_MODEL_URL", "")
     model = os.environ.get("DIKDIK_MODEL", "")
     key = os.environ.get("DIKDIK_API_KEY", "")
+    nvidia_key = os.environ.get("NVIDIA_API_KEY") or os.environ.get("NVIDIA_NIM_API_KEY")
+    if not any((endpoint, model, key)) and nvidia_key:
+        return ModelConfig("https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_DEFAULT_MODEL, nvidia_key, "bearer", PROFILE_TIMEOUT,
+                           {"source": "environment", "model": NVIDIA_DEFAULT_MODEL, "host": "integrate.api.nvidia.com", "provider_name": "NVIDIA"})
     if not (endpoint and model and key):
-        raise ValueError("No model is set up. Add a model profile in Settings → Models, or set DIKDIK_MODEL_URL, DIKDIK_MODEL and DIKDIK_API_KEY on the server")
+        raise ValueError("No model is set up. Connect NVIDIA or another provider in Settings → Models, set NVIDIA_API_KEY, or set DIKDIK_MODEL_URL, DIKDIK_MODEL and DIKDIK_API_KEY on the server")
     if urlsplit(endpoint).scheme != "https":
         raise ValueError("DIKDIK_MODEL_URL must use HTTPS")
     host = urlsplit(endpoint).hostname or ""
@@ -100,9 +105,11 @@ class ModelResolver:
 
     @staticmethod
     def _public(profile: dict, base: str) -> dict:
+        normalized = base.rstrip("/").removesuffix("/chat/completions")
+        provider_name = next((entry["name"] for entry in CATALOG_PROVIDERS.values() if entry["base"] and entry["base"] == normalized), None)
         return {"source": "profile", "profile": profile["name"], "profile_id": profile["id"], "provider": profile["provider"],
                 **({"connection": profile["connection_name"]} if profile.get("connection_name") else {}),
-                "provider_name": PROVIDER_NAMES.get(profile["provider"], profile["provider"]),
+                "provider_name": provider_name or profile.get("connection_name") or PROVIDER_NAMES.get(profile["provider"], profile["provider"]),
                 "model": profile["model"], "host": urlsplit(base).hostname or ""}
 
     @staticmethod

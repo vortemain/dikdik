@@ -158,7 +158,9 @@ class ControlTests(unittest.TestCase):
         with patch("dikdik.engine.CompatibleAgentModel", side_effect=[first, second]):
             task = self.engine.submit({"objective": "Fix add", **AGENT, "agent_profile": profile["id"]})
             data = self.idle(task)
-            self.assertEqual((data["state"], data["result"]["error"]), ("failed", "Model or token budget exhausted"))
+            self.assertEqual(data["state"], "paused")
+            self.assertIn("model-call limit", data["result"]["pause_reason"])
+            self.assertNotIn("error", data["result"])
             self.engine.resume(task, {**AGENT})
             self.assertEqual(self.idle(task)["state"], "completed")
 
@@ -173,9 +175,10 @@ class ControlTests(unittest.TestCase):
             self.engine.resume(task, AGENT)
 
     def test_stuck_agent_is_stopped(self):
-        replies = [call(i, "read_file", path="calc.py") for i in range(5)]
+        replies = [call(i, "read_file", path="calc.py") for i in range(8)]
         result = run_agent({"calc.py": "x = 1\n"}, "Look", Script(replies), None, lambda k, d: None, threading.Event())
-        self.assertEqual((result.state, result.error), ("failed", "Agent is stuck repeating the same action"))
+        self.assertEqual(result.state, "paused")
+        self.assertIn("no progress after recovery", result.error)
 
     def test_stuck_rules(self):
         from dikdik.agent import stuck_loop
@@ -374,11 +377,14 @@ class ControlTests(unittest.TestCase):
         self.assertEqual([a["name"] for a in load_subagents(self.root, self.data / "agents")], ["explorer", "tester"])
         parent = Script([call(1, "delegate", agent="explorer", task="Where is add?"), ModelResponse("It is in calc.py.", [])])
         child = Script([call(2, "read_file", path="calc.py"), ModelResponse("add is defined in calc.py line 1.", [])])
+        for response in child.replies:
+            response.usage_tokens = 20000
         with patch("dikdik.engine.CompatibleAgentModel", side_effect=[parent, child]):
             data = self.idle(self.engine.submit({"objective": "Find add", **AGENT}))
         self.assertIn("delegate", parent.seen[0][1])
-        self.assertEqual(child.seen[0][1], ["list_files", "read_file", "search_text"])  # read-only helper
+        self.assertEqual(child.seen[0][1], ["list_files", "read_file", "search_text", "read_skill"])  # read-only helper
         ends = [e for e in self.kinds(data, "subagent") if e["phase"] == "end"]
+        self.assertEqual(ends[0]['state'], 'completed')
         self.assertEqual(ends[0]["findings"], "add is defined in calc.py line 1.")
         self.assertIn("explorer", parent.seen[0][0][0]["content"])
 

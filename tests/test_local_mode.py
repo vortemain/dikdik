@@ -84,6 +84,23 @@ class LocalModeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already undone"):
             self.engine.undo(task)
 
+    def test_resume_can_finish_previously_verified_local_edits_without_changing_them_again(self):
+        profile = self.engine.agents.create({'name': 'Two calls', 'max_model_calls': 2})
+        first = Script([call(1, 'edit_file', **FIX), call(2, 'run_tests')])
+        second = Script([call(3, 'finish')])
+        with patch('dikdik.engine.CompatibleAgentModel', side_effect=[first, second]):
+            task = self.engine.submit({'objective': 'Fix add', **LOCAL, 'agent_profile': profile['id']})
+            paused = self.idle(task)
+            self.assertEqual(paused['state'], 'paused', paused['result'])
+            self.assertIn('a + b', self.calc())
+            self.assertNotIn('error', paused['result'])
+            self.engine.resume(task, LOCAL)
+            done = self.idle(task)
+        self.assertEqual(done['state'], 'completed', done['result'])
+        self.assertTrue(done['result']['tests_verified'])
+        self.assertIn('a + b', self.calc())
+        self.assertEqual(len(second.replies), 0)
+
     def test_commands_run_in_the_project_folder(self):
         command = f'"{PY}" -c "open(\'made.py\', \'w\').write(\'made = True\\n\'); print(\'ran here\')"'
         task, state = self.run_task(Script([call(1, "run_command", command=command), ModelResponse("Done.", [])]))
@@ -93,6 +110,14 @@ class LocalModeTests(unittest.TestCase):
         self.assertEqual(terminal[-1]["exit_code"], 0)
         self.engine.undo(task)
         self.assertFalse((self.root / "made.py").exists())  # a file the turn created goes away again
+
+    def test_agent_does_not_launch_a_whole_computer_filename_search(self):
+        with patch('dikdik.local_exec.run') as execute:
+            _, state = self.run_task(Script([call(1, 'run_command', command='find / -name "WebsiteLinks.tsx" 2>/dev/null'),
+                                             ModelResponse('I should look in the selected project instead.', [])]))
+        execute.assert_not_called()
+        errors = [e['data']['observation'] for e in state['events'] if e['kind'] == 'agent_tool' and e['data'].get('phase') == 'end']
+        self.assertTrue(any('list_files' in item.get('error', '') for item in errors))
 
     def test_a_file_changed_by_someone_else_is_not_overwritten(self):
         def meanwhile(n, messages):
@@ -138,6 +163,74 @@ class LocalModeTests(unittest.TestCase):
         for request in ({**LOCAL, "approve_execution": False}, {**LOCAL, "mode": "model"}):
             with self.assertRaises(ValueError):
                 self.engine.submit({"objective": "x", **request})
+
+    def test_large_svg_model_edit_undo_and_full_diff_are_not_limited_by_initial_cache(self):
+        import zipfile
+        import io
+        (self.root / 'calc.py').write_bytes(b'def add(a, b):\n    return a + b\n')
+        path = 'client/public/Cover.svg'
+        target = self.root / path
+        target.parent.mkdir(parents=True)
+        original = '<svg>' + 'x' * 600000 + 'fill="red"</svg>'
+        target.write_bytes(original.encode())
+        script = Script([
+            call(1, 'search_text', query='fill="red"', path='client/public'),
+            call(2, 'read_file', path=path, start_column=600006, max_chars=10),
+            call(3, 'edit_file', path=path, before='fill="red"', after='fill="blue"'),
+            call(4, 'run_tests'), call(5, 'finish'),
+        ])
+        task, state = self.run_task(script)
+        self.assertEqual(state['state'], 'completed', state['result'])
+        self.assertEqual(state['result']['changed_files'], [path])
+        self.assertEqual(target.read_bytes().decode(), original.replace('red', 'blue'))
+        self.assertTrue(state['result']['diff_truncated'])
+        self.assertLess(len(state['result']['diff']), 1000000)
+        patch = self.engine.full_diff(task)
+        self.assertGreater(len(patch), 1000000)
+        self.assertIn(b'fill="red"', patch)
+        self.assertIn(b'fill="blue"', patch)
+        with zipfile.ZipFile(io.BytesIO(self.engine.archive(task))) as bundle:
+            self.assertEqual(bundle.read('changes.patch'), patch)
+            self.assertEqual(bundle.read('candidate/' + path).decode(), target.read_bytes().decode())
+        self.assertEqual(self.engine.undo(task), {'restored': [path], 'conflicts': []})
+        self.assertEqual(target.read_bytes().decode(), original)
+
+    def test_large_file_external_change_is_not_overwritten(self):
+        path = 'Cover.svg'
+        original = '<svg>' + 'x' * 300000 + 'fill="red"</svg>'
+        (self.root / path).write_bytes(original.encode())
+        def outside_change(step, messages):
+            if step == 2:
+                (self.root / path).write_bytes((original + 'outside').encode())
+        script = Script([call(1, 'read_file', path=path, start_column=300006),
+                         call(2, 'edit_file', path=path, before='red', after='blue'),
+                         ModelResponse('File changed outside; please review.', [])], hook=outside_change)
+        task, state = self.run_task(script)
+        self.assertFalse(state['result']['source_modified'])
+        self.assertEqual((self.root / path).read_bytes().decode(), original + 'outside')
+
+    def test_large_file_edits_resume_with_their_baseline_and_keep_undo(self):
+        (self.root / 'calc.py').write_bytes(b'def add(a, b):\n    return a + b\n')
+        path = 'Cover.svg'
+        original = '<svg>' + 'x' * 300000 + 'fill="red"</svg>'
+        (self.root / path).write_bytes(original.encode())
+        def pause(step, messages):
+            if step == 2:
+                self.engine.pause(next(iter(self.engine.active)))
+        task, state = self.run_task(Script([call(1, 'edit_file', path=path, before='fill="red"', after='fill="blue"'),
+                                            ModelResponse('Pausing here.', [])], hook=pause))
+        self.assertEqual(state['state'], 'paused', state['result'])
+        self.assertEqual((self.root / path).read_bytes().decode(), original.replace('red', 'blue'))
+        continuation = Script([call(10, 'read_file', path=path, start_column=300006),
+                               call(11, 'edit_file', path=path, before='fill="blue"', after='fill="green"'),
+                               call(12, 'run_tests'), call(13, 'finish')])
+        with patch('dikdik.engine.CompatibleAgentModel', return_value=continuation):
+            self.engine.resume(task, LOCAL)
+            state = self.idle(task)
+        self.assertEqual(state['state'], 'completed', state['result'])
+        self.assertEqual((self.root / path).read_bytes().decode(), original.replace('red', 'green'))
+        self.assertEqual(self.engine.undo(task), {'restored': [path], 'conflicts': []})
+        self.assertEqual((self.root / path).read_bytes().decode(), original.replace('red', 'blue'))
 
 
 if __name__ == "__main__":

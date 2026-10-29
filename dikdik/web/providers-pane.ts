@@ -14,6 +14,7 @@ export interface CatalogProvider {
   connection: string | null; connection_name: string | null; key_set: boolean; no_key?: boolean; custom?: boolean;
   public_models?: boolean;
   models_unavailable?: string;
+  default_model?: string; free_notice?: string;
 }
 export interface LiveModel { id: string; name: string; context: number | null; prompt_price: string | null; completion_price: string | null; chat_supported?: boolean | null }
 
@@ -43,13 +44,14 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
 
   async function load(): Promise<void> {
     const [catalog, model] = await Promise.all([
-      request<{ order: string[]; providers: Record<string, CatalogProvider> }>("/api/model-catalog", "GET"),
+      request<{ default_provider: string; order: string[]; providers: Record<string, CatalogProvider> }>("/api/model-catalog", "GET"),
       request<{ configured: boolean; model?: string; provider_name?: string; profile?: string }>("/api/model", "GET"),
     ]);
     providers = catalog.order.map(id => catalog.providers[id]!).filter(Boolean);
     generation++; live.clear(); loading.clear(); errors.clear();
     if (root.dataset.selectedProvider) { selected = root.dataset.selectedProvider; delete root.dataset.selectedProvider; }
     current = model.configured ? `${model.model ?? ""}${model.profile ? ` · ${model.profile}` : ""}` : "";
+    if (!selected && !current) selected = catalog.default_provider;
     const wanted = deps.takeProvider?.();
     if (wanted && providers.some(p => p.id === wanted)) { selected = wanted; query = ""; }
     render();
@@ -90,7 +92,7 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
       if (provider.connection || provider.no_key) void use(provider, id); else root.querySelector<HTMLInputElement>(".provider-connect input")?.focus();
     });
     useButton.disabled = !supported;
-    row.append(text, useButton);
+    row.append(providerIcon(provider.id), text, useButton);
     return row;
   }
 
@@ -99,6 +101,13 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
     const head = make("div", "provider-detail-head");
     head.append(avatar(provider), make("strong", "", provider.name), make("span", provider.connection ? "state ok" : "state", provider.connection ? "Connected" : "Not connected"));
     box.append(head, make("p", "muted", provider.blurb + (provider.base ? ` · ${provider.base}` : "")));
+    if (provider.free_notice) box.append(make("p", "provider-free-note", provider.free_notice));
+    if (provider.default_model) {
+      const recommended = make("div", "provider-recommended");
+      recommended.append(providerIcon(provider.id), make("div", "", "Default · Nemotron 3.5 Lightning"), make("code", "", provider.default_model));
+      if (provider.connection) recommended.append(button("Use as default", "primary small", () => { void use(provider, provider.default_model!); }));
+      box.append(recommended);
+    }
     // Connect, or replace the key.
     const form = make("form", "provider-connect");
     const key = make("input") as HTMLInputElement;
@@ -106,7 +115,7 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
     key.setAttribute("aria-label", `${provider.name} API key`);
     const endpoint = make("input") as HTMLInputElement;
     endpoint.placeholder = "https://my-resource.openai.azure.com/openai/v1"; endpoint.hidden = provider.kind !== "azure" || !!provider.connection;
-    const submit = make("button", "primary small", provider.connection ? "Replace key" : "Connect") as HTMLButtonElement; submit.type = "submit";
+    const submit = make("button", "primary small", provider.connection ? "Replace key" : provider.default_model ? "Connect & use default" : "Connect") as HTMLButtonElement; submit.type = "submit";
     form.append(key, endpoint, submit);
     if (provider.key_help) { const link = make("a", "", provider.no_key ? "Download" : "Get a key") as HTMLAnchorElement; link.href = provider.key_help; link.target = "_blank"; link.rel = "noopener noreferrer"; form.append(link); }
     form.addEventListener("submit", async event => {
@@ -117,8 +126,9 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
       try {
         await request(`/api/model-catalog/${encodeURIComponent(provider.id)}/connect`, "POST", { api_key: key.value.trim() || undefined, endpoint: endpoint.value.trim() || undefined });
         key.value = "";
+        if (!provider.connection && provider.default_model) await request(`/api/model-catalog/${encodeURIComponent(provider.id)}/use`, "POST", { model: provider.default_model, default: true });
         live.delete(provider.id); errors.delete(provider.id);
-        message(provider.connection ? `${provider.name} key replaced.` : `${provider.name} connected. Pick a model below.`);
+        message(provider.connection ? `${provider.name} key replaced.` : provider.default_model ? "NVIDIA connected. Nemotron 3.5 Lightning is now your default." : `${provider.name} connected. Pick a model below.`);
         deps.changed?.(); await load();
       } catch (error) { fail(error); submit.disabled = false; }
     });

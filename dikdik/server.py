@@ -25,12 +25,13 @@ from .engine import ApplyConflict, Engine, TERMINAL
 from . import __version__ as DIKDIK_VERSION
 from .control import IMAGE_TYPES, workspace_image, workspace_images
 from . import gitops
-from .repository import INDEXER, approved_root, inventory, metadata
+from .repository import INDEXER, approved_root, inventory, metadata, workspace_metadata
 from .server_routes import ROUTE_PREFIXES, build_routes
 from .gateway import Gateway
 from .openapi import document as openapi_document
 from .server_state import ServerState
 from .api_keys import ApiKeyStore
+from .html_preview import HTMLPreviews, PREVIEW_CSP
 from .config import check_config_or_exit
 from .projects import Projects, check_location, pick_folder, list_folders
 from . import remote as remote_mode
@@ -47,6 +48,7 @@ STATIC = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
     "/model-settings.css": ("model-settings.css", "text/css; charset=utf-8"),
+    "/dialogs.css": ("dialogs.css", "text/css; charset=utf-8"),
     "/icon.svg": ("icon.svg", "image/svg+xml"),
     **{f"/fonts/{name}.woff2": (f"fonts/{name}.woff2", "font/woff2") for name in FONTS},
     **{f"/assets/{path.relative_to(WEB / 'assets').as_posix()}":
@@ -163,6 +165,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
     activity = {"last": time.monotonic()}
     server_state = ServerState(ready=not os.environ.get("DIKDIK_DORMANT", ""))
     api_keys = ApiKeyStore(Path(engine.data) if hasattr(engine, "data") else Path("."))
+    previews = HTMLPreviews()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -489,6 +492,12 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(*planning)
                     return
                 parts = path.split("/")
+                if len(parts) == 4 and parts[:3] == ["", "api", "previews"]:
+                    try:
+                        self.reply(200, previews.get(parts[3], str(engine.root)), "text/html; charset=utf-8", csp=PREVIEW_CSP)
+                    except KeyError:
+                        self.reply(404, {"error": "Preview expired or belongs to another project; open it again from the response"})
+                    return
                 if len(parts) == 4 and parts[:3] == ["", "api", "attachments"]:
                     meta, raw = engine.attachments.get(parts[3])
                     self.reply(200, raw, meta["type"] if meta["type"] in IMAGE_TYPES else "application/octet-stream")
@@ -596,7 +605,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(*bash)
                 elif path == "/api/project":
                     self.reply(200, {"name": engine.root.name, "path": str(engine.root), "trusted": engine.trusted(), "indexer": INDEXER,
-                                     **metadata(inventory(engine.root)), "images": workspace_images(engine.root)})
+                                     **workspace_metadata(engine.root), "images": workspace_images(engine.root)})
                 elif path == "/api/files/image":
                     kind, raw = workspace_image(engine.root, parse_qs(urlsplit(self.path).query).get("path", [""])[0])
                     self.reply(200, raw, kind)
@@ -688,6 +697,8 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(200, engine.agent_info())
                 elif path.startswith("/api/tasks/") and path.endswith("/download") and path.count("/") == 4:
                     self.reply(200, engine.archive(path.split("/")[3]), "application/zip")
+                elif path.startswith("/api/tasks/") and path.endswith("/diff") and path.count("/") == 4:
+                    self.reply(200, engine.full_diff(path.split("/")[3]), "text/plain; charset=utf-8")
                 elif path.startswith("/api/tasks/") and path.endswith("/export") and path.count("/") == 4:
                     self.reply(200, engine.store.get(path.split("/")[3]))
                 elif path.startswith("/api/tasks/"):
@@ -718,6 +729,11 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if length > limit:
                     raise ValueError(f"Request must contain at most {limit} bytes")
                 body = json.loads(self.rfile.read(length)) if length else {}
+                if path == '/api/previews':
+                    if not isinstance(body, dict) or set(body) != {'html'}:
+                        raise ValueError('Preview expects an HTML string')
+                    self.reply(201, previews.create(body['html'], str(engine.root)))
+                    return
                 answer = gateway.route(self.command, path, body, dict(self.headers))
                 if answer is not None:
                     self.reply(*answer)
@@ -1085,6 +1101,7 @@ def main():
     probe.close()
     data = Path(args.data).resolve()
     chosen = args.workspace or args.workspace_arg
+    note = ""
     try:
         root = check_location(Path(chosen or os.getcwd()), data, remote.projects_root if remote else None)
     except (OSError, ValueError) as exc:
@@ -1092,7 +1109,8 @@ def main():
             parser.error(f"Workspace {str(exc)}")
         root = last_project(data)  # started from a folder that cannot be a project, such as the home folder
         if root is None:
-            parser.error("Start Dikdik inside a project folder, or name one: dikdik C:\\path\\to\\project")
+            parser.error(f"{str(exc).rstrip('.')}. Start Dikdik inside a project folder, or name one: dikdik C:\\path\\to\\project")
+        note = f"Note: {str(exc).rstrip('.')}. Opened your last project instead."
     try:
         engine = Engine(root, data)
     except ValueError as exc:
@@ -1108,7 +1126,9 @@ def main():
     url = remote.public_url if remote else f"http://127.0.0.1:{server.server_port}"
     # The token rides in the URL fragment, which browsers never send to a server.
     link = f"{url}/#token={token}"
-    print(f"Dikdik is running at {url}\nProject: {root}\nSign-in link (needed once per browser): {link}", flush=True)
+    print(f"Dikdik is running at {url}\nProject: {root}"
+          + (f"\n{note}" if note else "")
+          + f"\nSign-in link (needed once per browser): {link}", flush=True)
     if not args.no_browser and not remote:
         webbrowser.open(link)
     try:

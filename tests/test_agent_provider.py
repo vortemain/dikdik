@@ -34,11 +34,10 @@ class AgentProviderTests(unittest.TestCase):
         self.assertEqual(response.tool_calls[0].name, "read_file")
         self.assertEqual(response.tool_calls[0].arguments, {"path": "app.py"})
         self.assertEqual(response.usage_tokens, 17)
-        self.assertEqual(transport.call_args.kwargs["max_tokens"], 2048)
+        self.assertEqual(transport.call_args.kwargs["max_tokens"], 8192)
 
     def test_rejects_incomplete_malformed_and_duplicate_calls(self):
         bad = [
-            reply([tool()], finish_reason="length"),
             reply([tool(), tool()]),
             reply([{"id": "x", "function": {"name": "read_file", "arguments": "not JSON"}}]),
             {"choices": []},

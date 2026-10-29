@@ -44,7 +44,10 @@ class EngineTests(unittest.TestCase):
         self.assertIn("+    return a + b", result["result"]["diff"])
         self.assertEqual((self.root / "calculator.py").read_bytes(), original)
         self.assertIn("a + b", (self.base / "data" / "artifacts" / task / "calculator.py").read_text())
-        self.assertEqual([event["kind"] for event in result["events"]], ["queued", "running", "plan", "inspected", "proposal", "syntax", "completed"])
+        kinds = [event["kind"] for event in result["events"]]
+        self.assertEqual(kinds, ["queued", "running", "hook_event", "hook_event", "inspected", "skills", "proposal", "syntax", "hook_event", "completed"])
+        lifecycle = [event["data"]["event"] for event in result["events"] if event["kind"] == "hook_event"]
+        self.assertEqual(lifecycle, ["task.started", "context.building", "task.completed"])
         reopened = Store(self.base / "data" / "state.sqlite3")
         self.assertEqual(reopened.get(task), result)
 

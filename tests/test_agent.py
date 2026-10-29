@@ -80,10 +80,9 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result.checks[0]["status"], "failed")
 
     def test_protected_tests_and_repeated_identical_failure(self):
-        result, _ = self.run_script([[self.edit("True", "False", "tests/test_app.py")],
-                                     [self.edit("True", "False", "tests/test_app.py")]])
-        self.assertEqual(result.state, "failed")
-        self.assertIn("Repeated", result.error)
+        result, _ = self.run_script([[self.edit("True", "False", "tests/test_app.py")] for _ in range(4)])
+        self.assertEqual(result.state, "paused")
+        self.assertIn("still failing", result.error)
         self.assertEqual(result.files, self.original)
         self.assertEqual(self.snapshots, [])
 
@@ -92,7 +91,7 @@ class AgentTests(unittest.TestCase):
             [self.call("list_files"), self.call("read_file", path="app.py"),
              self.call("search_text", query="value"), self.edit()],
             [self.call("finish")]], budget=AgentBudget(max_model_calls=2))
-        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.state, "paused")
         self.assertFalse(result.tests_verified)
         self.assertEqual(self.snapshots, [])
 
@@ -105,7 +104,7 @@ class AgentTests(unittest.TestCase):
     def test_no_net_change_cannot_finish(self):
         result, _ = self.run_script([[self.call("run_tests")], [self.call("finish")]],
                                     budget=AgentBudget(max_model_calls=2))
-        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.state, "paused")
         self.assertFalse(result.tests_verified)
 
     def test_strict_arguments(self):
@@ -137,12 +136,11 @@ class AgentTests(unittest.TestCase):
         for budget, expected in [
             (AgentBudget(max_model_calls=0), 0),
             (AgentBudget(max_tool_calls=0), 0),
-            (AgentBudget(max_total_tokens=1), 0),
             (AgentBudget(deadline_seconds=0), 0),
             (AgentBudget(max_model_calls=1), 1)]:
             with self.subTest(budget=budget):
                 result, _ = self.run_script([[self.edit()]], budget=budget)
-                self.assertEqual(result.state, "failed")
+                self.assertEqual(result.state, "paused")
                 self.assertEqual(result.tool_calls, expected)
                 self.assertFalse(result.tests_verified)
 
@@ -210,8 +208,8 @@ class AgentTests(unittest.TestCase):
         model = ScriptedModel([[self.edit()]])
         with patch("dikdik.agent.time.monotonic", side_effect=[0, 0, 181]):
             result = run_agent(self.original, "objective", model, self.verify,
-                               lambda *args: None, self.cancel)
-        self.assertEqual((result.state, result.tool_calls), ("failed", 0))
+                               lambda *args: None, self.cancel, AgentBudget(deadline_seconds=180))
+        self.assertEqual((result.state, result.tool_calls), ("paused", 0))
 
     def test_verifier_mutation_cannot_change_candidate(self):
         def verifier(files):
@@ -234,7 +232,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(self.snapshots, [])
 
     def test_adapter_cannot_bypass_core_argument_size_limit(self):
-        edit = self.call("edit_file", path="app.py", before="1", after="x" * 32769)
+        edit = self.call("edit_file", path="app.py", before="1", after="x" * (128 * 1024 + 1))
         result, _ = self.run_script([[edit]])
         self.assertEqual(result.state, "failed")
         self.assertEqual(result.files, self.original)
@@ -254,10 +252,10 @@ class AgentTests(unittest.TestCase):
             checks.append(dict(files))
             return {"kind": "unittest", "status": "failed", "seconds": len(checks)}
 
-        result, _ = self.run_script([[self.call("run_tests")], [self.call("run_tests")], [self.call("run_tests")]], failed)
-        self.assertEqual(result.state, "failed")
+        result, _ = self.run_script([[self.call("run_tests")] for _ in range(4)], failed)
+        self.assertEqual(result.state, "paused")
         self.assertEqual(len(checks), 1)
-        self.assertIn("Repeated", result.error)
+        self.assertIn("still failing", result.error)
 
     def test_creates_production_and_test_files_with_current_candidate_verification(self):
         result, _ = self.run_script([

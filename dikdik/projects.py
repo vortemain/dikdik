@@ -32,6 +32,31 @@ SAFE_GIT = ["-c", "core.hooksPath=" + os.devnull, "-c", "core.fsmonitor=false", 
             "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "protocol.file.allow=always"]
 
 
+def program_root() -> Path | None:
+    """The folder that holds this Dikdik installation: a source checkout or an
+    installed package's parent (site-packages). That code is never a project."""
+    file = globals().get("__file__", "")
+    if not file:
+        return None
+    try:
+        return Path(file).resolve().parents[1]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def inside_program_folder(path: Path) -> bool:
+    """True for Dikdik's own program folder and anything inside it. Ancestors stay
+    allowed: a virtual-environment install must not make the user's project unopenable."""
+    root = program_root()
+    if root is None:
+        return False
+    try:
+        target = Path(path).resolve()
+    except (OSError, ValueError):
+        return False
+    return target == root or root in target.parents
+
+
 def check_location(root: Path, data: Path, limit: Path | None = None) -> Path:
     try:
         root = approved_root(str(root))
@@ -41,6 +66,8 @@ def check_location(root: Path, data: Path, limit: Path | None = None) -> Path:
         raise ValueError(f"On this server, projects live inside {limit}")
     if data == root or root in data.parents or data in root.parents:
         raise ValueError("Dikdik keeps its own data in this folder; choose a project folder that does not contain it")
+    if inside_program_folder(root):
+        raise ValueError("This folder is Dikdik's own program code; choose one of your project folders")
     return root
 
 
@@ -140,6 +167,8 @@ class Projects:
     def describe(self) -> dict:
         current = str(self.engine.root)
         recent = [entry for entry in self.engine.workspaces.list() if isinstance(entry, dict) and entry.get("path")]
+        # Dikdik's own program folder may sit in the registry from before this rule; never offer it.
+        recent = [entry for entry in recent if not inside_program_folder(Path(str(entry["path"])))]
         return {"current": {"path": current, "name": Path(current).name},
                 "recent": [{"path": e["path"], "name": e.get("name") or Path(e["path"]).name,
                             "exists": Path(e["path"]).is_dir(), "current": e["path"] == current} for e in recent]}
@@ -215,6 +244,8 @@ class Projects:
             raise ValueError(f"{base} is not a folder")
         if base == self.data or self.data in base.parents:
             raise ValueError("Choose a location outside Dikdik's data folder")
+        if inside_program_folder(base):
+            raise ValueError("Choose a location outside Dikdik's program folder")
         if self.limit is not None and base != self.limit and self.limit not in base.parents:
             raise ValueError(f"On this server, projects live inside {self.limit}")
         return base

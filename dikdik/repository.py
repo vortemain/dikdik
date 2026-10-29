@@ -1,6 +1,7 @@
 """Bounded text snapshots. Repository content is data, never instructions."""
 
 import ast
+import codecs
 import fnmatch
 import hashlib
 import os
@@ -9,6 +10,8 @@ from pathlib import Path, PurePosixPath
 
 
 EXCLUDED = {"node_modules", "__pycache__", "dist", "build", "vendor", "venv"}
+MAX_TEXT_FILE_BYTES = 256_000
+MAX_PREVIEW_BYTES = 4_000_000
 TEXT = {"." + ext for ext in """
 py pyi pyw ts tsx mts cts js jsx mjs cjs json jsonc jsonl toml md markdown mdx txt rst adoc asciidoc
 yaml yml css scss sass less styl html htm xhtml xml xsl xslt xsd svg vue svelte astro rs lock
@@ -126,9 +129,9 @@ def can_create_file(root: Path, value: str) -> bool:
     return False
 
 
-def _snapshot_limits(files: dict[str, str]) -> None:
-    if len(files) > 1000:
-        raise ValueError("Snapshot exceeds 1000 text files")
+def _snapshot_limits(files: dict[str, str], *, max_file_bytes=256000, max_total_bytes=8_000_000, max_files=1000) -> None:
+    if len(files) > max_files:
+        raise ValueError(f"Snapshot exceeds {max_files} text files")
     total = 0
     for text in files.values():
         if not isinstance(text, str) or "\x00" in text:
@@ -137,14 +140,14 @@ def _snapshot_limits(files: dict[str, str]) -> None:
             size = len(text.encode("utf-8"))
         except UnicodeError:
             raise ValueError("File content must be valid UTF-8 text") from None
-        if size > 256000:
-            raise ValueError("File exceeds 256KB")
+        if size > max_file_bytes:
+            raise ValueError(f"File exceeds {max_file_bytes // 1000}KB buffered-edit budget")
         total += size
-    if total > 8_000_000:
-        raise ValueError("Snapshot exceeds 8MB")
+    if total > max_total_bytes:
+        raise ValueError(f"Snapshot exceeds {max_total_bytes // 1_000_000}MB buffered-edit budget")
 
 
-def create_file(files: dict[str, str], path: str, content: str) -> dict[str, str]:
+def create_file(files: dict[str, str], path: str, content: str, *, limits: dict | None = None) -> dict[str, str]:
     _new_path(path)
     folded = path.casefold()
     if any(folded == existing.casefold() or folded.startswith(existing.casefold() + "/") or existing.casefold().startswith(folded + "/") for existing in files):
@@ -158,12 +161,12 @@ def create_file(files: dict[str, str], path: str, content: str) -> dict[str, str
             if current.casefold() == previous.casefold() and current != previous:
                 raise ValueError("New file uses an ambiguous directory-case alias")
     result = {**files, path: content}
-    _snapshot_limits(result)
+    _snapshot_limits(result, **(limits or {}))
     return result
 
 
 def inventory(root: Path) -> dict[str, str]:
-    """Conservative ignores: negations never re-include excluded content."""
+    """Bounded initial cache; deferred files remain available to workspace tools. Ignores are conservative."""
     if _rust_index is not None:
         try:
             return _inventory_rust(root)
@@ -190,7 +193,7 @@ def _inventory_rust(root: Path) -> dict[str, str]:
     return dict(sorted(files.items()))
 
 
-def _inventory_python(root: Path) -> dict[str, str]:
+def _inventory_python(root: Path, large_files: list[dict] | None = None) -> dict[str, str]:
     files: dict[str, str] = {}
     total = 0
     visited = 0
@@ -220,21 +223,27 @@ def _inventory_python(root: Path) -> dict[str, str]:
                     walk(path, rules, depth + 1)
                 elif entry.is_file(follow_symlinks=False) and is_text_file(path):
                     size = entry.stat(follow_symlinks=False).st_size
-                    if size > 256000:
-                        raise ValueError(f"Text file exceeds 256KB: {rel}")
+                    if size > MAX_TEXT_FILE_BYTES:
+                        if large_files is not None:
+                            large_files.append({"path": rel, "bytes": size})
+                        continue
                     with path.open("rb") as source:
-                        raw = source.read(256001)
-                    if len(raw) > 256000:
-                        raise ValueError(f"Text file grew beyond size limit: {rel}")
-                    total += len(raw)
-                    if total > 8_000_000 or len(files) >= 1000:
-                        raise ValueError("Snapshot exceeds 8MB or 1000 text files")
+                        raw = source.read(MAX_TEXT_FILE_BYTES + 1)
+                    if len(raw) > MAX_TEXT_FILE_BYTES:
+                        if large_files is not None:
+                            large_files.append({"path": rel, "bytes": path.stat().st_size})
+                        continue
+                    if total + len(raw) > 8_000_000 or len(files) >= 1000:
+                        if large_files is not None:
+                            large_files.append({"path": rel, "bytes": len(raw)})
+                        continue
                     try:
                         text = raw.decode("utf-8")
                     except UnicodeDecodeError:
                         continue
                     if "\x00" not in text:
                         files[rel] = text
+                        total += len(raw)
 
     walk(root, [])
     return dict(sorted(files.items()))
@@ -245,8 +254,46 @@ def metadata(files: dict[str, str]) -> dict:
         "files": [{"path": p, "bytes": len(t.encode()), "sha256": hashlib.sha256(t.encode()).hexdigest()} for p, t in files.items()],
         "python_tests": [p for p in files if PurePosixPath(p).name.startswith("test") and p.endswith(".py")],
         "manifests": [p for p in files if PurePosixPath(p).name in {"pyproject.toml", "package.json", "Cargo.toml", "requirements.txt"}],
-        "limitations": "Bounded UTF-8 text snapshot; conservative gitignore subset; hidden, binary and credential-like paths excluded. No semantic index.",
+        "limitations": "Bounded initial UTF-8 cache; agent tools can discover, read and search additional workspace files on demand, including large files. Conservative gitignore subset; hidden, binary and credential-like paths excluded. No semantic index.",
     }
+
+
+def workspace_metadata(root: Path) -> dict:
+    """Explorer inventory includes large assets without loading them into model context."""
+    large_files: list[dict] = []
+    files = _inventory_python(root, large_files)
+    return {**metadata(files), "large_files": sorted(large_files, key=lambda entry: entry["path"])}
+
+
+def workspace_text(root: Path, path: str) -> dict:
+    """Read-only preview under the same ignore/secret/link policy as inventory."""
+    if not isinstance(path, str) or not path:
+        raise KeyError(path)
+    large_files: list[dict] = []
+    files = _inventory_python(root, large_files)
+    if path in files:
+        return {"path": path, "version": "workspace", "text": files[path], "indexed": True, "truncated": False}
+    if not any(entry["path"] == path for entry in large_files):
+        raise KeyError(path)
+    target = root / path
+    for part in (target, *target.parents):
+        if part == root:
+            break
+        if part.is_symlink() or part.is_junction():
+            raise KeyError(path)
+    if target.resolve().relative_to(root.resolve()).as_posix() != path:
+        raise KeyError(path)
+    with target.open("rb") as source:
+        size = os.fstat(source.fileno()).st_size
+        raw = source.read(MAX_PREVIEW_BYTES + 1)
+    truncated = len(raw) > MAX_PREVIEW_BYTES
+    try:
+        text = codecs.getincrementaldecoder("utf-8")().decode(raw[:MAX_PREVIEW_BYTES], final=not truncated)
+    except UnicodeDecodeError:
+        raise ValueError("This file is not UTF-8 text. Open it in VS Code to view it.") from None
+    if "\x00" in text:
+        raise ValueError("This file contains binary data. Open it in VS Code to view it.")
+    return {"path": path, "version": "workspace", "text": text, "bytes": size, "indexed": False, "truncated": truncated}
 
 
 def is_test_path(path: str) -> bool:
@@ -255,7 +302,7 @@ def is_test_path(path: str) -> bool:
     return any(p.lower() in {"tests", "test", "__tests__"} for p in parts) or filename.startswith("test") or filename == "conftest.py" or ".test." in filename or ".spec." in filename
 
 
-def apply_edits(files: dict[str, str], edits: list, *, protected_paths: set[str] | None = None) -> dict[str, str]:
+def apply_edits(files: dict[str, str], edits: list, *, protected_paths: set[str] | None = None, limits: dict | None = None) -> dict[str, str]:
     if not isinstance(edits, list) or not 1 <= len(edits) <= 20:
         raise ValueError("Provide 1–20 exact replacements")
     result = dict(files)
@@ -270,7 +317,7 @@ def apply_edits(files: dict[str, str], edits: list, *, protected_paths: set[str]
         if not before or before == after or result[path].count(before) != 1:
             raise ValueError(f"Replacement must match exactly once and change content: {path}")
         result[path] = result[path].replace(before, after, 1)
-        _snapshot_limits(result)
+        _snapshot_limits(result, **(limits or {}))
     return result
 
 

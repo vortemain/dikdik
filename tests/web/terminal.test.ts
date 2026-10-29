@@ -1,10 +1,34 @@
 import { describe, expect, test } from "bun:test";
-import { eventToMessages, terminalTranscript, type TaskEvent } from "../../dikdik/web/contracts";
+import { commandActivity, eventToMessages, terminalTranscript, type TaskEvent } from "../../dikdik/web/contracts";
 
 const event = (seq: number, kind: string, data: Record<string, unknown>): TaskEvent =>
   ({ seq, task_id: "task", time: seq, kind, data });
 
 describe("terminal transcript", () => {
+  test('silent commands explain elapsed time, timeout and Stop without claiming progress', () => {
+    const events = [event(1, 'terminal_command', { command_id: 'quiet', command: 'find . -name x', timeout: 60 })];
+    expect(commandActivity(events, 2)).toBe('Command running · 1s · Timeout 60s');
+    expect(commandActivity(events, 20)).toBe('Command running · 19s · No output for 19s · Timeout 60s · Use Stop to interrupt.');
+    events.push(event(19, 'terminal_output', { command_id: 'quiet', output: 'found a file', final: false }));
+    expect(commandActivity(events, 20)).not.toContain('No output');
+    events.push(event(21, 'terminal_output', { command_id: 'quiet', final: true, status: 'timed_out' }));
+    expect(commandActivity(events, 22)).toBeNull();
+  });
+
+  test('a stopped turn cannot leave an agent command marked running forever', () => {
+    const events = [event(1, 'terminal_command', { command_id: 'lost', command: 'slow command' }), event(3, 'paused', {})];
+    const view = terminalTranscript(events);
+    expect(view.commands[0]?.running).toBe(false);
+    expect(view.text).toContain('without a recorded command result');
+    expect(view.text).not.toContain('[running]');
+    expect(commandActivity(events, 50)).toBeNull();
+  });
+
+  test('manual terminal commands can outlive the conversation turn', () => {
+    const events = [event(1, 'terminal_command', { command_id: 'manual', command: 'watch files', kind: 'command' }), event(3, 'completed', {})];
+    expect(terminalTranscript(events).commands[0]?.running).toBe(true);
+    expect(commandActivity(events, 20)).toContain('Stop is available in Terminal.');
+  });
   test("ANSI colors and title escapes cannot hide output or become markup", () => {
     const view = terminalTranscript([
       event(1, "terminal_command", { command_id: "color", command: "echo colored" }),

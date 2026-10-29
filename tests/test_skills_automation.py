@@ -91,11 +91,11 @@ class SkillTests(unittest.TestCase, Harness):
         index = self.index()
         status, _ = index.set_enabled("gamma", False)
         self.assertEqual(status, 200)
-        rows = index.enumerate_skills()
+        rows = [r for r in index.enumerate_skills() if r["id"] == "gamma"]
         self.assertEqual([r["enabled"] for r in rows], [False])
         status, _ = routes("PUT", "/api/skills/gamma", {"enabled": True})
         self.assertEqual(status, 200)
-        self.assertEqual(index.enumerate_skills()[0]["enabled"], True)
+        self.assertTrue(index.find("gamma")["enabled"])
         # persistence survives a fresh store handle
         fresh = SkillIndex(self.store, self.data / "skills", self.root / ".dikdik" / "skills")
         self.assertTrue(fresh.find("gamma")["enabled"])
@@ -117,8 +117,9 @@ class SkillTests(unittest.TestCase, Harness):
         self.assertEqual(routes("PUT", "/api/skills/ghost", {"enabled": True})[0], 404)
         status, rows = routes("GET", "/api/skills", None)
         self.assertEqual(status, 200)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["id"], "omega")
+        omega = [r for r in rows if r["id"] == "omega"]
+        self.assertEqual(len(omega), 1)
+        self.assertFalse(omega[0]["enabled"])
 
 
 class AutomationTests(unittest.TestCase):

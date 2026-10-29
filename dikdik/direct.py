@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 
 
@@ -43,12 +44,33 @@ def _write(target: Path, text: str | None) -> None:
 class DirectWrites:
     """One turn's writes into the workspace, with the checkpoint that undoes them."""
 
-    def __init__(self, root: Path, original: dict[str, str], checkpoint: Path):
+    def __init__(self, root: Path, original: dict[str, str], checkpoint: Path, resume: bool = False):
         self.root = root.resolve()
         self.known = dict(original)          # what the agent believes each file holds on disk
         self.before: dict[str, str | None] = {}  # content before this turn first changed it
         self.checkpoint = checkpoint
         self.created = time.time()
+        self._resumed = resume
+        self._guarded = set()
+        if resume:
+            record = json.loads(checkpoint.read_text(encoding="utf-8"))
+            if record.get("undone"):
+                raise ValueError("This checkpoint was undone; send a new request instead of resuming it")
+            self.created = record["created"]
+            for path, change in record["files"].items():
+                self._target(path)  # validate every restored path before using it
+                self.before[path] = change["before"]
+                self.known[path] = change["after"]
+                self._guarded.add(path)
+
+    def _begin_new_writes(self):
+        if self._resumed:
+            # A verification-only resume keeps the previous Undo. If it makes
+            # further edits, Undo should restore the state at this resume boundary.
+            self.checkpoint = self.checkpoint.with_name(uuid.uuid4().hex + ".json")
+            self.before = {}
+            self.created = time.time()
+            self._resumed = False
 
     def _target(self, path: str) -> Path:
         target = (self.root / path).resolve()
@@ -62,13 +84,17 @@ class DirectWrites:
         conflicts = []
         for path, text in sorted(files.items()):
             if self.known.get(path) == text:
+                if path in self._guarded and _read(self._target(path)) != text:
+                    conflicts.append(path)
                 continue
             target = self._target(path)
             current = _read(target)
             if current != self.known.get(path):
                 conflicts.append(path)
                 continue
+            self._begin_new_writes()
             self.before.setdefault(path, current)
+            self._guarded.add(path)
             _write(target, text)
             self.known[path] = text
         self.save()
@@ -78,7 +104,9 @@ class DirectWrites:
         """A command ran in the folder: what it changed is part of this turn too."""
         for path, text in after.items():
             if self.known.get(path) != text:
+                self._begin_new_writes()
                 self.before.setdefault(path, self.known.get(path))
+                self._guarded.add(path)
                 self.known[path] = text
         self.save()
 

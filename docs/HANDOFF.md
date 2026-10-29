@@ -10,7 +10,8 @@ over mid-way. Newer than `docs/CODEX_HANDOFF.md` and `docs/NEXT_PHASES_PROMPT.md
   Phase 10–12 changes are committed locally as `feat: polish workspace UI, model discovery and folder selection`.
   Never push or open PRs unless the
   owner asks; merging into `main` locally only when the owner asks.
-- **Last updated:** 2026-10-28, phase 12 (working folder chooser and Grok product logo).
+- **Last updated:** 2026-10-28, phase 17 (long tasks without cumulative token cutoffs).
+  Phase 13–17 changes are in the working tree, uncommitted; phase 10–12 is `16336d4`.
 
 ## 1. What Dikdik is now (owner decisions, 2026-10-28)
 
@@ -68,7 +69,183 @@ health checks, first live model run (OpenRouter `z-ai/glm-5.2`, $0.0028).
 
 | 12 | Reliable in-app local folder chooser for Open/New/Clone; Open folder start card launches it directly; Grok product symbol replaces the xAI company mark throughout provider/model UI | Browser verified navigation, selection, cancel, invalid paths and actual disposable project creation. Project/remote tests: 17 passed, 1 skipped; web: 123 passed; typecheck/build passed. | This commit |
 
+| 13 | NVIDIA public catalog and default Lightning preset, official NVIDIA SVG, logos on banner/model suggestions, Dikdik logo on model controls; replaces every native JS prompt/confirm with themed async forms and confirmations | Implemented; 44 model/credential tests and 125 web tests, typecheck/build pass. Live public NVIDIA directory returned 85 including the preset; real authenticated inference needs the owner's key. | Working tree |
+
+| 14 | Large text assets no longer abort project indexing; explorer includes oversized files, bounded source preview with explicit context/truncation notices, exact file copying and bounded editor rendering | Browser opened a project containing a 312KB `client/public/Cover.svg`, then opened its source. 65 Python checks passed, 1 skipped; HTTP suite passed separately after a transient 3-second timeout. 126 web tests, typecheck/build passed. | Working tree |
+
+| 15 | Filesystem-backed Agent/Plan read/search/discovery beyond the initial cache; line+column paging for minified assets; targeted large-file edits with conflict checks, Undo/resume; full diff downloads and labelled shortened previews | 107 Python checks: 106 passed, 1 skipped. 126 web tests, typecheck/build passed. Scripted model edited a 600KB SVG after reading beyond byte 600,000; real local tests, Undo, resume, conflict refusal and complete patch retention verified. | Working tree |
+
+| 16 | Folder-aware file listing and actionable schema errors; bounded recovery from repeated failures; larger default run budget; automatic working-context trimming; saved-progress pauses and valid interrupted-batch resume | 144 Python tests passed (35 agent/recovery, 58 local/control/planning/provider/usage, 50 HTTP/engine/conversation, 1 additional verified-local-resume regression). 126 web tests and typecheck/build passed. Browser fixture recovered after two errors, completed at 48,000 reported tokens with real local tests, and verified the saved-progress pause; no paid inference. | Working tree |
+
+| 17 | Removes token enforcement completely; default main-agent calls/tools/time/repairs are unlimited, with automatic context refresh and optional explicit profile limits | Agent/recovery regressions: 38 passed, including 75 model calls, 219 tools and 5,040,000 reported tokens with context refresh, simulated two-hour model call, progressive repairs beyond the old 3-repair cap and explicit-limit resume. Integration/web verification recorded below. | Working tree |
+
 Update this table (and section 1 if behaviour changed) at the end of every phase.
+
+### Phase 17 notes
+
+- The owner explicitly rejected phase 16's higher token cap. `max_total_tokens`
+  is removed from AgentBudget and all parent/helper enforcement. Usage counters
+  and cost telemetry remain cumulative, with no control-flow effect.
+- Default main-agent `max_model_calls`, `max_tool_calls`, `max_repair_attempts`
+  and `deadline_seconds` are `None`. A long task continues until completion,
+  user Stop/Pause, a genuine execution/provider/verification problem, or the
+  existing no-progress recovery policy. There is no default 60-call, 200-tool,
+  30-minute or 3-repair substitute for the removed token limit.
+- Explicit profile call/time limits still pause with a saved transcript. Null
+  profile fields inherit no limit. Settings labels mark these fields optional
+  and show **No limit** when blank. Delegated read-only investigations still
+  have their separate 6-call/20-tool/120-second bounds, without token enforcement.
+- Per-request working context/output and per-command limits remain distinct
+  from task duration. Existing context compaction keeps the objective, edit and
+  verification facts, and recent complete tool groups. Full file access and
+  history stay available. This is not a claim about unlimited provider context
+  windows or complete product parity with any other coding agent.
+- Regression log: `build/long-task-agent-tests.txt` (38 passed). Synthetic usage
+  verifies behavior without paid external inference.
+
+### Phase 16 notes
+
+- Historical default ceilings/token enforcement below are superseded by phase 17.
+- Read-only inspection of the owner's failed task events confirmed `list_files`
+  calls with `path: "client/src"` were rejected as invalid keys, and cumulative
+  provider totals exhausted the old 32,000-token ceiling after 5–6 calls. Usage
+  accounting itself was correct; cumulative billing totals are not context size.
+- `list_files` now accepts a relative folder path (or `.`), query and paginated
+  offset/limit. Schema errors list missing/unexpected/allowed fields. Missing
+  reads tell the model to list the containing folder and use an exact returned
+  path; directory reads point to `list_files`.
+- Default AgentBudget is 60 model calls, 200 tool calls, 1,000,000 reported total
+  tokens, 1800 seconds. Custom profile call/time limits remain respected. The
+  existing 3-repair limit after actual test failures remains. Usage/cost reporting
+  remains cumulative and honest; a final paid response is processed before a
+  token cap prevents the next request.
+  Read-only helpers retain their 6-call/20-tool/120-second bounds but allow
+  250,000 reported tokens, replacing the equally restrictive 16,000 ceiling.
+- At 75% of the 128KiB working prompt, deterministic compaction removes older
+  observations in complete tool groups, retaining the system rules, original
+  objective, exact file/verification state and recent groups. Files and full
+  SQLite events remain available. This is not an LLM summary or extra API call.
+- Two identical failures add specific change-approach feedback. The same failed
+  action is not executed a third/fourth time without intervening progress; four
+  failures pause with the cause instead of the old generic task failure. A
+  successful different action permits fresh attempts. Successful action loops
+  also get recovery guidance before a persistent loop pauses.
+- Run/time/tool/token limits save a transcript and produce `paused` with
+  `pause_reason`; the UI shows **Progress saved** and Resume, not Task failed.
+  Unfinished tool batches are closed with explicit interrupted results, so
+  Resume neither submits orphan calls nor blindly replays a completed edit.
+  Finishing a resumed local turn recognizes its saved pre-edit state even when
+  the source folder already contains its verified edits, avoiding a spurious
+  "Completion requires net candidate changes" error. Its real local regression
+  is in `build/agent-recovery-verified-resume-test.txt`.
+  This does not promise that any provider/model will always solve a request.
+- Regression fixtures/logs: `tests/test_agent_recovery.py`,
+  `build/agent-recovery-initial-tests.txt`,
+  `build/agent-recovery-integration-tests.txt`,
+  `build/agent-recovery-web-tests.txt`. Disposable browser fixture:
+  `build/agent-recovery-ui-smoke/` via `build/agent_recovery_smoke.py`.
+  Screenshot: `build/ui-proof/agent-tool-recovery.jpg`.
+
+### Phase 15 notes
+
+- The owner rejected phase 14's model-access exclusion. `inventory()` is now an
+  initial cache, not the scope of Agent/Plan filesystem access. Files exceeding
+  256KB, the 8MB cache budget or 1000 cached files remain discoverable via
+  `WorkspaceFiles`; `large_files` metadata includes files deferred for any of
+  those reasons. Root discovery still has 10,000-entry / depth-40 guards.
+- `workspace_files.py` streams reads/searches without loading a whole minified
+  line. `read_file` accepts `start_line`, `start_column`, `max_lines`, `max_chars`
+  and supplies explicit continuation positions. `search_text` returns line and
+  column with a bounded snippet around the actual match and paginated results.
+  Model output/context budgets still apply; entire projects are not automatically
+  inserted into a prompt. Existing ignore/secret/link policies remain in force.
+- Agent exact edits lazily adopt an existing deferred file into the original and
+  candidate states. Materialized working state is bounded to 64MB/file and 64MB
+  total, 10,000 files. Larger-file reads/searches remain available; streaming
+  commands use existing command approval. Protected tests and external-change
+  checks remain enforced. Classic single-proposal mode keeps its older limits.
+- Local edits register original bytes with DirectWrites before modifying the
+  source. Pause/resume persists adopted originals; local verification and shell
+  synchronization include tracked deferred files. Tests cover Undo after an
+  edit and after resume, and refusal to overwrite an external change.
+- Agent diffs above 1MB no longer fail a valid edit. Full patches live at
+  `data/diffs/<task>.patch`, are included as `changes.patch` in the task archive
+  and available through authenticated `GET /api/tasks/<id>/diff`. UI previews
+  label omissions, hide partial Copy actions and link the complete patch.
+  Apply still uses complete candidate files and original hashes, independent of
+  the preview. Direct local turns show Undo rather than the Classic Apply bar.
+- Industry references for bounded, on-demand file access:
+  [Claude Code tools](https://code.claude.com/docs/en/tools-reference) and
+  [OpenCode tools](https://dev.opencode.ai/v2/docs/tools/). This is not a claim
+  of complete product parity. Verification used a scripted tool-calling model;
+  no paid external inference was made for this phase.
+- Disposable browser fixture: `build/model-workspace-ui-smoke/`; screenshot:
+  `build/ui-proof/model-large-file-access.jpg`. Regression log:
+  `build/workspace-context-regression-tests.txt` (107 run, 1 skipped).
+- Final focused run passed 17 large-file/local checks and 126 web tests; typecheck
+  and production build passed. A terminal output-reader close race surfaced
+  during cancellation cleanup and now exits quietly on intentional stream close.
+  All 7 real-command/streaming/cancellation terminal checks passed afterward
+  (`build/workspace-terminal-regression-tests.txt`). Local result labels and the
+  initial workflow steps now describe local edits accurately.
+
+### Phase 14 notes
+
+- Historical implementation below is superseded by phase 15 for model access.
+- The reported `Text file exceeds 256KB: client/public/Cover.svg` came from the
+  canonical repository scanner, also used by `/api/project`. It treated the
+  model-context bound as a project-opening failure. `_inventory_python` now omits
+  oversized files completely from model snapshots, without truncating their
+  content. Total snapshot/entry/depth limits and edit-size guards remain.
+- `workspace_metadata` returns `large_files` separately; the explorer merges
+  their paths into its tree/count. `workspace_text` provides read-only previews
+  under the scanner's existing ignores, credential-path and link policy. Reads
+  cap at 4MB with UTF-8 boundary handling and explicit truncation metadata.
+  SVG is shown as text, never executed as page markup. Assets on disk are unchanged.
+- `boundedFilePreview` caps editor rendering at one million characters / 20,000
+  lines. Notices explain omitted model context and shortened previews. Copy uses
+  the original loaded text, preserving line endings; it is hidden for incomplete
+  server previews. Full files can be opened in VS Code.
+- Native metadata-only entries still trigger the canonical Python fallback, now
+  able to handle large assets; a regression test covers this. No native ABI or
+  Rust code change is required.
+- Regression coverage includes exact project-open path, large SVG source access,
+  no partial model context, preview byte/UTF-8 limits, ignored/secret paths,
+  candidate edits and HTTP routes. The project test helper now waits for task
+  cleanup as well as terminal state before switching projects, removing its race.
+- Disposable browser reproduction used `build/large-svg-ui-smoke/`; screenshot:
+  `build/ui-proof/large-svg-project-open.jpg`. The user's project was not modified.
+
+### Phase 13 notes
+
+- NVIDIA (`https://integrate.api.nvidia.com/v1`) is first and is `DEFAULT_PROVIDER`.
+  Default model is `nvidia/nemotron-3.5-lightning-30b-a3b`; official model page
+  showed Free Endpoint available. The older Nemotron 3 Super page showed its free
+  endpoint deprecated, so it was not chosen. See `MODEL_DISCOVERY.md`.
+- User must connect a real NVIDIA key in Settings → Models → NVIDIA. The new
+  Connect & use default action creates/selects the Lightning profile. No key was
+  available for a real inference call. CLI users can set `NVIDIA_API_KEY` or
+  `NVIDIA_NIM_API_KEY`; explicit DIKDIK environment configuration wins. No saved
+  default is silently overwritten on application upgrade.
+- Anonymous live NVIDIA discovery returned 85 models and contained the preset.
+  Public metadata is not proof that every listed model has free inference.
+  The UI was checked with synthetic keys and fixture discovery in a disposable
+  project. Do not describe this as a real authenticated inference test.
+- NVIDIA SVG is unmodified from its official brand page under `assets/brands/`.
+  Model entry points use Dikdik's `/icon.svg`; provider suggestions retain actual
+  provider logos. Provider descriptions now use the endpoint's actual provider
+  name rather than calling all OpenAI-compatible services OpenAI.
+- `web/dialogs.ts` / `dialogs.css` supply async confirmations and multi-field forms
+  for Git, project trust, platform keys/backends/webhooks, ACP and local apps;
+  skills/plugins/MCP confirmations also use them. Cancellation/Escape return
+  null/false, restore focus and never approve actions. Required/URL/JSON errors
+  appear inside the dialog; a regression test forbids native alert/prompt/confirm
+  calls throughout app TypeScript. One-time API keys have a read-only copy view.
+- Browser checks: NVIDIA setup/default selection, trust Cancel with no task
+  started, inline invalid-URL feedback, conditional ACP fields, Escape cancellation,
+  and light/dark rendering. Screenshots in ignored `build/ui-proof/`:
+  `nvidia-model-banner.jpg`, `modern-trust-dialog.jpg`,
+  `modern-backend-dialog.jpg`, `modern-agent-dialog-dark.jpg`.
 
 ### Phase 12 notes
 

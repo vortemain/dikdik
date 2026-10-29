@@ -23,9 +23,15 @@ These assets are served by Dikdik itself. No CDN or favicon service is used.
   https://code.visualstudio.com/assets/branding/visual-studio-code-icons.zip
   Usage guidelines: https://code.visualstudio.com/brand
   Used to identify the external editor and its Open in VS Code actions.
+- **NVIDIA vertical logo**, NVIDIA Corporation. `brands/nvidia.svg` is unchanged
+  from NVIDIA's official brand page, downloaded 2026-10-28:
+  https://www.nvidia.com/content/nvidiaGDC/us/en_US/about-nvidia/legal-info/logo-brand-usage/_jcr_content/root/responsivegrid/nv_container_392921705/nv_container/nv_image.coreimg.svg/1776076920288/nvidia-logo-vert.svg
+  Brand reference: https://www.nvidia.com/en-us/about-nvidia/legal-info/logo-brand-usage/
+  Used to identify NVIDIA among model providers; displayed on a white tile to
+  keep its original green eye and black wordmark legible in either theme.
 
 Product marks remain the property of their respective owners. These notices do
 not license Dikdik's original source or assert provider/Microsoft endorsement.
 
 Run `bun run assets:web` after changing the pinned icon packages. The Microsoft
-SVG is retained separately. Keep the license files when packaging the application.
+and NVIDIA SVGs are retained separately. Keep the license files when packaging the application.

@@ -229,17 +229,22 @@ def capture(url: str, cancel=None, browser: str | None = None) -> dict:
     try:
         base = [browser, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
                 "--disable-extensions", "--disable-sync", "--disable-background-networking", "--mute-audio",
+                "--disable-crashpad", "--disable-hang-monitor", "--disable-client-side-phishing-detection",
+                "--disable-component-update", "--disable-domain-reliability", "--disable-default-apps",
+                "--disable-component-extensions-with-background-pages", "--metrics-recording-only",
+                "--disable-features=OptimizationHintsFetching,OptimizationHints,Translate,msEdgeSidebarV2,msImplicitSignin",
                 f"--user-data-dir={profile}", f"--proxy-server={proxy.address}", "--proxy-bypass-list=<-loopback>",
                 "--window-size=1440,900", "--hide-scrollbars", "--timeout=20000"]
         shot = profile / "shot.png"
-        done = _run([*base, f"--screenshot={shot}", url], cancel, PAGE_TIMEOUT)
+        # One launch yields both the screenshot and the DOM: a second launch doubled
+        # the wait and made slow pages time out.
+        done = _run([*base, f"--screenshot={shot}", "--dump-dom", url], cancel, PAGE_TIMEOUT)
         if done is None:
             return {"status": "cancelled" if cancel is not None and cancel.is_set() else "timed_out", "error": "The page did not finish loading"}
-        dom = _run([*base, "--dump-dom", url], cancel, PAGE_TIMEOUT)
         png = shot.read_bytes() if shot.is_file() else b""
         if not png.startswith(b"\x89PNG\r\n\x1a\n"):
             return {"status": "failed", "error": "The browser did not produce a screenshot", "refused": proxy.refused[:10]}
-        title, text = page_text(dom.stdout.decode("utf-8", "replace") if dom else "")
+        title, text = page_text(done.stdout.decode("utf-8", "replace"))
         result = {"status": "passed", "url": url, "title": title or url, "text": text, "png": png, "runtime": "this computer"}
         if proxy.refused:
             result["refused"] = sorted(set(proxy.refused))[:10]  # private targets the page tried to reach

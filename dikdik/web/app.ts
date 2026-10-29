@@ -1,18 +1,20 @@
-import { browserHistory, browserView, buildTaskRequest, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
+import { browserHistory, browserView, buildTaskRequest, commandActivity, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
 import { attachmentList, contextUsage, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
-import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, SlashCommand, TaskRequest, DiffReview, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
+import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, ChecklistItem, SlashCommand, TaskRequest, DiffReview, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
 import { keysPane, modelsPane, type ModelProfile } from "./models-pane";
 import { modelPicker } from "./model-picker";
 import { folderPicker } from "./folder-picker";
+import { confirmDialog, inputDialog, formDialog, showSecret } from "./dialogs";
 import { skillsPane } from "./skills-pane";
 import { pluginsPane } from "./plugins-pane";
 import { mcpPane } from "./mcp-pane";
-import { detectLanguage, fileFacts, highlight, highlightLines, languageLabel, supportedLanguages, projectStack, type Token } from "./highlight";
+import { boundedFilePreview, detectLanguage, fileFacts, highlight, highlightLines, languageLabel, supportedLanguages, projectStack, type Token } from "./highlight";
 import { providersPane } from "./providers-pane";
-import { fileIcon, folderIcon, providerIcon, providerId, refreshFileIcons, vscodeLogo } from "./icons";
-import { alertKind, fileTree, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, workspacePath } from "./organise";
+import { fileIcon, folderIcon, providerIcon, providerId, refreshFileIcons, vscodeLogo, dikdikLogo } from "./icons";
+import { fileTree, organiseTasks, parentFolders, parseTags, rankCommands, splitDiff, workspacePath } from "./organise";
+import { renderRichText } from './rich-text';
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
 
@@ -31,6 +33,7 @@ const textarea = (id: string) => element(id, HTMLTextAreaElement);
 let token = "", selected: string | null = null, polling = false, watching = false, connected = false;
 let review: DiffReview = reviewDiff(null), reviewTask: string | null = null, reviewKey = "", selectedFile: string | null = null, renderedDiff = "";
 let projectName = "", canvasAutoOpened: string | null = null, selectedState = "", showArchived = false;
+const stoppingTasks = new Set<string>();
 let lastMessages: ChatMessage[] = [];
 let agentProfiles: AgentProfile[] = [];  // read by syncMode at load time, so declared up here
 let currentPlan: PlanView | null = null, parentTask: string | null = null, observedTaskMode = '';
@@ -55,7 +58,7 @@ const expandedDirs = new Set<string>();
 let openTabs: string[] = [], fileText = "", filePreview = false;
 const languageModes = new Map<string, string>();
 let projectImages: string[] = [], pinnedTabs = new Set<string>(), tabsRestored = false;
-let diffMode = "diff", diffNewKey = "";
+let diffMode = "diff", diffNewKey = "", reviewShortened = false, reviewDirect = false;
 let exposedSecrets = 0;
 let pendingFolder: string | null = null;  // a new task started from a folder's "+" goes there  // keys the user exposed to the sandbox; the composer offers them only then
 const composerSize = new ComposerSize();
@@ -151,111 +154,48 @@ function codeBlock(text: string, lang = "", options: { wrap?: boolean; filename?
   return block;
 }
 
-// --- rich text: a deliberately small, DOM-only Markdown subset -------------
-// Untrusted model output never reaches innerHTML; every node is built explicitly.
-function inline(text: string): Node[] {
-  const nodes: Node[] = [];
-  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;
-  let last = 0;
-  for (const match of text.matchAll(pattern)) {
-    const index = match.index ?? 0;
-    if (index > last) nodes.push(document.createTextNode(text.slice(last, index)));
-    const token = match[0];
-    if (token.startsWith('[')) {
-      const parts = /^\[([^\]]+)\]\((.+)\)$/.exec(token);
-      try {
-        const url = new URL(parts?.[2] ?? 'https://invalid.invalid');
-        if (!url.username && !url.password) { const link = make('a', '', parts?.[1] ?? 'Link'); link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; nodes.push(link); }
-        else nodes.push(document.createTextNode(token));
-      } catch { nodes.push(document.createTextNode(token)); }
-    } else if (token.startsWith("`")) {
-      const target = workspacePath(token.slice(1, -1), projectFileSet);
-      if (target) {
-        const link = make("button", "path-link"); link.type = "button"; link.title = `Open ${target.path} in Files`;
-        link.append(fileIcon(target.path), make("code", "", token.slice(1, -1)));
-        link.onclick = () => { void openFileFromChat(target.path, target.line); };
-        nodes.push(link);
-      } else nodes.push(make("code", "", token.slice(1, -1)));
-    } else nodes.push(make("strong", "", token.slice(2, -2)));
-    last = index + token.length;
-  }
-  if (last < text.length) nodes.push(document.createTextNode(text.slice(last)));
-  return nodes;
-}
+// Shared, DOM-only response formatting across chat and file previews.
 function richText(text: string): HTMLElement {
-  const root = make("div", "prose");
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  let paragraph: string[] = [];
-  let list: HTMLElement | null = null;
-  const flushParagraph = () => {
-    if (!paragraph.length) return;
-    const p = make("p"); p.append(...inline(paragraph.join("\n"))); root.append(p); paragraph = [];
-  };
-  const flushList = () => { list = null; };
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    const fence = /^\s*```\s*([\w.+-]*)\s*$/.exec(line);
-    if (fence) {
-      flushParagraph(); flushList();
-      const body: string[] = [];
-      for (i++; i < lines.length && !/^\s*```\s*$/.test(lines[i] ?? ""); i++) body.push(lines[i] ?? "");
-      root.append(codeBlock(body.join("\n"), (fence[1] ?? "").toLowerCase()));
-      continue;
-    }
-    const table = parseTable(lines, i);
-    if (table) {
-      flushParagraph(); flushList();
-      root.append(markdownTable(table));
-      i = table.end - 1;
-      continue;
-    }
-    const alert = alertKind(line);
-    if (alert || /^\s*>/.test(line)) {
-      flushParagraph(); flushList();
-      const body: string[] = [];
-      for (i += alert ? 1 : 0; i < lines.length && /^\s*>/.test(lines[i] ?? ""); i++) body.push((lines[i] ?? "").replace(/^\s*>\s?/, ""));
-      i--;
-      if (alert) {
-        const box = make("div", `md-alert md-alert-${alert}`);
-        box.append(make("p", "md-alert-title", alert[0]!.toUpperCase() + alert.slice(1)), richText(body.join("\n")));
-        root.append(box);
-      } else { const quote = make("blockquote"); quote.append(...inline(body.join("\n"))); root.append(quote); }
-      continue;
-    }
-    const heading = /^#{1,4}\s+(.*)$/.exec(line);
-    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
-    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
-    if (heading) {
-      flushParagraph(); flushList();
-      const h = make("h4"); h.append(...inline(heading[1] ?? "")); root.append(h);
-    } else if (bullet || numbered) {
-      flushParagraph();
-      const tag = bullet ? "UL" : "OL";
-      if (!list || list.tagName !== tag) { list = make(bullet ? "ul" : "ol"); root.append(list); }
-      const li = make("li"); li.append(...inline((bullet ?? numbered)?.[1] ?? "")); list.append(li);
-    } else if (!line.trim()) {
-      flushParagraph(); flushList();
-    } else {
-      flushList(); paragraph.push(line);
-    }
-  }
-  flushParagraph();
-  return root;
+  return renderRichText(text, {
+    codeBlock: responseCodeBlock, copyButton,
+    inlineCode: value => {
+      const target = workspacePath(value, projectFileSet);
+      if (!target) return null;
+      const link = make('button', 'path-link'); link.type = 'button'; link.title = `Open ${target.path} in Files`;
+      link.append(fileIcon(target.path), make('code', '', value));
+      link.onclick = () => { void openFileFromChat(target.path, target.line); };
+      return link;
+    },
+  });
 }
-
-function markdownTable(table: NonNullable<ReturnType<typeof parseTable>>): HTMLElement {
-  const scroller = make("div", "table-scroll");
-  const grid = make("table"), head = make("thead"), body = make("tbody"), headRow = make("tr");
-  table.header.forEach((cell, index) => { const th = make("th"); th.append(...inline(cell)); if (table.align[index]) th.style.textAlign = table.align[index]!; headRow.append(th); });
-  head.append(headRow);
-  for (const row of table.rows) {
-    const tr = make("tr");
-    row.forEach((cell, index) => { const td = make("td"); td.append(...inline(cell)); if (table.align[index]) td.style.textAlign = table.align[index]!; tr.append(td); });
-    body.append(tr);
-  }
-  grid.append(head, body);
-  scroller.append(grid);
-  return scroller;
+function responseCodeBlock(source: string, language: string): HTMLElement {
+  const block = codeBlock(source, language);
+  if (!['html', 'htm'].includes(language) || source.length > 50000) return block;
+  const toggle = make('button', 'copy', 'Preview design'); toggle.type = 'button';
+  toggle.setAttribute('aria-expanded', 'false');
+  const preview = make('div', 'html-preview'); preview.hidden = true;
+  const note = make('p', 'preview-note', 'Isolated HTML/CSS preview · scripts, forms and external assets are disabled.');
+  let frame: HTMLIFrameElement | null = null;
+  toggle.onclick = async () => {
+    if (!frame) {
+      toggle.disabled = true;
+      try {
+        if (token) throw new Error('Use the server sign-in link to enable isolated HTML previews.');
+        const result = await api<{ url: string }>('/api/previews', { html: source });
+        if (!/^\/api\/previews\/[a-f0-9]{32}$/.test(result.url)) throw new Error('The preview returned an invalid address.');
+        frame = make('iframe'); frame.title = 'Isolated design preview'; frame.setAttribute('sandbox', '');
+        frame.referrerPolicy = 'no-referrer'; frame.src = result.url;
+        preview.append(note, frame);
+      } catch (error) { message(error instanceof Error ? error.message : 'Preview failed', true); return; }
+      finally { toggle.disabled = false; }
+    }
+    preview.hidden = !preview.hidden;
+    const pre = block.querySelector('pre'); if (pre) pre.hidden = !preview.hidden;
+    toggle.textContent = preview.hidden ? 'Preview design' : 'View code';
+    toggle.setAttribute('aria-expanded', String(!preview.hidden));
+  };
+  block.querySelector('.code-head')?.append(toggle); block.append(preview);
+  return block;
 }
 
 // --- chat rendering -------------------------------------------------------
@@ -327,6 +267,274 @@ function stepLabel(msg: ChatMessage): StepLabel {
     default: return { icon: "terminal", title: msg.title ?? "Step", arg: "" };
   }
 }
+function renderTaskChecklistWidget(tasks: ChecklistItem[], title?: string): HTMLElement {
+  const card = make("div", "tracker-widget");
+  const head = make("div", "tracker-header");
+  const doneCount = tasks.filter(t => t.status === "done").length;
+  head.append(
+    icon("list"),
+    make("span", "tracker-title-head", title || "Task Checklist"),
+    make("span", "tracker-badge", `${doneCount}/${tasks.length} done`)
+  );
+  card.append(head);
+  const list = make("ol", "tracker-list");
+  for (const task of tasks) {
+    const item = make("li", `tracker-item tracker-status-${task.status}`);
+    const iconWrap = make("span", "tracker-status-icon");
+    if (task.status === "done") {
+      iconWrap.append(icon("check"));
+    } else if (task.status === "in_progress") {
+      iconWrap.append(icon("spiral"));
+    }
+    const text = make("span", "tracker-title", task.title);
+    const pill = make("span", `tracker-pill pill-${task.status}`, task.status === "done" ? "Done" : task.status === "in_progress" ? "In progress" : "To do");
+    item.append(iconWrap, text, pill);
+    list.append(item);
+  }
+  card.append(list);
+  return card;
+}
+
+function renderTestChecksWidget(checks: Array<{ kind?: string; status?: string; output?: string }>): HTMLElement {
+  const card = make("div", "test-checks-card");
+  const head = make("div", "test-checks-head");
+  const allPassed = checks.every(c => c.status === "passed");
+  const unavailable = checks.some(c => c.status === "not_run") && checks.every(c => c.status === "passed" || c.status === "not_run");
+  head.append(icon(allPassed ? "check" : "alert"), make("span", "card-title", allPassed ? "All checks passed" : unavailable ? "Automated validation unavailable" : "Checks reported issues"));
+  card.append(head);
+  const list = make("div", "test-checks-list");
+  for (const c of checks) {
+    const row = make("div", `test-check-row check-${c.status || "unknown"}`);
+    const badge = make("span", `check-status-badge status-${c.status || "unknown"}`, c.status || "check");
+    const kind = make("span", "check-kind", c.kind || "test");
+    row.append(badge, kind);
+    if (c.output) {
+      const out = make("pre", "check-output", c.output);
+      row.append(out);
+    }
+    list.append(row);
+  }
+  card.append(list);
+  return card;
+}
+
+function renderPropertiesUI(obj: Record<string, unknown>, options: { title?: string } = {}): HTMLElement {
+  const card = make("div", "prop-card");
+  if (options.title) {
+    const head = make("div", "prop-head");
+    head.append(make("strong", "card-title", options.title));
+    card.append(head);
+  }
+  const table = make("div", "prop-table");
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined || value === null) continue;
+    const row = make("div", "prop-row");
+    const k = make("span", "prop-key", key.replace(/_/g, " "));
+    const v = make("div", "prop-val");
+    if (typeof value === "boolean") {
+      v.append(make("span", `val-badge bool-${value}`, value ? "True" : "False"));
+    } else if (typeof value === "number") {
+      v.append(make("span", "val-badge val-number", String(value)));
+    } else if (typeof value === "string") {
+      if (value.startsWith("http://") || value.startsWith("https://")) {
+        const link = safePageLink(value);
+        if (link) v.append(link); else v.append(make("span", "", value));
+      } else if (value.includes("\n") || value.length > 80) {
+        v.append(codeBlock(value, "", { wrap: true }));
+      } else {
+        v.append(make("span", "prop-text", value));
+      }
+    } else if (Array.isArray(value)) {
+      if (value.every(item => typeof item === "string" || typeof item === "number")) {
+        const chips = make("div", "step-chips");
+        for (const item of value) chips.append(make("span", "val-badge val-tag", String(item)));
+        v.append(chips);
+      } else {
+        v.append(renderStructuredUI(value));
+      }
+    } else if (typeof value === "object") {
+      v.append(renderPropertiesUI(value as Record<string, unknown>));
+    }
+    row.append(k, v);
+    table.append(row);
+  }
+  card.append(table);
+  return card;
+}
+
+function renderStructuredUI(data: unknown, options: { title?: string } = {}): HTMLElement {
+  if (data === null || data === undefined) return make("div");
+  if (typeof data === "string") {
+    const trimmed = data.trim();
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        return renderStructuredUI(parsed, options);
+      } catch {
+        // Not JSON
+      }
+    }
+    return make("p", "step-text", data);
+  }
+  if (typeof data !== "object") {
+    return make("span", "val-badge", String(data));
+  }
+  if (Array.isArray(data)) {
+    if (data.length > 0 && data.every(item => typeof item === "object" && item !== null && "title" in item && "status" in item)) {
+      return renderTaskChecklistWidget(data as ChecklistItem[], options.title);
+    }
+    if (data.every(item => typeof item === "string" || typeof item === "number")) {
+      const container = make("div", "step-chips");
+      for (const item of data) {
+        container.append(make("span", "val-badge val-tag", String(item)));
+      }
+      return container;
+    }
+    const card = make("div", "step-ui-card");
+    if (options.title) card.append(make("strong", "card-title", options.title));
+    for (const item of data) {
+      card.append(renderStructuredUI(item));
+    }
+    return card;
+  }
+
+  const obj = data as Record<string, unknown>;
+  if (Array.isArray(obj.tasks) && obj.tasks.length > 0 && obj.tasks.every(item => typeof item === "object" && item !== null && "title" in item)) {
+    return renderTaskChecklistWidget(obj.tasks as ChecklistItem[], options.title);
+  }
+  if (Array.isArray(obj.checks) && obj.checks.length > 0 && obj.checks.every(c => typeof c === "object" && c !== null && "status" in c)) {
+    return renderTestChecksWidget(obj.checks as Array<{ kind?: string; status?: string; output?: string }>);
+  }
+  if (typeof obj.content === "string" && (obj.path === "PLAN.md" || options.title?.includes("Plan"))) {
+    return richText(obj.content);
+  }
+  if (typeof obj.url === "string" && !obj.command) {
+    const link = safePageLink(obj.url);
+    if (link) return link;
+  }
+  if (typeof obj.command === "string") {
+    const card = make("div", "step-ui-card");
+    card.append(codeBlock(obj.command, "bash", { wrap: true }));
+    const rest = { ...obj };
+    delete rest.command;
+    if (Object.keys(rest).length) card.append(renderPropertiesUI(rest));
+    return card;
+  }
+
+  return renderPropertiesUI(obj, options);
+}
+
+function renderOutputUI(text: string, tool: string, path = ""): HTMLElement {
+  if (tool === "read_file") {
+    return codeBlock(text, languageFor(path), path ? { filename: path } : {});
+  }
+  if (tool === "run_command") {
+    return codeBlock(text, "bash", { wrap: true });
+  }
+  const trimmed = text.trim();
+  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      return renderStructuredUI(parsed);
+    } catch {
+      // Not JSON
+    }
+  }
+  if (looksLikeDiff(text)) {
+    return codeBlock(text, "diff");
+  }
+  return codeBlock(text, "", { wrap: true });
+}
+
+function renderEvidenceCard(details: unknown): HTMLElement {
+  if (typeof details !== "object" || details === null) {
+    return make("p", "turn-note", "No evidence recorded.");
+  }
+  const d = details as Record<string, unknown>;
+  const card = make("div", "evidence-ui-card");
+
+  const grid = make("div", "evidence-grid");
+
+  if (d.tests_verified !== undefined) {
+    const stat = make("div", "evidence-stat");
+    stat.append(
+      make("span", "stat-label", "Tests verification"),
+      make("span", `verify-badge ${d.tests_verified ? "verified" : ""}`, d.tests_verified ? "Tests passed" : "Not test-verified")
+    );
+    grid.append(stat);
+  }
+  if (d.direct !== undefined) {
+    const stat = make("div", "evidence-stat");
+    stat.append(
+      make("span", "stat-label", "Execution mode"),
+      make("span", "stat-value", d.direct ? "Direct workspace edits" : "Sandboxed proposal")
+    );
+    grid.append(stat);
+  }
+  if (d.checkpoint) {
+    const stat = make("div", "evidence-stat");
+    stat.append(
+      make("span", "stat-label", "Undo checkpoint"),
+      make("span", "stat-value font-mono", String(d.checkpoint))
+    );
+    grid.append(stat);
+  }
+  if (Array.isArray(d.changed_files)) {
+    const stat = make("div", "evidence-stat");
+    stat.append(
+      make("span", "stat-label", "Files changed"),
+      make("span", "stat-value", `${d.changed_files.length} file${d.changed_files.length === 1 ? "" : "s"}`)
+    );
+    grid.append(stat);
+  }
+  if (d.tokens || d.usage) {
+    const usage = (d.usage ?? d.tokens) as Record<string, unknown>;
+    if (usage && typeof usage === "object") {
+      const stat = make("div", "evidence-stat");
+      const total = usage.total_tokens ?? usage.tokens;
+      stat.append(
+        make("span", "stat-label", "Tokens used"),
+        make("span", "stat-value", total ? Number(total).toLocaleString() : "–")
+      );
+      grid.append(stat);
+    }
+  }
+
+  if (grid.children.length) card.append(grid);
+
+  if (Array.isArray(d.checks) && d.checks.length) {
+    card.append(renderTestChecksWidget(d.checks as Array<{ kind?: string; status?: string; output?: string }>));
+  }
+
+  if (Array.isArray(d.changed_files) && d.changed_files.length) {
+    const filesWrap = make("div", "evidence-files");
+    filesWrap.append(make("strong", "card-title", "Changed files"));
+    const fileList = make("div", "step-chips");
+    for (const f of d.changed_files) {
+      if (typeof f === "string") {
+        const chip = make("span", "val-badge val-tag");
+        chip.append(fileBadge(f), make("span", "", f));
+        fileList.append(chip);
+      }
+    }
+    filesWrap.append(fileList);
+    card.append(filesWrap);
+  }
+
+  const handled = new Set(["diff", "diff_truncated", "changed_files", "file_changes", "tests_verified", "checks", "direct", "source_modified", "checkpoint", "tokens", "usage"]);
+  const remaining: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(d)) {
+    if (!handled.has(k) && v !== undefined && v !== null && v !== "") {
+      remaining[k] = v;
+    }
+  }
+  if (Object.keys(remaining).length) {
+    card.append(renderPropertiesUI(remaining, { title: "Details" }));
+  }
+
+  return card;
+}
+
 function evidenceBlocks(msg: ChatMessage, path = ""): HTMLElement[] {
   const blocks: HTMLElement[] = [];
   const details = msg.details;
@@ -348,12 +556,28 @@ function evidenceBlocks(msg: ChatMessage, path = ""): HTMLElement[] {
     blocks.push(codeBlock(detailField(details, "content"), languageFor(path), { filename: path }));
     return blocks;
   }
-  if (msg.body) blocks.push(codeBlock(msg.body, msg.kind === "agent_tool_result" ? languageFor(path) : "", { wrap: msg.kind !== "agent_tool_result" }));
+  if (msg.kind === "agent_tool_call" && toolName(msg) === "task_tracker" && typeof details === "object" && details !== null && "tasks" in details) {
+    blocks.push(renderTaskChecklistWidget((details as Record<string, unknown>).tasks as ChecklistItem[]));
+    return blocks;
+  }
+  if (msg.kind === "agent_tool_call" && toolName(msg) === "write_plan" && detailField(details, "content")) {
+    blocks.push(richText(detailField(details, "content")));
+    return blocks;
+  }
+  if (msg.kind === "agent_tool_call" && toolName(msg) === "browse_url" && detailField(details, "url")) {
+    const link = safePageLink(detailField(details, "url"));
+    if (link) blocks.push(link);
+    return blocks;
+  }
+  if (msg.body) {
+    if (msg.role === "system") blocks.push(make("p", "system-notice-text", msg.body));
+    else blocks.push(renderOutputUI(msg.body, toolName(msg), path));
+  }
   // Arguments already shown in the row's label (a path or query) would only repeat themselves.
   const shown = new Set(["path", "query", "text", "pattern"]);
   if (msg.kind === "agent_tool_call" && typeof details === "object" && details !== null && Object.keys(details).every(key => shown.has(key))) return blocks;
   if (details !== undefined && details !== null && !(typeof details === "object" && Object.keys(details).length === 0)) {
-    blocks.push(codeBlock(typeof details === "string" ? details : JSON.stringify(details, null, 2), typeof details === "string" ? "" : "json", { wrap: true }));
+    blocks.push(renderStructuredUI(details));
   }
   return blocks;
 }
@@ -404,7 +628,7 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   const head = make("div", "result-head");
   const badge = make("span", "result-icon");
   badge.append(icon(state === "completed" ? "check" : state === "cancelled" ? "stop" : state === "paused" ? "pause" : "alert"));
-  const titles: Record<string, string> = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted", paused: "Stopped" };
+  const titles: Record<string, string> = { completed: "Candidate ready for review", failed: "Task failed", blocked: "Task blocked", cancelled: "Task cancelled", interrupted: "Task interrupted", paused: "Progress saved" };
   const direct = result?.direct === true;
   if (direct && state === "completed") titles.completed = result?.source_modified === true ? "Changed in your files" : "Done";
   head.append(badge, make("span", "result-title", titles[state] ?? `Task ${state}`));
@@ -420,7 +644,8 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
     open.type = "button";
     open.append(icon("diff"), make("span", "", direct ? "Review changes" : "Review & apply"));
     open.onclick = () => openCanvas("changes");
-    actions.append(open, copyButton(() => review.diff, "Copy diff"));
+    actions.append(open);
+    if (!result.diff_truncated) actions.append(copyButton(() => review.diff, "Copy diff"));
   }
   if (direct && typeof result?.checkpoint === "string" && result.checkpoint && isLatestTurn(msg)) {
     // Local mode wrote the files already; Undo puts back what this turn changed.
@@ -463,7 +688,7 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   const summary = make("summary");
   const chevron = icon("chevron"); chevron.setAttribute("class", "i step-chevron");
   summary.append(make("span", "step-title", "Evidence"), chevron);
-  evidence.append(summary, codeBlock(JSON.stringify(msg.details ?? {}, null, 2), "json", { wrap: true }));
+  evidence.append(summary, renderEvidenceCard(msg.details));
   card.append(actions, evidence);
   li.append(card);
   return li;
@@ -588,18 +813,37 @@ function secretCard(msg: ChatMessage): HTMLLIElement {
   else { secretCards.set(id, li); setTimeout(() => field.focus?.(), 0); }
   return li;
 }
+/** The address a browser approval wants to open, as a readable link — only if it is a real
+    public http(s) address; agent-supplied text never becomes an executable href. */
+function safePageLink(url: unknown): HTMLElement | null {
+  if (typeof url !== "string" || !url) return null;
+  let target: URL;
+  try { target = new URL(url); } catch { return null; }
+  if (target.protocol !== "https:" && target.protocol !== "http:") return null;
+  const link = make("a", "confirm-url", url);
+  link.href = target.href;
+  link.target = "_blank"; link.rel = "noopener noreferrer";
+  link.title = "Open this address in your own browser to see what it is";
+  const row = make("div", "confirm-url");
+  row.append(icon("globe"), link);
+  return row;
+}
 function confirmationCard(msg: ChatMessage): HTMLLIElement {
   const d = (msg.details ?? {}) as { id?: string; tool?: string; risk?: string; reason?: string; arguments?: unknown };
   const li = make("li", "msg msg-system msg-confirm"); li.id = msg.id;
   const card = make("div", `confirm-card risk-${d.risk || "low"}`);
+  const args = typeof d.arguments === "object" && d.arguments !== null ? d.arguments as Record<string, unknown> : {};
+  const browserPage = d.tool === "browse_url" ? safePageLink(args.url) : null;
   const head = make("div", "result-head");
-  const badge = make("span", "result-icon"); badge.append(icon("shield"));
-  head.append(badge, make("span", "result-title", `Allow ${d.tool || "this action"}?`), make("span", "verify-badge", d.risk === "high" ? "High risk" : d.risk === "medium" ? "Needs review" : "Low risk"));
+  const badge = make("span", "result-icon");
+  badge.append(icon(browserPage ? "globe" : "shield"));
+  const asking = d.tool === "browse_url" ? "opening a web page" : d.tool === "run_command" ? "running a command" : d.tool || "this action";
+  head.append(badge, make("span", "result-title", `Allow ${asking}?`), make("span", "verify-badge", d.risk === "high" ? "High risk" : d.risk === "medium" ? "Needs review" : "Low risk"));
   card.append(head);
   if (d.reason) card.append(make("p", "result-text", d.reason));
-  const args = typeof d.arguments === "object" && d.arguments !== null ? d.arguments as Record<string, unknown> : {};
-  const shown = typeof args.command === "string" ? codeBlock(args.command, "bash", { wrap: true }) : codeBlock(JSON.stringify(args, null, 2), "json", { wrap: true });
-  card.append(shown);
+  if (browserPage) card.append(browserPage);  // a readable address, not raw JSON
+  else if (typeof args.command === "string") card.append(codeBlock(args.command, "bash", { wrap: true }));
+  else card.append(renderStructuredUI(args, { title: "Arguments" }));
   const actions = make("div", "result-actions");
   const allow = make("button", "small primary", "Allow"); allow.type = "button"; allow.title = "Allow (Y, Enter or Ctrl+Enter)";
   const reject = make("button", "small", "Reject"); reject.type = "button"; reject.title = "Reject (N, Esc or Shift+Ctrl+Backspace)";
@@ -706,7 +950,7 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
     const call = index >= 0 ? pendingCalls.splice(index, 1)[0] : undefined;
     if (call && msg.body) {
       const label = call.body.parentElement?.querySelector(".step-arg")?.textContent ?? "";
-      call.body.append(codeBlock(msg.body, name === "read_file" ? languageFor(label) : "", name === "read_file" ? { filename: label } : {}));
+      call.body.append(renderOutputUI(msg.body, name, label));
       if (call.body.parentElement) {
         setClass(call.body.parentElement, "step-static", false);
         if (msg.state === "tool_failed") setClass(call.body.parentElement, "step-failed", true);
@@ -796,7 +1040,7 @@ function showReviewSelection(): void {
   if (content && diffMode === "split" && !el("diff-split").childNodes.length) el("diff-split").replaceChildren(splitTable(content));
   if (content && diffMode === "new") void showNewVersion(file?.path ?? null, file?.status ?? "");
   sel.hidden = !content;
-  el("copy-diff").hidden = !content;
+  el("copy-diff").hidden = !content || reviewShortened;
   for (const control of el("review-controls").querySelectorAll("button")) {
     const current = control.dataset.path === selectedFile || (selectedFile === null && control.dataset.all === "true");
     control.setAttribute("aria-pressed", String(current));
@@ -804,6 +1048,13 @@ function showReviewSelection(): void {
 }
 
 function renderReview(taskId: string, state: string, result: unknown): void {
+  reviewDirect = !!(result && typeof result === "object" && (result as TaskResult).direct);
+  reviewShortened = !!(result && typeof result === "object" && (result as TaskResult).diff_truncated);
+  const diffNote = el("diff-read-note"); diffNote.hidden = !reviewShortened;
+  if (reviewShortened) {
+    const link = make("a", "", "Download full diff"); link.href = `/api/tasks/${encodeURIComponent(taskId)}/diff`; link.download = `dikdik-${taskId.slice(0, 8)}.patch`;
+    diffNote.replaceChildren(document.createTextNode("Large change · this preview is shortened. "), link);
+  }
   review = reviewDiff(result);
   const key = JSON.stringify([taskId, review.files.map(file => [file.path, file.status])]);
   if (key !== reviewKey) {
@@ -873,6 +1124,23 @@ function changedPaths(): Set<string> { return new Set(review.files.map(file => f
 
 let terminalClearedTask = "", terminalClearedSeq = 0, terminalHistoryIndex = -1, terminalDraft = "", terminalSubmitting = false;
 let terminalContinuing = new Set<string>();
+let showingCommandProgress = false;
+function renderCommandProgress(): void {
+  if (selected && stoppingTasks.has(selected) && !isTerminal(selectedState)) {
+    el('working-label').textContent = 'Stopping…';
+    return;
+  }
+  const activity = selected ? commandActivity(liveEvents, Date.now() / 1000) : null;
+  if (activity) {
+    showingCommandProgress = true;
+    el('working').hidden = false;
+    el('working-label').textContent = activity;
+  } else if (showingCommandProgress) {
+    showingCommandProgress = false;
+    el('working').hidden = !selected || isTerminal(selectedState);
+    el('working-label').textContent = 'Working';
+  }
+}
 function renderTerminal(): void {
   const view = terminalTranscript(liveEvents.filter(event => selected !== terminalClearedTask || event.seq > terminalClearedSeq
     || event.kind === "terminal_command" && terminalContinuing.has(String(event.data.command_id))));
@@ -1193,8 +1461,10 @@ async function showFile(path: string, version: string): Promise<void> {
   if (projectImages.includes(path) && !changedPaths().has(path)) { showImage(path); return; }
   try {
     const query = `/api/files/content?path=${encodeURIComponent(path)}${version === "candidate" && selected ? `&task=${encodeURIComponent(selected)}` : ""}`;
-    const data = await api<{ path: string; version: string; text: string }>(query);
+    const data = await api<{ path: string; version: string; text: string; indexed?: boolean; truncated?: boolean; bytes?: number }>(query);
     openFile = path; fileVersion = data.version; fileText = data.text;
+    fileReadNotice = data.indexed === false ? "Agent tools can read and search this file on demand." : "";
+    if (data.truncated) fileReadNotice += " Showing the first 4 MB. Open in VS Code for the full file.";
     rememberTab(path);
     for (const folder of parentFolders(path)) expandedDirs.add(folder);
     el("file-name").replaceChildren(...path.split("/").flatMap((part, index, parts) =>
@@ -1208,7 +1478,8 @@ async function showFile(path: string, version: string): Promise<void> {
     const language = detectLanguage(path, data.text);
     const mode = languageModes.get(path) ?? language.lang;
     const facts = fileFacts(data.text);
-    const size = facts.bytes < 1024 ? `${facts.bytes} B` : facts.bytes < 1048576 ? `${(facts.bytes / 1024).toFixed(1)} KB` : `${(facts.bytes / 1048576).toFixed(1)} MB`;
+    const bytes = data.bytes ?? facts.bytes;
+    const size = bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
     el("editor-status").replaceChildren(...[`${facts.lines} lines`, facts.indent, "UTF-8", facts.eol, size, language.label]
       .map((text, index) => make("span", index === 5 ? "status-lang" : "", text)));
     const modes = make("select", "language-mode"); modes.setAttribute("aria-label", "File language mode");
@@ -1225,7 +1496,7 @@ async function showFile(path: string, version: string): Promise<void> {
     el("editor-status").querySelector(".status-lang")?.replaceChildren(modes);
     el("editor-status").hidden = false;
     renderFileCode(data.text, mode);
-    el("copy-file").hidden = false;
+    el("copy-file").hidden = !!data.truncated;
     const changed = changedPaths().has(path) && !!selected;
     el("file-version").hidden = !changed;
     for (const node of el("file-version").querySelectorAll<HTMLElement>("button")) node.setAttribute("aria-pressed", String(node.dataset.version === data.version));
@@ -1233,8 +1504,12 @@ async function showFile(path: string, version: string): Promise<void> {
   } catch (error) { message(error instanceof Error ? error.message : "Could not open the file", true); }
 }
 
+let fileReadNotice = "";
 function renderFileCode(text: string, language: string): void {
-  const lines = highlightLines(text, language);
+  const preview = boundedFilePreview(text);
+  const note = [fileReadNotice, preview.truncated ? "Preview shortened to keep the editor responsive. Open in VS Code to view every line." : ""].filter(Boolean).join(" ");
+  el("file-read-note").textContent = note; el("file-read-note").hidden = !note;
+  const lines = highlightLines(preview.text, language);
   if (lines.length > 1 && !lines[lines.length - 1]!.length) lines.pop();
   el("file-view").replaceChildren(...lines.map((line, index) => {
     const span = make("span", "ln"); span.append(...tokenNodes(line), document.createTextNode("\n"));
@@ -1268,8 +1543,8 @@ async function remoteBar(): Promise<HTMLElement> {
   for (const name of remote.branches) { const option = make("option", "", name) as HTMLOptionElement; option.value = name; option.selected = name === remote.branch; picker.append(option); }
   picker.onchange = () => { void run(newBranch, "/api/git/branch", { name: picker.value }, () => `Switched to ${picker.value}.`); };
   const newBranch = make("button", "ghost small", "New branch") as HTMLButtonElement; newBranch.type = "button";
-  newBranch.onclick = () => {
-    const name = prompt("New branch name (from the current commit):", "");
+  newBranch.onclick = async () => {
+    const name = await inputDialog("Create a branch", "Branch name (from the current commit)");
     if (name?.trim()) void run(newBranch, "/api/git/branch", { name: name.trim(), create: true }, () => `Created and switched to ${name.trim()}.`);
   };
   const where = remote.upstream ? `${remote.upstream} · ↑${remote.ahead ?? 0} ↓${remote.behind ?? 0}` : Object.keys(remote.remotes).length ? "Not pushed yet" : "No remote";
@@ -1283,15 +1558,16 @@ async function remoteBar(): Promise<HTMLElement> {
   pullButton.onclick = () => { void run(pullButton, "/api/git/pull", {}, () => "Up to date with the remote."); };
   const pushButton = button(remote.upstream ? "Push" : "Publish branch", "Send your commits to the remote with this computer's Git sign-in");
   pushButton.disabled = !Object.keys(remote.remotes).length || (!!remote.upstream && !remote.ahead);
-  pushButton.onclick = () => {
-    if (!confirm(`Push ${remote.branch ?? "this branch"} to ${remote.upstream ?? "origin"}? Everyone with access to the repository will see these commits.`)) return;
+  pushButton.onclick = async () => {
+    if (!await confirmDialog("Push commits", `Push ${remote.branch ?? "this branch"} to ${remote.upstream ?? "origin"}? Everyone with access to the repository will see these commits.`, "Push commits")) return;
     void run(pushButton, "/api/git/push", { approve_push: true }, () => "Pushed.");
   };
   const prButton = button("Create PR", remote.gh.installed ? (remote.gh.signed_in ? "Open a pull request for this branch with the GitHub CLI" : "Run `gh auth login` once to open pull requests") : "Install the GitHub CLI (gh) to open pull requests");
   prButton.disabled = !remote.gh.signed_in || !remote.upstream;
-  prButton.onclick = () => {
-    const title = prompt("Pull request title (leave empty to use your commits):", "");
-    if (title === null || !confirm(`Open a pull request for ${remote.branch}?`)) return;
+  prButton.onclick = async () => {
+    const result = await formDialog({ title: "Create a pull request", description: `Open a pull request for ${remote.branch}. Your commits will be shared with the repository.`, fields: [{ name: "title", label: "Title", placeholder: "Leave blank to use your commits" }], submit: "Create pull request" });
+    if (!result) return;
+    const title = result.title ?? "";
     void run(prButton, "/api/git/pr", { approve: true, ...(title.trim() ? { title: title.trim(), body: "" } : {}) }, value => {
       if (typeof value.url === "string") globalThis.open(value.url, "_blank", "noopener,noreferrer");
       return value.existing ? `A pull request already exists: ${String(value.url ?? "")}` : `Opened ${String(value.url ?? "the pull request")}.`;
@@ -1361,7 +1637,7 @@ async function loadGit(): Promise<void> {
 
 function syncApplyBar(): void {
   const bar = el("apply-bar");
-  bar.hidden = !(selected && review.diff && isTerminal(selectedState));
+  bar.hidden = reviewDirect || !(selected && review.diff && isTerminal(selectedState));
   setClass(bar, "confirming", applyStep === "confirm");
   setClass(bar, "done", applyStep === "done");
   const count = review.files.length || 1;
@@ -1374,7 +1650,7 @@ function syncApplyBar(): void {
   el("apply-commit").hidden = applyStep !== "done";
 }
 async function applyChanges(): Promise<void> {
-  if (!selected) return;
+  if (!selected || reviewDirect) return;
   if (applyStep !== "confirm") { applyStep = "confirm"; syncApplyBar(); return; }
   applyStep = "busy"; syncApplyBar();
   try {
@@ -1428,6 +1704,14 @@ function syncComposer(): void {
   syncSend();
 }
 function syncSend(): void {
+  const running = !!selected && !!selectedState && !isTerminal(selectedState);
+  const stopping = running && stoppingTasks.has(selected!);
+  button('start').hidden = running;
+  button('cancel').hidden = !running;
+  button('cancel').disabled = !running || stopping;
+  button('cancel').setAttribute('aria-label', stopping ? 'Stopping response' : 'Stop response');
+  button('cancel').setAttribute('aria-busy', String(stopping));
+  button('cancel').title = stopping ? 'Stopping response…' : 'Stop response';
   button('start').disabled = submitting || (!textarea('objective').value.trim() && !attached.length) || !el("model-banner").hidden;
   textarea('objective').required = !attached.length;  // attachments alone are a message
 }
@@ -1470,6 +1754,21 @@ function setState(state: string): void {
   pill.textContent = state;
   pill.className = state ? `state-pill state-${state}` : "state-pill";
   el("state-button").hidden = !state;
+  if (selected) {
+    const row = [...el("history").querySelectorAll<HTMLElement>(".conv-item")].find(node => node.dataset.id === selected);
+    if (row) {
+      const existing = row.querySelector(".conv-spiral-loader");
+      const active = state === "running" || state === "queued" || (!isTerminal(state) && !!state);
+      if (active && !existing) {
+        const spiral = make("span", `conv-state conv-spiral-loader state-${state}`);
+        spiral.setAttribute("aria-label", "Running");
+        spiral.append(icon("spiral"));
+        row.prepend(spiral);
+      } else if (!active && existing) {
+        existing.remove();
+      }
+    }
+  }
 }
 
 let messageTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1528,18 +1827,15 @@ async function loadModel(): Promise<void> {
   const chosen = modelOverride?.id ?? null;
   const info = await api<ActiveModel>("/api/model" + (chosen ? `?profile=${encodeURIComponent(chosen)}` : ""));
   if (chosen !== (modelOverride?.id ?? null)) return;
-  const profiles = await modelChoices().catch(() => []);
-  if (chosen !== (modelOverride?.id ?? null)) return;
   const pill = el("model-pill");
   setClass(pill, "unset", !info.configured);
   modelReady = info.configured;
   el("model-label").textContent = modelOverride ? modelOverride.name : info.configured ? info.model ?? "Model" : "Choose model";
-  if (!info.configured && info.problem && info.source === "profile") el("model-banner-note").textContent = info.problem;
+  el("model-banner-note").textContent = !info.configured && info.problem && info.source === "profile" ? info.problem : "Nemotron 3.5 Lightning is the default free developer model. Connect your NVIDIA API key to start.";
   setClass(pill, "override", modelOverride !== null);
-  const profile = modelOverride ? profiles.find(p => p.id === modelOverride?.id) : profiles.find(p => p.is_default);
   let mark = el("model-symbol");
   if (!mark) { mark = make("span"); mark.id = "model-symbol"; pill.prepend(mark); }
-  mark.replaceChildren(providerIcon(profile ? providerId(profile.provider, profile.endpoint) : ""));
+  mark.replaceChildren(dikdikLogo());
   pill.title = info.configured
     ? info.source === "profile" ? `${info.model} · ${info.provider_name} (profile “${info.profile}”). Change it in Settings → Models.` : `${info.model} from server environment variables`
     : info.problem ?? "No model is set up";
@@ -1549,12 +1845,12 @@ async function loadModel(): Promise<void> {
 async function project(): Promise<void> {
   const data = await api<Project>("/api/project");
   projectName = data.name;
-  projectFiles = data.files.map(file => file.path);
+  projectFiles = [...data.files, ...(data.large_files ?? [])].map(file => file.path);
   projectFileSet = new Set(projectFiles);
   projectImages = Array.isArray((data as Project & { images?: unknown }).images) ? ((data as Project & { images: unknown[] }).images).filter((p): p is string => typeof p === "string") : [];
   if (!tabsRestored) { tabsRestored = true; restoreTabs(); }
   const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-  const summary = `${plural(data.files.length, "file")} · ${plural(data.python_tests.length, "test")}`;
+  const summary = `${plural(projectFiles.length, "file")} · ${plural(data.python_tests.length, "test")}`;
   el("project-name").textContent = data.name;
   el("project-picker-name").textContent = data.name;
   el("topbar-project-name").textContent = data.name;
@@ -1587,6 +1883,11 @@ function taskRow(task: TaskSummary): HTMLElement {
   }
   return row;
 }
+function isTaskActive(task: TaskSummary): boolean {
+  if (task.state === "running" || task.state === "queued") return true;
+  if (task.id === selected && selectedState && !isTerminal(selectedState)) return true;
+  return false;
+}
 function taskRowBase(task: TaskSummary): HTMLElement {
   // A div with button semantics, so the row can hold its own actions button.
   const item = make("div", "conv-item");
@@ -1594,9 +1895,15 @@ function taskRowBase(task: TaskSummary): HTMLElement {
   item.tabIndex = 0;
   item.dataset.id = task.id;
   const name = conversationLabel(task);
-  const label = make("span", "conv-obj", name), state = make("span", `conv-state state-${task.state}`, task.state);
+  const label = make("span", "conv-obj", name);
   item.title = `${name} — ${task.state}`;
-  item.append(state, label);
+  if (isTaskActive(task)) {
+    const spiral = make("span", `conv-state conv-spiral-loader state-${task.state}`);
+    spiral.setAttribute("aria-label", "Running");
+    spiral.append(icon("spiral"));
+    item.append(spiral);
+  }
+  item.append(label);
   if (task.pinned) item.append(make("span", "conv-pin", "Pinned"));
   const more = make("button", "ghost icon conv-more");
   more.type = "button";
@@ -1767,10 +2074,11 @@ async function runMenuAction(action: string): Promise<void> {
       if (!confirmingDelete) {
         confirmingDelete = true;
         const label = el("task-menu").querySelector<HTMLElement>("[data-action=delete] span");
-        if (label) label.textContent = "Click again to delete";
+        if (label) label.textContent = info && !isTerminal(info.state) ? "Click again to stop and delete" : "Click again to delete";
         return;
       }
       closeTaskMenu();
+      message(info && !isTerminal(info.state) ? "Stopping and deleting conversation…" : "Deleting conversation…");
       await request(`/api/tasks/${encodeURIComponent(task)}`, "DELETE");
       if (task === selected) newTask();
       await loadHistory();
@@ -1990,7 +2298,7 @@ el("apply").addEventListener("click", () => { void applyChanges(); });
 el("apply-cancel").addEventListener("click", () => { applyStep = "idle"; syncApplyBar(); });
 el("apply-commit").addEventListener("click", () => openCanvas("git"));
 el("file-search").addEventListener("input", renderFileList);
-el("copy-file").addEventListener("click", () => { void copyText(el("file-view").textContent ?? "", el("copy-file") as HTMLButtonElement); });
+el("copy-file").addEventListener("click", () => { void copyText(fileText, el("copy-file") as HTMLButtonElement); });
 if (typeof el("canvas").querySelectorAll === "function") {
   for (const tab of el("canvas").querySelectorAll<HTMLElement>(".canvas-tab")) tab.addEventListener("click", () => openCanvas(tab.dataset.tab ?? "changes"));
   for (const node of el("file-version").querySelectorAll<HTMLElement>("button")) node.addEventListener("click", () => { if (openFile) void showFile(openFile, node.dataset.version ?? "workspace"); });
@@ -2478,8 +2786,8 @@ function applyRunMode(): void {
 /** The first message in a project asks once whether Dikdik may work in this folder. */
 async function ensureTrusted(forceLocal = false): Promise<void> {
   if ((!forceLocal && runMode() === "classic") || projectTrusted) return;
-  const yes = confirm(`Trust “${projectName}”?\n\nDikdik will read this folder, send what it reads to your model provider, `
-    + `edit its files and run commands here (asking first as your permission mode says). You can undo each turn.`);
+  const yes = await confirmDialog(`Trust “${projectName}”?`, `Dikdik will read this folder, send what it reads to your model provider, `
+    + `edit its files and run commands here (asking first as your permission mode says). You can undo each turn.`, "Trust this project");
   if (!yes) throw new Error("Dikdik only works in folders you trust. Choose Classic to work on an isolated copy instead.");
   await request("/api/projects/trust", "POST", { trusted: true });
   projectTrusted = true;
@@ -2815,6 +3123,9 @@ async function resumeTask(): Promise<void> {
 }
 const GOAL_LABELS: Record<string, string> = { achieved: "Goal achieved", capped: "Goal stopped at its turn limit", stopped: "Goal stopped", error: "Goal check failed" };
 function renderRunState(): void {
+  if (selected && isTerminal(selectedState)) stoppingTasks.delete(selected);
+  syncSend();
+  if (selected && stoppingTasks.has(selected) && !isTerminal(selectedState)) el('working-label').textContent = 'Stopping…';
   const usage = selected ? contextUsage(liveEvents) : null;
   const meter = el("context-meter");
   meter.hidden = !usage;
@@ -2835,6 +3146,7 @@ function renderRunState(): void {
     el("goal-resume").hidden = goal.status === "active" || goal.status === "achieved";
   }
   el("pause").hidden = !selected || !selectedState || isTerminal(selectedState) || taskRequest?.mode !== "agent";
+  renderCommandProgress();
 }
 async function readBase64(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -3013,7 +3325,7 @@ function renderFileTabs(): void {
       if (path === openFile) {
         const next = openTabs[openTabs.length - 1];
         if (next) void showFile(next, changedPaths().has(next) && selected ? "candidate" : "workspace");
-        else { openFile = null; fileText = ""; el("file-name").textContent = "Choose a file"; el("file-view").replaceChildren(); el("copy-file").hidden = true; el("file-preview").hidden = true; el("editor-status").hidden = true; el("open-editor").hidden = true; filePreview = false; showFilePreview(); renderFileList(); }
+        else { openFile = null; fileText = ""; el("file-read-note").hidden = true; el("file-name").textContent = "Choose a file"; el("file-view").replaceChildren(); el("copy-file").hidden = true; el("file-preview").hidden = true; el("editor-status").hidden = true; el("open-editor").hidden = true; filePreview = false; showFilePreview(); renderFileList(); }
       }
       renderFileTabs();
     };
@@ -3216,7 +3528,7 @@ interface AgentInfo {
   tools: { name: string; description: string }[];
   skills: { name: string; description: string; scope: string; enabled: boolean }[];
   subagents: { name: string; description: string; source: string }[];
-  hooks: { tool: string; pattern: string; message: string }[];
+  hooks: { id: string; event: string; priority: number; timeout_seconds: number; source: string; tool?: string; pattern?: string; message?: string; decision?: string }[];
 }
 async function showAgentInfo(): Promise<void> {
   const info = await api<AgentInfo>("/api/agent-info");
@@ -3233,7 +3545,7 @@ async function showAgentInfo(): Promise<void> {
     section("Tools", info.tools.map(tool => [tool.name, tool.description]), "No tools."),
     section("Skills", info.skills.map(skill => [skill.name, `${skill.description || "No description"} · ${skill.scope}${skill.enabled ? "" : " · off"}`]), "No skills. Add them in Settings → Skills."),
     section("Subagents", info.subagents.map(agent => [agent.name, `${agent.description} · ${agent.source}`]), "Only the built-in explorer."),
-    section("Hooks", info.hooks.map(hook => [`${hook.tool} · ${hook.pattern}`, hook.message || "Blocked"]), "No hooks. Add block rules to .dikdik/hooks.json in the workspace."),
+    section("Hooks", info.hooks.map(hook => [hook.id, `${hook.event} · ${hook.source} · priority ${hook.priority} · ${hook.timeout_seconds}s${hook.tool ? ` · ${hook.tool}` : ""}${hook.pattern ? ` · ${hook.pattern}` : ""} · ${hook.message || hook.decision || "Host policy"}`]), "No hooks. Add lifecycle rules to .dikdik/hooks.json in the workspace."),
   );
   const dialog = el("info-dialog") as HTMLDialogElement;
   if (typeof dialog.showModal === "function") dialog.showModal();
@@ -3274,6 +3586,7 @@ el("model-banner-setup").addEventListener("click", event => { event.stopPropagat
 /** A provider chosen from the composer opens straight on its panel in Settings → Models. */
 let pendingProvider: string | null = null;
 for (const chip of document.querySelectorAll?.<HTMLButtonElement>(".model-chip") ?? []) {
+  chip.prepend(providerIcon(chip.dataset.provider ?? ""));
   chip.addEventListener("click", () => { pendingProvider = chip.dataset.provider ?? null; openSettings("models"); });
 }
 
@@ -3334,12 +3647,6 @@ function chime(): void {
     tone.stop(audio.currentTime + index * 0.16 + 0.32);
   });
   setTimeout(() => { void audio.close(); }, 1000);
-}
-function resetStop(): void {
-  if (stopArmed !== undefined) clearTimeout(stopArmed);
-  stopArmed = undefined;
-  el("cancel").replaceChildren(icon("stop"), document.createTextNode("Stop"));
-  setClass(el("cancel"), "confirming", false);
 }
 
 // --- models: settings panes, the model picker on the pill, sandbox secrets ----------------
@@ -3460,6 +3767,7 @@ if (typeof document.querySelectorAll === "function") {
 }
 diffMode = ["diff", "split", "new"].includes(storageGet("dikdik.diffMode") ?? "") ? storageGet("dikdik.diffMode")! : "diff";
 function showImage(path: string): void {
+  el("file-read-note").hidden = true;
   openFile = path; fileText = ""; filePreview = false;
   rememberTab(path);
   for (const folder of parentFolders(path)) expandedDirs.add(folder);
@@ -3547,7 +3855,7 @@ function openStateMenu(): void {
   const items: HTMLElement[] = [make("p", "menu-note", STATE_TEXT[selectedState] ?? selectedState)];
   if (!isTerminal(selectedState)) {
     if (!el("pause").hidden) items.push(item("Pause after this step", "pause", () => button("pause").click()));
-    items.push(item("Stop the current action", "stop", () => { const task = selected; if (task) void api(`/api/tasks/${encodeURIComponent(task)}/interrupt`, {}).then(() => observe()).catch(error => message(String(error), true)); }));
+    items.push(item("Stop the current action", "stop", () => { void stopResponse(); }));
   } else if (taskRequest?.mode === "agent" && isResumable(selectedState)) {
     items.push(item("Resume", "play", () => { void resumeTask(); }));
   }
@@ -3566,23 +3874,21 @@ if (typeof document.addEventListener === "function") {
   document.addEventListener("keydown", (event: KeyboardEvent) => { if (event.key === "Escape" && !el("state-menu").hidden) closeStateMenu(); });
 }
 
-let stopArmed: ReturnType<typeof setTimeout> | undefined;
-button("cancel").onclick = async () => {
-  if (!selected) return;
-  if (stopArmed === undefined) {
-    // A second click within three seconds confirms; the run's work so far is kept either way.
-    el("cancel").replaceChildren(icon("stop"), document.createTextNode("Stop run?"));
-    setClass(el("cancel"), "confirming", true);
-    stopArmed = setTimeout(resetStop, 3000);
-    return;
-  }
-  resetStop();
+async function stopResponse(): Promise<void> {
+  const task = selected;
+  if (!task || stoppingTasks.has(task)) return;
+  stoppingTasks.add(task);
+  syncSend();
   try {
-    const data = await api<{ requested: boolean }>(`/api/tasks/${selected}/interrupt`, {});
-    message(data.requested ? "Stopping the current action…" : "Task has already stopped.");
-    await observe();
-  } catch (error) { message(error instanceof Error ? error.message : "Cancellation failed", true); }
-};
+    await api(`/api/tasks/${encodeURIComponent(task)}/interrupt`, {});
+    if (selected === task) await observe(true);
+  } catch (error) {
+    stoppingTasks.delete(task);
+    if (selected === task) syncSend();
+    message(error instanceof Error ? error.message : "Could not stop the response. Try again.", true);
+  }
+}
+button("cancel").onclick = () => { void stopResponse(); };
 
 button("refresh").onclick = async () => {
   try { await Promise.all([project(), loadHistory()]); message(`Re-scanned ${projectName || "the workspace"}.`); }
@@ -3590,7 +3896,7 @@ button("refresh").onclick = async () => {
 };
 
 // Poll real durable events. No simulated execution or progress percentages.
-setInterval(() => { void observe(); }, 1000);
+setInterval(() => { renderCommandProgress(); void observe(); }, 1000);
 // Pasting the sign-in link into an already-open tab only changes the hash.
 globalThis.addEventListener?.("hashchange", () => { if (!connected) void boot(); else routeSettings(); });
 void boot();
@@ -3651,26 +3957,27 @@ async function loadPlatform(): Promise<void> {
   } catch { void 0; }
 }
 el("plat-key-add").addEventListener("click", async () => {
-  const name = prompt("Key name:");
-  if (!name) return;
-  const scopes = (prompt("Scopes: read, write or admin (comma-separated):", "read") ?? "")
-    .split(",").map((scope) => scope.trim()).filter(Boolean);
-  if (!scopes.length) return;
+  const fields = await formDialog({ title: "Create an API key", description: "Give this key a name and choose the access it needs.", fields: [
+    { name: "name", label: "Key name", required: true, placeholder: "e.g. Local integration" },
+    { name: "scopes", label: "Access", type: "select", value: "read", options: [{ value: "read", label: "Read only" }, { value: "read,write", label: "Read and write" }, { value: "read,write,admin", label: "Administrator" }] },
+  ], submit: "Create key" });
+  if (!fields) return;
+  const name = fields.name!.trim(), scopes = fields.scopes!.split(",");
   try { const result = await request<{ token: string }>("/api/keys", "POST", { name, scopes });
     // The server keeps only a hash, so this is the one chance to copy the whole key.
-    prompt("Copy this key now. It will not be shown again:", result.token);
+    await showSecret("Your new API key", result.token);
     void loadPlatform(); }
   catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
 el("plat-backend-add").addEventListener("click", async () => {
-  const name = prompt("Backend name:");
-  if (!name) return;
-  const url = prompt("Backend URL (http:// or https://):");
-  if (!url) return;
+  const fields = await formDialog({ title: "Add a backend", fields: [{ name: "name", label: "Backend name", required: true }, { name: "url", label: "Backend URL", type: "url", required: true, placeholder: "https://your-backend.example" }], submit: "Add backend" });
+  if (!fields) return;
+  const { name, url } = fields;
   try { await request("/api/backends", "POST", { name, url }); message("Backend added."); void loadPlatform(); }
   catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
 el("plat-webhook-add").addEventListener("click", async () => {
-  const url = prompt("Webhook URL:");
-  if (!url) return;
+  const fields = await formDialog({ title: "Add a webhook", description: "Dikdik will send task events to this address.", fields: [{ name: "url", label: "Webhook URL", type: "url", required: true, placeholder: "https://your-service.example/webhook" }], submit: "Add webhook" });
+  if (!fields) return;
+  const url = fields.url;
   try { await request("/api/webhooks", "POST", { url }); message("Webhook added."); void loadPlatform(); }
   catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
 
@@ -3704,10 +4011,10 @@ let acpPresets: Array<Record<string, unknown>> = [];
 /** Runs an ACP agent as a new conversation. Both approvals are asked for here, in plain words,
  *  every time: the agent is a program on this machine and it sends the code to its own provider. */
 async function runAcpAgent(id: string, name: string): Promise<void> {
-  const objective = prompt(`What should ${name} do?`);
-  if (!objective?.trim()) return;
-  if (!confirm(`${name} will run on this computer, outside Docker, in a throwaway copy of the workspace. `
-    + `It can read that copy and send it to its own model provider. Your files change only if you apply its changes afterwards. Continue?`)) return;
+  const fields = await formDialog({ title: `Run ${name}`, description: `${name} will run on this computer, outside Docker, in a throwaway copy of the workspace. `
+    + "It can read that copy and send it to its own model provider. Your files change only if you apply its changes afterwards.", fields: [{ name: "objective", label: "What should the agent do?", type: "textarea", required: true }], submit: "Run agent" });
+  if (!fields?.objective?.trim()) return;
+  const objective = fields.objective;
   try {
     const result = await request<{ id: string }>("/api/tasks", "POST", { objective: objective.trim(), mode: "acp", verification: "syntax",
       approve_external: true, approve_host: true, acp_agent: id });
@@ -3716,20 +4023,16 @@ async function runAcpAgent(id: string, name: string): Promise<void> {
   } catch (e) { message(e instanceof Error ? e.message : String(e), true); }
 }
 el("acp-add").addEventListener("click", async () => {
-  const ids = acpPresets.map(p => String(p.id)).join(", ");
-  const preset = (prompt(`Preset (${ids}), or leave empty for a custom command:`) ?? "").trim();
-  if (preset && !acpPresets.some(p => p.id === preset)) { message(`Unknown preset; choose one of ${ids}.`, true); return; }
-  const body: Record<string, unknown> = preset ? { preset } : {};
-  if (!preset) {
-    const name = prompt("Agent name:");
-    if (!name) return;
-    const command = prompt("Command that starts the agent in ACP mode (e.g. gemini):");
-    if (!command) return;
-    Object.assign(body, { name, command, args: prompt("Arguments (optional, e.g. --experimental-acp):") ?? "" });
-  }
-  const credentials = prompt("Saved keys it receives, as ENV_NAME=saved-key-name, comma-separated (optional):",
-    String((acpPresets.find(p => p.id === preset)?.credentials as string[] | undefined ?? []).join(", ")));
-  if (credentials !== null) body.credentials = credentials.split(",").map(c => c.trim()).filter(Boolean);
+  const fields = await formDialog({ title: "Add an ACP agent", description: "Connect an installed command-line agent. Choose a preset or enter its command.", fields: [
+    { name: "preset", label: "Agent", type: "select", value: String(acpPresets[0]?.id ?? ""), options: [...acpPresets.map(p => ({ value: String(p.id), label: String(p.name ?? p.id) })), { value: "", label: "Custom command" }] },
+    { name: "name", label: "Agent name", required: true, showWhen: values => !values.preset },
+    { name: "command", label: "Command", placeholder: "e.g. gemini", required: true, showWhen: values => !values.preset },
+    { name: "args", label: "Arguments", placeholder: "e.g. --experimental-acp", showWhen: values => !values.preset },
+    { name: "credentials", label: "Saved key mappings", placeholder: "ENV_NAME=saved-key-name", help: "Optional, separated by commas. Leave blank to use the preset’s key mappings." },
+  ], submit: "Add agent" });
+  if (!fields) return;
+  const body: Record<string, unknown> = fields.preset ? { preset: fields.preset } : { name: fields.name, command: fields.command, args: fields.args ?? "" };
+  if (fields.credentials?.trim()) body.credentials = fields.credentials.split(",").map(c => c.trim()).filter(Boolean);
   try { await request("/api/acp-agents", "POST", body); message("ACP agent added."); void loadAcp(); }
   catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
 el("acp-chatgpt-login").addEventListener("click", async () => {
@@ -3773,10 +4076,9 @@ el("app-viewer-close").addEventListener("click", () => {
   (el("app-viewer") as HTMLDialogElement).close();
 });
 el("app-add").addEventListener("click", async () => {
-  const name = prompt("App name:");
-  if (!name) return;
-  const source = prompt("Local directory path:");
-  if (!source) return;
+  const fields = await formDialog({ title: "Install a local app", description: "Choose a name and the folder containing the app.", fields: [{ name: "name", label: "App name", required: true }, { name: "source", label: "Local folder path", required: true, placeholder: "C:\\Projects\\my-app" }], submit: "Install app" });
+  if (!fields) return;
+  const { name, source } = fields;
   try { await request("/api/apps", "POST", { name, source }); message("App installed."); void loadApps(); }
   catch (e) { message(e instanceof Error ? e.message : String(e), true); } });
 

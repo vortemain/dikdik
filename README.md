@@ -56,6 +56,9 @@ autonomous engineering platform.
   tree (with image previews), pinned tabs that survive reloads and Markdown
   preview; Changes shows a diff, a side-by-side split or the new version; paths
   in replies open the file. Conversations get a short title after their first turn.
+- **Readable output.** Compact Markdown, nested lists and callouts, sortable/copyable
+  tables, data-backed bar/line charts and opt-in isolated HTML/CSS design previews.
+  See [conversation formatting](docs/CONVERSATION_FORMATTING.md) for formats and safety limits.
 - **Models and keys.** Provider connections share one key across profiles;
   profiles can be renamed, duplicated, tuned and tested with one click; a router
   can send first messages to a strong model and follow-ups to a fast one, or let
@@ -78,9 +81,16 @@ autonomous engineering platform.
   MCP servers (HTTP or local command) add tools; browse the built-in server library,
   edit key mappings, test tools, and sign in to supported remote servers with OAuth.
   Agent profiles bundle instructions, a model, limits and tool access.
-- **Plugins** bundle skills, block rules, subagents and MCP server definitions.
+- **Plugins** bundle skills, lifecycle hook rules, subagents and MCP server definitions.
   Install from a folder, Git or a marketplace; nothing loads until you review
   what a plugin adds and trust it, and its MCP servers arrive switched off.
+
+The agent ships with **34 distinct bundled skills**, a discoverable catalog and
+on-demand `read_skill` loading. A central hook engine handles `task.started`,
+`context.building`, `tool.before`, `tool.after`, `tool.failed` and `task.completed`
+with ordered decisions, deadlines and durable traces. Plugin rules cannot override
+security denials or approvals. See [skill coverage, hook configuration and security
+boundaries](docs/AGENT_SKILLS_AND_HOOKS.md).
 - **Automations** on daily, interval, cron or local Git-commit triggers. Search,
   filter and sort the dashboard; start from built-in templates; save/test drafts;
   import/export portable JSON; inspect every run. Sync definitions to a Git
@@ -125,9 +135,9 @@ dikdik
 ```
 
 `dikdik` opens the folder you are in (or `dikdik C:\path\to\project`). Started from a
-folder that cannot be a project, such as your home folder, it reopens the last project.
-Without installing, `python -m dikdik.server --workspace examples/repair` works from
-this folder.
+folder that cannot be a project — your home folder, or Dikdik's own program folder —
+it reopens the last project. Dikdik's own code is never a project: not this checkout,
+not anything inside it.
 
 **How it works in a project.** Pick a mode in the composer:
 

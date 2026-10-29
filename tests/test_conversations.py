@@ -64,10 +64,20 @@ class ConversationTests(unittest.TestCase):
         self.assertIn("-    return a - b", diff)  # diff stays relative to the untouched source
         self.assertIn("+    return b + a", diff)
         self.assertEqual(self.kinds(data).count("running"), 2)
-        self.assertEqual(self.kinds(data).count("plan"), 1)  # described once, not every turn
+        self.assertNotIn("plan", self.kinds(data))  # internal execution stages are not an agent-generated plan
         message = next(e for e in data["events"] if e["kind"] == "user_message")
         self.assertEqual(message["data"]["text"], "Swap the operands")
         self.assertEqual((self.root / "calculator.py").read_text(), "def add(a, b):\n    return a - b\n")
+
+    def test_a_question_gets_the_model_answer_without_a_canned_plan(self):
+        model = ScriptedModel([ModelResponse("Overly uniform layouts and generic copy can make a site feel AI-generated.", [])])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            data = self.idle(self.engine.submit({"objective": "What makes a website look AI-generated?", "mode": "agent",
+                                               "verification": "syntax", "approve_external": True}))
+        self.assertEqual(data["state"], "completed")
+        self.assertNotIn("plan", self.kinds(data))
+        messages = [e["data"]["content"] for e in data["events"] if e["kind"] == "agent_message"]
+        self.assertEqual(messages, ["Overly uniform layouts and generic copy can make a site feel AI-generated."])
 
     def test_follow_up_errors(self):
         with self.assertRaises(KeyError):
@@ -142,8 +152,8 @@ class ConversationTests(unittest.TestCase):
             data = self.idle(task)
         self.assertEqual(data["state"], "completed", data["result"])
         shown = second.seen[0]
-        texts = [m["content"] for m in shown if m["role"] in {"user", "assistant"}]
-        self.assertEqual(texts[0], "Fix addition")
+        texts = [m["content"] for m in shown if m["role"] in {"user", "assistant"} and not m["content"].startswith("<!-- dikdik-untrusted")]
+        self.assertEqual(texts[0], "Fix addition")  # the original objective is the first non-skill user message
         self.assertIn("Fixing the operator.", texts)
         self.assertTrue(any("Turn ended: completed" in t and "calculator.py" in t for t in texts))
         self.assertIn("already contains changes", texts[-1])
@@ -201,3 +211,59 @@ class ConversationTests(unittest.TestCase):
         finally:
             with self.engine.lock:
                 self.engine.active.pop("busy")
+
+    def test_deleting_a_just_finished_task_waits_for_the_worker(self):
+        """A conversation deleted the instant it finished was refused with "Stop the task
+        before deleting it": the terminal state is published a moment before the worker
+        lets go. Deleting now waits that moment out and removes the conversation."""
+        task = self.engine.submit(offline("Fix addition", "a - b", "a + b"))
+        self.idle(task)
+        with self.engine.lock:
+            self.engine.active[task] = threading.Event()  # worker still winding down
+        releaser = threading.Timer(0.3, lambda: self.engine.active.pop(task, None))
+        releaser.start()
+        self.addCleanup(releaser.join)
+        started = time.perf_counter()
+        self.engine.delete(task)
+        self.assertGreaterEqual(time.perf_counter() - started, 0.2)
+        with self.assertRaises(KeyError):
+            self.engine.store.get(task)
+
+    def test_deleting_a_running_task_stops_it_first(self):
+        """Delete on a running conversation stops it the way the Stop button does, then
+        removes it — the user never has to stop first and delete again."""
+        task = self.engine.store.create(offline("Fix addition", "a - b", "a + b"))
+        self.engine.store.state(task, "running")
+        cancel = threading.Event()
+        with self.engine.lock:
+            self.engine.active[task] = cancel
+            self.engine.pending[task] = [offline("Queued follow-up", "a + b", "b + a")]
+        releaser = threading.Timer(0.3, lambda: self.engine.active.pop(task, None))  # the worker honours the cancel
+        releaser.start()
+        self.addCleanup(releaser.join)
+        started = time.perf_counter()
+        self.engine.delete(task)
+        self.assertGreaterEqual(time.perf_counter() - started, 0.2)
+        self.assertTrue(cancel.is_set())  # deletion asked the worker to stop
+        self.assertNotIn(task, self.engine.pending)
+        with self.assertRaises(KeyError):
+            self.engine.store.get(task)
+
+    def test_deleting_a_task_that_would_not_stop_refuses_honestly(self):
+        """If the worker cannot reach a step boundary in time, the deletion says so instead
+        of deleting half a conversation — and a later attempt succeeds."""
+        task = self.engine.store.create(offline("Fix addition", "a - b", "a + b"))
+        self.engine.store.state(task, "running")
+        with self.engine.lock:
+            self.engine.active[task] = threading.Event()  # a worker that never lets go
+        with patch("dikdik.engine.STOP_GRACE", 0.4):
+            started = time.perf_counter()
+            with self.assertRaisesRegex(ValueError, "still stopping"):
+                self.engine.delete(task)
+            self.assertGreaterEqual(time.perf_counter() - started, 0.3)
+        with self.engine.lock:
+            self.engine.active.pop(task, None)
+        self.engine.store.state(task, "cancelled")
+        self.engine.delete(task)  # once it really finished, deletion goes through
+        with self.assertRaises(KeyError):
+            self.engine.store.get(task)

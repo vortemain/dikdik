@@ -30,12 +30,14 @@ export function folderSymbol(path: string, open: boolean, light = false): string
 }
 
 const PROVIDERS: Record<string, string> = {
+  nvidia: "nvidia",
   openrouter: "openrouter", openai: "openai", anthropic: "anthropic", google: "gemini-color", gemini: "gemini-color",
   deepseek: "deepseek-color", xai: "grok", grok: "grok", mistral: "mistral-color", groq: "groq", cerebras: "cerebras-color",
   together: "together-color", fireworks: "fireworks-color", moonshot: "moonshot", zai: "zai", qwen: "qwen-color",
   perplexity: "perplexity-color", "perplexity-orchestrator": "perplexity-color", ollama: "ollama", lmstudio: "lmstudio", azure: "azure-color",
 };
 const HOSTS: Record<string, string> = {
+  "integrate.api.nvidia.com": "nvidia",
   "openrouter.ai": "openrouter", "api.openai.com": "openai", "api.anthropic.com": "anthropic",
   "generativelanguage.googleapis.com": "google", "api.deepseek.com": "deepseek", "api.x.ai": "xai",
   "api.mistral.ai": "mistral", "api.groq.com": "groq", "api.cerebras.ai": "cerebras",
@@ -61,6 +63,7 @@ export function providerId(provider = "", endpoint = ""): string {
 }
 
 export function providerSymbol(id: string): { src: string; mono: boolean } | null {
+  if (id === "nvidia") return { src: "/assets/brands/nvidia.svg", mono: false };
   const name = PROVIDERS[id];
   return name ? { src: `/assets/providers/${name}.svg`, mono: !name.endsWith("-color") } : null;
 }
@@ -99,7 +102,7 @@ export function providerIcon(id: string): HTMLElement {
     node.textContent = "◇"; node.setAttribute("aria-hidden", "true"); return node;
   }
   const node = document.createElement("img");
-  node.className = "provider-symbol" + (symbol.mono ? " provider-mono" : "");
+  node.className = "provider-symbol" + (symbol.mono ? " provider-mono" : "") + (id === "nvidia" ? " provider-nvidia" : "");
   node.src = symbol.src; node.alt = ""; node.setAttribute("aria-hidden", "true"); node.draggable = false;
   return node;
 }
@@ -108,4 +111,9 @@ export function vscodeLogo(): HTMLImageElement {
   const node = document.createElement("img"); node.className = "vscode-logo";
   node.src = "/assets/brands/vscode.svg"; node.alt = ""; node.setAttribute("aria-hidden", "true");
   return node;
+}
+
+export function dikdikLogo(): HTMLImageElement {
+  const node = document.createElement("img"); node.className = "dikdik-logo";
+  node.src = "/icon.svg"; node.alt = ""; node.setAttribute("aria-hidden", "true"); return node;
 }

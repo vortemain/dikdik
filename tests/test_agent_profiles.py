@@ -38,7 +38,7 @@ class AgentProfileTests(unittest.TestCase):
         model = Recorder()
         captured = {}
 
-        def adapter(approval, resolve, on_text=None):
+        def adapter(approval, resolve, on_text=None, cancel=None):
             captured["resolve"] = resolve
             return model
 

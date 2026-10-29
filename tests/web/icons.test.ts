@@ -35,6 +35,8 @@ test("all catalog providers have real local logos; custom gateways stay neutral"
   expect(providerSymbol("custom-provider")).toBeNull();
   expect(providerSymbol("xai")?.src).toBe("/assets/providers/grok.svg");
   expect(providerSymbol("grok")?.src).toBe("/assets/providers/grok.svg");
+  expect(providerSymbol("nvidia")).toEqual({ src: "/assets/brands/nvidia.svg", mono: false });
+  expect(providerId("openai", "https://integrate.api.nvidia.com/v1")).toBe("nvidia");
   expect(providerId("openai", "https://openrouter.ai/api/v1")).toBe("openrouter");
   expect(providerId("openai", "https://api.groq.com/openai/v1")).toBe("groq");
   expect(providerId("openai", "https://company-gateway.example/v1")).toBe("");

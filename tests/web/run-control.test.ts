@@ -47,6 +47,8 @@ describe("run state from events", () => {
     expect(isResumable("failed")).toBe(true);
     expect(isResumable("completed")).toBe(false);
     expect(resultStatus("paused", {})).toContain("Resume");
+    expect(resultStatus("paused", { pause_reason: "Run limit reached. Progress is saved; resume to continue." }))
+      .toBe("Run limit reached. Progress is saved; resume to continue.");
   });
   test("context usage reads the latest model call and resets after condensing", () => {
     const events = [event(1, "agent_model", { phase: "start", context_bytes: 1024, context_limit: 4096 }), event(2, "agent_model", { phase: "start", context_bytes: 3072, context_limit: 4096 })];
@@ -75,11 +77,19 @@ describe("new event rows", () => {
   test("approvals, hooks, subagents, goals and forks become rows", () => {
     expect(eventToMessages(event(1, "confirmation_requested", { id: "c1", tool: "run_command", risk: "high", reason: "network", arguments: { command: "curl x" } }), "")[0])
       .toMatchObject({ kind: "confirmation_requested", details: { id: "c1", tool: "run_command", risk: "high" } });
-    expect(eventToMessages(event(2, "hook_blocked", { tool: "run_command", message: "no pushes" }), "")[0]).toMatchObject({ title: "Blocked by a project hook", body: "no pushes" });
+    expect(eventToMessages(event(2, "hook_blocked", { tool: "run_command", message: "no pushes" }), "")[0]).toMatchObject({ title: "Blocked by a hook", body: "no pushes" });
     expect(eventToMessages(event(3, "subagent", { phase: "end", agent: "explorer", findings: "found it" }), "")[0]).toMatchObject({ title: "explorer reported back", body: "found it" });
     expect(eventToMessages(event(4, "goal_status", { status: "capped", turns: 3, max_turns: 3 }), "")[0]?.title).toBe("Goal stopped at its turn limit · 3/3");
     expect(eventToMessages(event(5, "user_message", { text: "Keep working toward the goal: x", goal: true }), "")[0]).toMatchObject({ role: "system", kind: "goal_turn" });
     expect(eventToMessages(event(6, "paused", { paused: true }), "")[0]).toMatchObject({ state: "paused", id: "terminal-6" });
     expect(eventToMessages(event(7, "forked", { from_task: "a", from_seq: 4 }), "")[0]?.title).toBe("Forked from another conversation");
+  });
+  test("hook executions retain decision and correlation evidence", () => {
+    const row = eventToMessages(event(8, "hook_execution", { hook_id: "project:freeze", event: "tool.before", decision: "block",
+      reason: "maintenance", source: "project", priority: -1, status: "completed", duration_ms: 3,
+      run_id: "run", dispatch_id: "dispatch", call_id: "call", payload_sha256: "digest", data: { policy: "freeze" } }), "")[0];
+    expect(row).toMatchObject({ role: "system", title: "Hook: project:freeze", body: "tool.before · block · maintenance",
+      details: { source: "project", priority: -1, status: "completed", run_id: "run", dispatch_id: "dispatch", call_id: "call", data: { policy: "freeze" } } });
+    expect(eventToMessages(event(9, "hook_event", { decision: "allow", hook_count: 0 }), "")).toEqual([]);
   });
 });

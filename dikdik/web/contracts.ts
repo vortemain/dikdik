@@ -28,15 +28,19 @@ export interface AgentProfile {
 export interface Project {
   name: string;
   files: { path: string; bytes: number }[];
+  large_files?: { path: string; bytes: number }[];
   python_tests: string[];
   manifests: string[];
   limitations: string;
 }
 export interface TaskResult {
+  verification_level?: string | null;
   diff?: string;
+  diff_truncated?: boolean;
   changed_files?: string[];
   file_changes?: FileChange[];
   error?: string;
+  pause_reason?: string;
   tests_verified?: boolean;
   checks?: { kind: string; status: string }[];
   /** Local mode: the turn wrote the project folder directly; `checkpoint` names its Undo. */
@@ -363,7 +367,7 @@ export function usageMetrics(events: TaskEvent[]): UsageMetrics {
       ensureTurn().profile = textOf(model.profile, 120) || textOf(data.profile, 120);
       continue;
     }
-    if (event.kind !== "agent_model" || data.phase !== "end") continue;
+    if (event.kind !== "agent_model" || !["end", "retry", "error"].includes(String(data.phase))) continue;
     const usage = reportedUsage(data.usage);
     const reportedTotal = numOrUndef(data.usage_tokens);
     if (reportedTotal !== undefined && reportedTotal >= 0) {
@@ -424,6 +428,16 @@ function numOrUndef(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+// Older servers called their fixed execution pipeline a "plan" before any model
+// had read the request. Hide only those exact, untagged templates on replay;
+// preserve real agent/ACP plans and the original durable history.
+const legacyWorkflowPlans = new Set([
+  ['Inspect bounded repository snapshot', 'Validate minimal edit proposal', 'Produce isolated candidate and diff', 'Run selected checks', 'Report evidence without changing source'],
+  ['Discover workspace files and read relevant ranges', 'Make targeted edits with conflict checks', 'Update workspace files and record an Undo checkpoint', 'Run selected checks', 'Report changes and verification evidence'],
+  ['Discover workspace files and read relevant ranges', 'Make targeted edits with conflict checks', 'Produce isolated candidate and diff', 'Run selected checks', 'Report changes and verification evidence'],
+  ['Discover workspace files', 'Read and search relevant content', 'Prepare a plan for review'],
+].map(steps => JSON.stringify(steps)));
+
 /** Map a persisted event to one or more chat messages. */
 export function eventToMessages(event: TaskEvent, objective: string): ChatMessage[] {
   const { seq, time, kind, data } = event;
@@ -449,10 +463,13 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [];
     }
     case "agent_model":
-      return d.phase === "error" ? [{ ...base, role: "system", title: "Model request failed", details: { error: textOf(d.error) } }] : [];
+      return d.phase === "error" || d.phase === "retry" ? [{ ...base, role: "system",
+        title: d.phase === "retry" ? "Retrying model request" : "Model request failed", body: textOf(d.error, 2000),
+        details: { kind: textOf(d.kind, 60), validation: textOf(d.validation, 60), attempt: numOrUndef(d.attempt), http_status: numOrUndef(d.http_status), retryable: d.retryable === true } }] : [];
     case "agent_check":
       return [{ ...base, role: "tool", kind: "syntax", title: `Check: ${textOf(d.kind, 60) || "check"}`, details: d }];
     case "plan":
+      if (d.source === 'workflow' || (!d.source && legacyWorkflowPlans.has(JSON.stringify(d.steps)))) return [];
       return [{ ...base, role: "assistant", title: "Plan", details: d.steps ?? d }];
     case "inspected":
       return [{ ...base, role: "tool", title: "Inspected repository", details: { file_count: d.file_count, manifests: d.manifests } }];
@@ -460,6 +477,13 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [{ ...base, role: "assistant", title: "Proposed edits", details: d }];
     case "agent_started":
       return [{ ...base, role: "assistant", title: "Started tool-using agent", details: d }];
+    case "agent_recovery":
+      return [{ ...base, role: "tool", title: "Adjusting approach", body: textOf(d.reason), details: d }];
+    case "agent_context_compacted":
+      return [{ ...base, role: "system", title: "Working context shortened",
+        body: d.compaction_version === 2
+          ? "Task requirements, the plan, recent findings and current changes were retained. Full observations remain in task history."
+          : "Older observations remain in task history. Workspace files are still available to read and search." }];
     case "agent_thinking": {
       const content = textOf(d.content, 16000);
       return content ? [{ ...base, role: "tool", kind: "agent_thinking", title: "Thinking", body: content }] : [];
@@ -531,7 +555,15 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
     case "confirmation_resolved":
       return [{ ...base, role: "system", title: d.accepted === true ? "Approved" : "Rejected", details: { id: textOf(d.id, 200), accepted: d.accepted === true, reason: textOf(d.reason, 500) } }];
     case "hook_blocked":
-      return [{ ...base, role: "system", title: "Blocked by a project hook", body: textOf(d.message, 1000), details: { tool: textOf(d.tool, 120) } }];
+      return [{ ...base, role: "system", title: "Blocked by a hook", body: textOf(d.message, 1000), details: { tool: textOf(d.tool, 120) } }];
+    case "hook_execution":
+      return [{ ...base, role: "system", title: `Hook: ${textOf(d.hook_id, 200)}`,
+        body: `${textOf(d.event, 40)} · ${textOf(d.decision, 20)}${d.reason ? ` · ${textOf(d.reason, 2000)}` : ""}`,
+        details: { source: textOf(d.source, 100), status: textOf(d.status, 40), priority: numOrUndef(d.priority),
+          duration_ms: numOrUndef(d.duration_ms), run_id: textOf(d.run_id, 64), dispatch_id: textOf(d.dispatch_id, 64),
+          call_id: textOf(d.call_id, 200), payload_sha256: textOf(d.payload_sha256, 64), data: d.data } }];
+    case "hook_event":
+      return []; // aggregate decisions remain searchable in the durable event log
     case "subagent":
       return d.phase === "end"
         ? [{ ...base, role: "tool", title: `${textOf(d.agent, 64) || "Subagent"} reported back`, body: textOf(d.findings, 4000), details: { agent: textOf(d.agent, 64), state: textOf(d.state, 40), tool_calls: numOrUndef(d.tool_calls) } }]
@@ -580,6 +612,15 @@ export function terminalTranscript(events: TaskEvent[]): TerminalView {
   const order: string[] = [];
   let total = 0;
   for (const event of events) {
+    if (isTerminal(event.kind)) {
+      for (const row of commands.values()) {
+        if (row.running && row.source === 'agent') {
+          row.running = false;
+          row.status = event.kind === 'cancelled' ? 'cancelled' : 'inconclusive';
+          row.output += '\nThe turn ended without a recorded command result.\n';
+        }
+      }
+    }
     if (event.kind !== "terminal_command" && event.kind !== "terminal_output") continue;
     const data = event.data ?? {};
     const id = textOf(data.command_id, 80);
@@ -621,6 +662,23 @@ export function terminalTranscript(events: TaskEvent[]): TerminalView {
     return `$ ${command.command}\n${command.output}${ending}`;
   }).join("\n\n");
   return { commands: list, text };
+}
+
+/** Real command activity, not simulated progress. Updated even when SSE is silent. */
+export function commandActivity(events: TaskEvent[], now: number): string | null {
+  const running = terminalTranscript(events).commands.filter(command => command.running).at(-1);
+  if (!running) return null;
+  const start = events.find(event => event.kind === 'terminal_command' && event.data?.command_id === running.id);
+  if (!start) return null;
+  let lastOutput = start.time;
+  for (const event of events) {
+    if (event.kind === 'terminal_output' && event.data?.command_id === running.id && typeof event.data.output === 'string' && event.data.output) lastOutput = event.time;
+  }
+  const elapsed = Math.max(0, Math.floor(now - start.time)), quiet = Math.max(0, Math.floor(now - lastOutput));
+  const timeout = numOrUndef(start.data?.timeout);
+  return `Command running · ${elapsed}s` + (quiet >= 5 ? ` · No output for ${quiet}s` : '')
+    + (timeout && timeout > 0 ? ` · Timeout ${timeout}s` : '')
+    + (quiet >= 5 ? running.source === 'manual' ? ' · Stop is available in Terminal.' : ' · Use Stop to interrupt.' : '');
 }
 
 export interface BrowserView { url: string; title: string; text: string; screenshot: string; status: string; error: string }
@@ -1527,11 +1585,13 @@ export function skillsPanel({ root, create, request }: M4PanelDom): M4PanelHandl
 
 export function resultStatus(state: string, result?: TaskResult | null): string {
   if (result && typeof result.error === "string" && result.error) return result.error;
-  if (state === "paused") return "Paused. Resume to continue from the exact step where it stopped.";
-  if (result?.tests_verified === true) return "Container tests passed. Review the diff; this is not proof of every acceptance criterion.";
+  if (state === "paused") return result?.pause_reason || "Paused. Resume to continue from the exact step where it stopped.";
+  if (result?.tests_verified === true) return `${result.direct === true ? "Local" : "Container"} tests passed. Review the diff; this is not proof of every acceptance criterion.`;
+    if (state === "completed" && result?.verification_level === "checks") return "Available project checks passed. No automated test suite was detected. Review the changes; this is not test-verified.";
+    if (state === "completed" && result?.verification_level === "unavailable") return "Change applied. Automated validation was unavailable; no test or check pass is claimed. Review the recorded limitations.";
   if (result) {
     const checks = (Array.isArray(result.checks) ? result.checks : []).filter(check => check && typeof check.kind === "string" && typeof check.status === "string").map(check => `${check.kind}: ${check.status}`).join(" · ");
-    return `NOT TEST-VERIFIED. ${checks ? checks + ". " : ""}Source repository unchanged. Inspect the check evidence above.`;
+    return `NOT TEST-VERIFIED. ${checks ? checks + ". " : ""}${result.source_modified === true ? "Changes were made in your files." : "Source repository unchanged."} Inspect the check evidence above.`;
   }
   return isTerminal(state)
     ? "Task stopped without a result. Inspect the persisted events above."

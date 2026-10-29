@@ -26,7 +26,7 @@ HIGH = [
     (re.compile(r"\b(mkfs|dd)\b|>\s*/dev/"), "writes to devices"),
     (re.compile(r"\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f)\b"), "rewrites or publishes history"),
 ]
-READ_TOOLS = {"list_files", "read_file", "search_text", "read_plan", "task_tracker", "write_plan", "finish", "delegate",
+READ_TOOLS = {"list_files", "read_file", "search_text", "read_skill", "read_plan", "task_tracker", "write_plan", "finish", "delegate",
               "request_secret"}  # request_secret is itself a question to the user
 
 
@@ -197,9 +197,12 @@ def load_subagents(root: Path, personal: Path, extra: list[tuple[str, Path]] = (
     then agents from trusted, enabled plugins (`extra`: (source label, folder) pairs)."""
     agents, names = [EXPLORER], {"explorer"}
     for source, directory in (("project", root / ".dikdik" / "agents"), ("personal", personal), *extra):
-        if not directory.is_dir():
+        if (not directory.is_dir() or directory.is_symlink() or directory.is_junction()
+                or directory.parent.is_symlink() or directory.parent.is_junction()):
             continue
         for path in sorted(directory.glob("*.md"))[:20]:
+            if path.is_symlink() or directory.resolve() not in path.resolve().parents:
+                continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")[:16384]
             except OSError:

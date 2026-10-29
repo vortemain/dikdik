@@ -28,3 +28,14 @@ test("older events with only a running total still count; nothing reported means
   expect(usageMetrics([event("running"), event("agent_model", { phase: "end", usage_tokens: 0 })]).turns).toEqual([]);
   expect(usageMetrics([event("agent_model", { phase: "end", usage: { input_tokens: -5, total_tokens: "9" } })]).turns).toEqual([]);
 });
+
+test("truncated and failed request usage is included without double counting retries", () => {
+  const metrics = usageMetrics([event("running"),
+    event("agent_model", { phase: "retry", usage_tokens: 100, usage: { total_tokens: 100, reported_cost: .001 } }),
+    event("agent_model", { phase: "end", usage_tokens: 160, usage: { total_tokens: 60, reported_cost: .002 } }),
+    event("agent_model", { phase: "error", usage_tokens: 180, usage: { total_tokens: 20 } }),
+  ]);
+  expect(metrics.task.totalTokens).toBe(180);
+  expect(metrics.task.reportedCost).toBeCloseTo(.003);
+  expect(metrics.turns[0]?.calls).toBe(3);
+});

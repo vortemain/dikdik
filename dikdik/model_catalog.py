@@ -4,7 +4,7 @@ Every provider here speaks the OpenAI chat-completions protocol at its base URL
 (Azure with its own key header), so connecting one is: paste a key, pick a model.
 The model lists here are explicitly labelled suggestions. Selecting a provider
 loads its native directory, following pagination in model_discovery.py. Most
-directories require a key; OpenRouter and Cerebras also have public catalogs.
+directories require a key; NVIDIA, OpenRouter and Cerebras also have public catalogs.
 Users can add their own OpenAI-compatible provider; registering it is what makes
 its URL acceptable for a profile, so arbitrary endpoints never slip in unannounced.
 """
@@ -21,7 +21,12 @@ from urllib.parse import urlsplit
 from .model_discovery import discover_models
 
 # kind: the stored profile/connection provider type (how requests authenticate).
+NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 PROVIDERS = {
+    "nvidia": {"name": "NVIDIA", "kind": "openai", "base": "https://integrate.api.nvidia.com/v1", "key_help": "https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b",
+               "blurb": "Free developer endpoints · NVIDIA API key required", "default_model": NVIDIA_DEFAULT_MODEL, "public_models": True,
+               "free_notice": "Nemotron 3.5 Lightning is available as a free prototyping endpoint. NVIDIA account limits and model availability apply.",
+               "models": [NVIDIA_DEFAULT_MODEL, "nvidia/nemotron-3.5-super-vl-120b-a12b"]},
     "openrouter": {"name": "OpenRouter", "kind": "openai", "base": "https://openrouter.ai/api/v1", "key_help": "https://openrouter.ai/keys",
                    "blurb": "One key for hundreds of models from every lab", "public_models": True,
                    "models": ["anthropic/claude-sonnet-5.5", "openai/gpt-5", "google/gemini-2.5-pro", "z-ai/glm-5.2", "deepseek/deepseek-chat-v3.1",
@@ -65,7 +70,7 @@ PROVIDERS = {
     "azure": {"name": "Azure OpenAI", "kind": "azure", "base": "", "key_help": "https://portal.azure.com",
               "blurb": "Your Azure OpenAI deployment (needs its endpoint)", "models": []},
 }
-DEFAULT_PROVIDER = "openrouter"
+DEFAULT_PROVIDER = "nvidia"
 CUSTOM_SCHEMA = "CREATE TABLE IF NOT EXISTS custom_providers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, base TEXT NOT NULL, created REAL NOT NULL)"
 LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
@@ -144,7 +149,7 @@ def catalog(store=None, connections: list[dict] | None = None) -> dict:
             match = next((c for c in connections or [] if c["provider"] == "azure"), None)
         providers.append({**entry, "connection": match and match["id"],
                           "connection_name": match and match["name"], "key_set": bool(match and match.get("key_set"))})
-    return {"default_provider": DEFAULT_PROVIDER, "providers": {p["id"]: p for p in providers}, "order": [p["id"] for p in providers]}
+    return {"default_provider": DEFAULT_PROVIDER, "default_model": NVIDIA_DEFAULT_MODEL, "providers": {p["id"]: p for p in providers}, "order": [p["id"] for p in providers]}
 
 
 def live_models(info: dict, key: str | None, timeout: float = 15) -> list[dict]:

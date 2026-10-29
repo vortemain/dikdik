@@ -1,6 +1,7 @@
 // Settings → Skills: your skills (search, filters, details), installing, marketplaces and their catalog.
 // Built with explicit DOM nodes; skill text from disk or a marketplace is shown as plain text, never HTML.
 import type { PaneDeps } from "./models-pane";
+import { confirmDialog } from "./dialogs";
 
 export interface SkillRow {
   id: string; name: string; description: string; scope: "personal" | "project" | "installed"; enabled: boolean; path: string;
@@ -141,9 +142,9 @@ export function skillsPane(root: HTMLElement, deps: PaneDeps & { useSkill: (name
         card.append(top, make("p", "skill-desc", row.description || "No description."), pills);
         if (row.scope === "installed") {
           const actions = make("div", "m4-actions");
-          if (row.source && row.source !== "local") actions.append(button("Refresh", "secondary", () => {
+          if (row.source && row.source !== "local") actions.append(button("Refresh", "secondary", async () => {
             const network = isNetworkSource(row.source ?? "");
-            if (network && !confirm(`Fetch ${row.name} again from ${row.source}?`)) return;
+            if (network && !await confirmDialog(`Refresh ${row.name}?`, `Fetch this skill again from ${row.source}.`, "Fetch skill")) return;
             void act(() => request(`/api/skills/${encodeURIComponent(row.id)}/refresh`, "POST", { approve_network: network }), "Skill refreshed.");
           }));
           actions.append(button("Uninstall", "secondary", () => { void act(() => request(`/api/skills/${encodeURIComponent(row.id)}`, "DELETE"), "Skill uninstalled."); }));
@@ -202,9 +203,9 @@ export function skillsPane(root: HTMLElement, deps: PaneDeps & { useSkill: (name
       row.append(title, make("span", "m4-meta", `${market.source}${market.repo_path ? ` · ${market.repo_path}` : ""} · ${market.synced ? `synced ${new Date(market.synced * 1000).toLocaleString()}` : "never synced"}`));
       if (market.status?.startsWith("error")) row.append(make("span", "m4-meta", market.status));
       const actions = make("span", "m4-actions");
-      actions.append(button("Sync", "secondary", () => {
+      actions.append(button("Sync", "secondary", async () => {
         const network = isNetworkSource(market.source);
-        if (network && !confirm(`Fetch ${market.name} from ${market.source}?`)) return;
+        if (network && !await confirmDialog(`Fetch ${market.name}?`, `Download this marketplace from ${market.source}.`, "Fetch marketplace")) return;
         void act(async () => {
           const result = await request<{ status: string }>(`/api/skills/marketplaces/${market.id}/sync`, "POST", { approve_network: network });
           message(result.status === "ok" ? "Synced." : `Sync failed; the previous copy is kept. ${result.status}`, result.status !== "ok");

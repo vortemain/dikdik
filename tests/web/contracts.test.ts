@@ -46,6 +46,11 @@ describe("mode and permission boundaries", () => {
 });
 
 describe("evidence-based status", () => {
+  test("static checks can complete a change without claiming test verification", () => {
+    expect(resultStatus("completed", { verification_level: "checks", tests_verified: false })).toContain("Available project checks passed");
+    expect(resultStatus("completed", { verification_level: "checks", tests_verified: false })).toContain("not test-verified");
+    expect(resultStatus("blocked", { verification_level: "checks", error: "Typecheck failed" })).toBe("Typecheck failed");
+  });
   test("recognizes all stopped states without inventing success", () => {
     for (const state of ["completed", "failed", "blocked", "cancelled", "interrupted"]) {
       expect(isTerminal(state)).toBe(true);

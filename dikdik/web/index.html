@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/workbench.css">
   <link rel="stylesheet" href="/model-settings.css">
+  <link rel="stylesheet" href="/dialogs.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -63,6 +64,7 @@
     <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".6" fill="currentColor"/></symbol>
   <symbol id="i-server" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="6" rx="2"/><rect x="3.5" y="13.5" width="17" height="6" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
   <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-spiral" viewBox="0 0 24 24"><path d="M12 2.5 A9.5 9.5 0 0 1 21.5 12 A9.5 9.5 0 0 1 12 21.5 A9.5 9.5 0 0 1 3.5 12 A8 8 0 0 1 12 4.5 A7.5 7.5 0 0 1 19.5 12 A7 7 0 0 1 12 18.5 A6 6 0 0 1 6.5 12 A5 5 0 0 1 12 7.5 A4 4 0 0 1 16 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   </svg>
 
   <div id="boot" class="boot" aria-hidden="true"><img src="/icon.svg" alt=""></div>
@@ -154,7 +156,6 @@
         <div class="topbar-actions">
           <button id="task-actions" class="ghost icon" type="button" aria-label="Task actions" title="Task actions" hidden><svg class="i"><use href="#i-more"/></svg></button>
           <button id="pause" class="ghost small" type="button" hidden title="Pause after the current step; resume later from exactly here"><svg class="i"><use href="#i-pause"/></svg>Pause</button>
-          <button id="cancel" class="secondary small" type="button" disabled><svg class="i"><use href="#i-stop"/></svg>Stop</button>
           <button id="open-files" class="ghost icon" type="button" aria-label="Files and Git" title="Files and Git"><svg class="i"><use href="#i-folder"/></svg></button>
           <button id="toggle-canvas" class="ghost small changes-button" type="button" aria-pressed="false" aria-controls="canvas" hidden><svg class="i"><use href="#i-diff"/></svg><span class="label">Changes</span><span id="changes-count" class="count"></span></button>
         </div>
@@ -188,11 +189,12 @@
       <section class="composer" aria-label="Send a message">
         <div class="composer-inner">
           <div id="model-banner" class="model-banner" role="status" hidden>
-            <span class="model-banner-icon" aria-hidden="true"><svg class="i"><use href="#i-cpu"/></svg></span>
+            <span class="model-banner-icon" aria-hidden="true"><img class="dikdik-logo" src="/icon.svg" alt=""></span>
             <div class="model-banner-text">
-              <strong>Choose a model to start</strong>
-              <span id="model-banner-note">Connect a provider with your API key, or a model running on this computer. It takes a minute.</span>
+              <strong>Start with NVIDIA, or choose your model</strong>
+              <span id="model-banner-note">Nemotron 3.5 Lightning is the default free developer model. Connect your NVIDIA API key to start.</span>
               <div class="model-banner-quick" role="group" aria-label="Quick connect">
+                <button class="model-chip" type="button" data-provider="nvidia">NVIDIA · Free</button>
                 <button class="model-chip" type="button" data-provider="openrouter">OpenRouter</button>
                 <button class="model-chip" type="button" data-provider="anthropic">Anthropic</button>
                 <button class="model-chip" type="button" data-provider="openai">OpenAI</button>
@@ -230,11 +232,12 @@
               <label class="pill classic-only" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="plan">Plan</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
               <label class="pill classic-only" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="docker">Docker tests</option><option value="local">On this computer</option></select></label>
               <label id="agent-profile-pill" class="pill" title="Agent profile"><span class="sr-only">Agent profile</span><svg class="i"><use href="#i-book"/></svg><select id="agent-profile"><option value="">Default agent</option></select></label>
-              <button id="model-pill" class="ghost small model-pill" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="model-menu" title="Choose a model"><svg class="i"><use href="#i-cpu"/></svg><span id="model-label">Model</span><svg class="i model-chevron"><use href="#i-chevron"/></svg></button>
+              <button id="model-pill" class="ghost small model-pill" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="model-menu" title="Choose a model"><span id="model-symbol"><img class="dikdik-logo" src="/icon.svg" alt=""></span><span id="model-label">Model</span><svg class="i model-chevron"><use href="#i-chevron"/></svg></button>
               <button id="options-toggle" class="ghost icon options-toggle" type="button" aria-expanded="false" aria-controls="options-panel" aria-label="Mode options" title="Mode options"><svg class="i"><use href="#i-sliders"/></svg></button>
               <span class="composer-spacer"></span>
               <button id="context-meter" class="ghost small context-meter" type="button" hidden title="Context used at the last model call. Click to condense older turns."><span class="meter-ring" aria-hidden="true"><span id="context-fill"></span></span><span id="context-label">0%</span></button>
               <button id="start" type="submit" class="primary" aria-label="Start task" title="Start task (Enter)" disabled><svg class="i"><use href="#i-arrow-up"/></svg></button>
+              <button id="cancel" type="button" class="primary composer-stop" aria-label="Stop response" title="Stop response" hidden><svg class="i" aria-hidden="true"><use href="#i-stop"/></svg></button>
             </div>
           </form>
           <p id="composer-footnote" class="composer-footnote">Dikdik works on an isolated copy. Your files change only when you apply.</p>
@@ -276,6 +279,7 @@
                 <button type="button" data-mode="new" aria-pressed="false" title="The new version (Markdown rendered)">New</button>
               </div>
               <button id="copy-diff" class="copy" type="button"><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button></div>
+            <p id="diff-read-note" class="file-read-note" hidden></p>
             <pre id="diff" tabindex="0" aria-labelledby="selected-file" hidden></pre>
             <div id="diff-split" class="diff-split" hidden></div>
             <div id="diff-new" class="diff-new" hidden></div>
@@ -307,6 +311,7 @@
               <button id="open-editor" class="copy vscode-action" type="button" hidden title="Open this file in VS Code at the first visible line"><img class="vscode-logo" src="/assets/brands/vscode.svg" alt="" aria-hidden="true"><span>Open in VS Code</span></button>
               <button id="copy-file" class="copy" type="button" hidden><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button>
             </div>
+            <p id="file-read-note" class="file-read-note" role="status" hidden></p>
             <pre id="file-view" class="numbered" tabindex="0"></pre>
             <div id="file-rendered" class="file-rendered" hidden></div>
           </div>
@@ -372,7 +377,7 @@
     <nav class="settings-nav" role="tablist" aria-label="Settings sections">
       <h2 id="settings-title">Settings</h2>
       <button class="settings-tab" type="button" role="tab" data-pane="general" aria-selected="true"><svg class="i"><use href="#i-sun"/></svg>General</button>
-      <button class="settings-tab" type="button" role="tab" data-pane="models" aria-selected="false"><svg class="i"><use href="#i-cpu"/></svg>Models</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="models" aria-selected="false"><img class="dikdik-logo" src="/icon.svg" alt="">Models</button>
       <button class="settings-tab" type="button" role="tab" data-pane="git" aria-selected="false"><svg class="i"><use href="#i-branch"/></svg>Git</button>
       <button class="settings-tab" type="button" role="tab" data-pane="agents" aria-selected="false"><svg class="i"><use href="#i-sparkle"/></svg>Agents</button>
       <button class="settings-tab" type="button" role="tab" data-pane="secrets" aria-selected="false"><svg class="i"><use href="#i-key"/></svg>API keys</button>
@@ -405,15 +410,15 @@
         </details>
       </section>
       <section class="settings-pane" data-pane="agents" role="tabpanel" hidden>
-        <p class="lead">Agent profiles are ready-made setups you pick in the composer: your instructions, which model to use, how long it may work, and which tools it may use. Tool switches only narrow what a task's approvals allow.</p>
+        <p class="lead">Choose instructions, a model, optional run limits and tool access. Leave limits blank to let long tasks continue. Token usage never stops a task. Tool switches respect your project approvals.</p>
         <form id="agent-form" class="skill-form">
           <input id="agent-id" type="hidden">
           <div class="skill-fields">
             <label for="agent-name">Name</label><input id="agent-name" required maxlength="64" placeholder="Careful reviewer">
             <label for="agent-instructions">Instructions</label><textarea id="agent-instructions" rows="4" placeholder="Explain the plan before editing. Keep changes minimal. Always add a test."></textarea>
             <label for="agent-model">Model</label><select id="agent-model"><option value="">Default model profile</option></select>
-            <label for="agent-steps">Max model calls</label><input id="agent-steps" type="number" min="1" max="60" placeholder="12">
-            <label for="agent-minutes">Time limit (seconds)</label><input id="agent-minutes" type="number" min="30" max="1800" placeholder="180">
+            <label for="agent-steps">Max model calls (optional)</label><input id="agent-steps" type="number" min="1" max="60" placeholder="No limit">
+            <label for="agent-minutes">Time limit in seconds (optional)</label><input id="agent-minutes" type="number" min="30" max="1800" placeholder="No limit">
             <label for="agent-secrets">Sandbox secrets</label><input id="agent-secrets" placeholder="Blank: every key exposed to the sandbox · or names, comma-separated · or none" autocomplete="off">
             <span>Tools</span>
             <div class="agent-flags">

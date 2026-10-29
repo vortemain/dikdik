@@ -116,6 +116,11 @@ export function modelPicker(root: HTMLElement, anchor: HTMLElement, deps: ModelP
         }
       } else {
         const fallback = profiles.find(p => p.is_default);
+        const recommended = providers.find(provider => provider.default_model);
+        if (!query && !fallback && recommended) results.append(row("Nemotron 3.5 Lightning", "NVIDIA · Default free developer model", recommended.id, false, () => {
+          if (recommended.connection) void use(recommended, { id: recommended.default_model!, name: "Nemotron 3.5 Lightning", context: null, prompt_price: null, completion_price: null });
+          else { close(); deps.manage(recommended.id); }
+        }));
         const saved = profiles.filter(p => (query || p.id !== fallback?.id) && matchesModel(query, p.name, p.model, providerId(p.provider, p.endpoint)));
         if (!query && fallback) results.append(row(fallback.model, "Default · " + fallback.name, providerId(fallback.provider, fallback.endpoint), deps.selected() === null || deps.selected() === fallback.id, () => pick(null)));
         if (saved.length) results.append(make("p", "picker-section", "Saved models"));

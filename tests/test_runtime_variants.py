@@ -50,6 +50,17 @@ class RuntimeVariantTests(unittest.TestCase):
         self.assertNotIn("Traceback", done.stderr + done.stdout)
         self.assertIn("project folder", done.stderr)
 
+    def test_the_program_folder_is_never_opened_as_the_project(self):
+        """Starting Dikdik from its own source folder (the default `claude`-style start)
+        must never make Dikdik's code the project: it falls back to the last real
+        project, or stops with one plain line when there is none."""
+        with tempfile.TemporaryDirectory() as home:
+            done = run_server("--data", str(Path(home) / "data"), "--no-browser", "--port", "1")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertNotIn("Traceback", done.stderr + done.stdout)
+        self.assertIn("project folder", done.stderr)
+        self.assertNotIn("Dikdik is running", done.stderr + done.stdout)
+
     def test_missing_workspace_path_refused_without_traceback(self):
         done = run_server("--workspace", "absent-not-created-directory")
         self.assertNotEqual(done.returncode, 0)
@@ -60,9 +71,9 @@ class RuntimeVariantTests(unittest.TestCase):
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
         listener.listen(1)
-        with tempfile.TemporaryDirectory() as data:
+        with tempfile.TemporaryDirectory() as data, tempfile.TemporaryDirectory() as workspace:
             try:
-                done = run_server("--workspace", Path(__file__).parent.parent / "examples" / "repair",
+                done = run_server("--workspace", workspace,
                                   "--data", data, "--port", str(port), "--no-browser")
             finally:
                 listener.close()

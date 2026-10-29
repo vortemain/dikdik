@@ -43,14 +43,28 @@ the `AgentModel` protocol also permits independent provider implementations.
 - Test execution requires a matching per-run receipt and nonzero executed counts,
   not only startup and exit zero. This catches early process exit, but cannot
   establish adversarial-proof test integrity within an untrusted interpreter.
-- Default ceilings: 12 model calls, 40 tool calls, 3 repair edits after failures,
-  32000 **reported** tokens, 180-second between-step deadline. No hidden retries.
-- Reported-token enforcement depends on accurate provider usage metadata. When
-  absent, token counters may be zero; call/output/context caps still apply, but
-  no exact token-cost cap or monetary budget is claimed.
+- Long tasks have no cumulative token cap and no default task-wide model-call,
+  tool-call, elapsed-time or repair-count cutoff. Token totals are telemetry only;
+  they never pause or fail work. Explicit profile call/time limits remain opt-in:
+  reaching one saves progress and pauses. Stop/Pause and normal verification,
+  approval and loop-detection behavior remain active. Read-only delegated helpers
+  retain separate 6-call/20-tool/120-second investigation bounds, without a token cap.
+- Usage reporting depends on provider metadata. When absent, token counters may
+  be zero; no exact usage, token-cost cap or monetary budget is claimed.
 - A model response may request at most 8 tools; mixed finish/edit batches are
   rejected. IDs are unique across the run. Arguments and observations are capped;
-  context and provider output are bounded. Repeated identical tool failures stop.
+  context and provider output are bounded. Above 75% of the 128KiB working prompt,
+  older observations are excerpted or evicted as whole assistant/tool groups;
+  user requirements, the reported checklist, bounded findings, exact current
+  changed-file/verification state and recent groups remain. Full events and
+  files remain available. This does not shorten a too-large user objective.
+  `list_files` supports a folder `path`, case-insensitive `query` and pagination.
+  Schema errors identify invalid/missing fields and allowed arguments. Two
+  identical failures trigger explicit recovery guidance; further identical
+  execution is suppressed, and four failures without progress pause with the
+  actual tool error. Repeated successful loops get one chance to change approach
+  before pausing. Interrupted batches receive explicit unfinished-tool results
+  before resume, preserving the provider's tool-call/result protocol.
   A failed unchanged candidate cannot reach the test runner again before a repair.
 - Cancellation and deadlines are cooperative around model/verifier calls. Socket
   idle timeout is not a hard provider wall-clock deadline. Docker retains its

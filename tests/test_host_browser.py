@@ -1,6 +1,7 @@
 """The computer's own browser: public-only proxy, page text, and when it is used."""
 
 import os
+import subprocess
 import sys
 import socket
 import tempfile
@@ -41,6 +42,26 @@ class ProxyTests(unittest.TestCase):
 
 
 class PageTextTests(unittest.TestCase):
+    def test_capture_uses_one_isolated_launch_for_dom_and_screenshot(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"test"
+
+        def launch(argv, cancel, timeout):
+            self.assertIn("--dump-dom", argv)
+            self.assertIn("--disable-component-update", argv)
+            self.assertIn("--proxy-bypass-list=<-loopback>", argv)
+            profile = Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--user-data-dir=")))
+            shot = Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--screenshot=")))
+            self.assertEqual(shot.parent, profile)
+            shot.write_bytes(png)
+            return subprocess.CompletedProcess(argv, 0, b"<title>Loaded</title><p>Rendered page</p>")
+
+        with patch("dikdik.host_browser._run", side_effect=launch) as run:
+            result = host_browser.capture("https://example.com/", browser="browser")
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual((result["title"], result["text"], result["png"]), ("Loaded", "Rendered page", png))
+        profile = Path(next(arg.split("=", 1)[1] for arg in run.call_args.args[0] if arg.startswith("--user-data-dir=")))
+        self.assertFalse(profile.exists())
+
     def test_browser_output_is_drained_before_process_exit(self):
         result = host_browser._run([sys.executable, "-c", "import sys; sys.stdout.write('x' * 200000)"], None, 5)
         self.assertIsNotNone(result)

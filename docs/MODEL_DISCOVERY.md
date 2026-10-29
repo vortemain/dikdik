@@ -11,6 +11,7 @@ the account cannot use for chat; known non-chat capabilities disable selection.
 
 | Provider | Directory | Authentication / pagination |
 |---|---|---|
+| NVIDIA | `https://integrate.api.nvidia.com/v1/models` | Public directory; Bearer key required for inference |
 | OpenRouter | `https://openrouter.ai/api/v1/models` | Public; optional Bearer |
 | Anthropic | `https://api.anthropic.com/v1/models` | `x-api-key`, version; `after_id` / `has_more` |
 | OpenAI | `https://api.openai.com/v1/models` | Bearer |
@@ -46,6 +47,23 @@ Primary references: [Anthropic](https://platform.claude.com/docs/en/api/models/l
 [Perplexity Orchestrator](https://docs.perplexity.ai/api-reference/gateway-models-get).
 
 ## UI behavior
+
+NVIDIA is the default setup provider, with
+`nvidia/nemotron-3.5-lightning-30b-a3b` as the default model preset. NVIDIA's
+[model page](https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b)
+lists its free developer endpoint as available (checked 2026-10-28). It requires
+an NVIDIA Developer account and API key; NVIDIA limits and availability apply.
+The catalog is public, so browsing does not require a key. Connecting through
+"Connect & use default" saves the key and selects the preset as the global
+default. Existing profiles are not replaced automatically merely by upgrading.
+With no configured profiles or DIKDIK model environment, `NVIDIA_API_KEY` or
+`NVIDIA_NIM_API_KEY` selects this preset automatically. Explicit DIKDIK model
+environment variables still take precedence.
+
+Anonymous live discovery returned 85 models and included the default preset.
+That directory does not guarantee all listed models have free chat inference.
+Authenticated inference was not run: no actual NVIDIA key was available. The UI
+setup flow was tested with synthetic credentials and fixture discovery only.
 
 The chat picker separates saved models from providers, searches full returned
 directories, and renders 50 additional rows per click. Settings renders 100 at a

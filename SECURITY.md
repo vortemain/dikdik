@@ -141,13 +141,35 @@ credential-like names, symlinks, junctions, non-UTF-8 content, binaries and file
 outside a small text-extension allowlist. Workspace ancestors cannot be links or
 junctions. Simple inherited `.gitignore` patterns are supported conservatively:
 negations never re-include excluded content; this is **not** full Git semantics.
-Limits: 10,000 inspected entries, depth 40, 1000 text files, 256KB/file and 8MB total.
-Overflow fails explicitly. No repository scripts execute during inspection.
+Discovery inspects at most 10,000 entries at depth 40. The initial text cache holds
+at most 1000 files, 256KB/file and 8MB total; additional files are deferred rather
+than blocking project opening. In Agent and Plan modes, filesystem tools discover,
+read and search supported files beyond that cache. Reads page by line and column,
+including long minified lines, with explicit continuation positions; searches
+stream bounded fragments and return match positions and snippets. Tool results
+are bounded to fit the model conversation. A file's entire contents are not
+automatically injected into a prompt. Reads/searches have time and cancellation
+budgets, with continuation metadata when incomplete.
 
-Exact edits can address only inventoried existing files. Test-named paths are
+Agent edits can materialize deferred text files within a 64MB/file and 64MB total
+working-state budget (10,000 files). Larger files remain readable/searchable;
+editing them requires a streaming command under the usual command-approval
+policy. Existing ignore, credential-path, link and protected-test policies apply.
+Classic single-proposal mode retains its bounded snapshot/edit limits.
+
+Large files also remain listed in the explorer; authenticated read-only previews
+use the same policy and read at most 4MB. The editor bounds rendered characters
+and lines, labels shortened previews and offers Open in VS Code. Partial server
+previews cannot be copied as whole files. No repository scripts execute during
+inspection. Large agent diffs have a labelled shortened UI preview; the full
+patch is retained in the task artifact and authenticated diff download.
+
+Exact edits can address supported existing workspace text files. Test-named paths are
 protected heuristically (`test*`, test directories, `.test.`, `.spec.`, conftest).
 This is not a semantic proof that an edit cannot affect test behavior. Changes
-go to a separate candidate directory. Original source files are never written.
+go to a separate candidate directory in Classic/Docker mode. Local Agent mode
+writes the source workspace with conflict checks and Undo checkpoints, including
+deferred files materialized for editing (see Local mode above).
 
 **Residual risks:** filename filtering cannot detect secrets embedded in ordinary
 source or documentation. No arbitrary-content secret redactor is claimed. Output,
@@ -220,13 +242,17 @@ No real-provider privacy/security test has been run.
 ## Original agent loop
 
 Tool-using mode is original DIKDIK code, not an imported OpenHands runtime. It
-requires both disclosure and Docker approvals and only exposes bounded in-memory
-file tools plus the fixed sandbox test runner. Existing exact-edit restrictions
+requires disclosure approval, plus execution approval for local/Docker execution,
+and exposes policy-checked workspace tools and the fixed test runner. Existing exact-edit restrictions
 remain authoritative. A model cannot add a shell command argument to `run_tests`.
 Every edit invalidates prior verification; finish requires net edits and current
-test success. Model/tool/context/output/repair limits and repeated-failure checks
-bound work. Token limits use reported totals or available component counts; absent
-or dishonest provider metadata prevents an exact token/cost guarantee. Event
+test success. There is no cumulative token ceiling or implicit task-wide call,
+time or repair cutoff for the main agent. Explicit profile call/time limits are
+enforced when selected. Working context is compacted, and per-response/output,
+file-policy, command-timeout and repeated-failure checks still apply. Token usage
+is reporting only; absent or dishonest provider metadata prevents exact usage or
+cost reporting. Read-only delegated investigations retain separate call/tool/time
+bounds and have no token cap. Event
 persistence failure stops further work. Cancellation acceptance and terminal commit
 are serialized so accepted finalization-time cancellation cannot become success.
 Model and verifier callbacks remain cooperative rather than instantly abortable.

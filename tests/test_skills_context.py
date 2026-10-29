@@ -41,11 +41,30 @@ class SkillContextTests(unittest.TestCase):
     def test_context_is_marked_untrusted_and_skips_disabled(self):
         text, names = self.skills.context()
         self.assertTrue(text.startswith(SKILL_UNTRUSTED_MARKER))
-        self.assertEqual(names, ["Deploy", "style"])
+        self.assertIn("Deploy", names)
+        self.assertIn("style", names)
+        self.assertIn("planning", names)  # a bundled skill is present
         self.assertIn("Run make release.", text)
         self.assertNotIn("name: Deploy", text)  # front matter is not repeated as text
         self.skills.set_enabled("style", False)
-        self.assertEqual(self.skills.context()[1], ["Deploy"])
+        self.assertNotIn("style", self.skills.context()[1])
+
+    def test_skill_routing_loads_relevant_skills_only(self):
+        # A bug-fix request routes to debugging and tdd, not ui-ux-design
+        text, names = self.skills.context("Fix the crash in the login form", "agent")
+        self.assertIn("debugging", names)
+        self.assertIn("test-driven-development", names)
+        self.assertNotIn("ui-ux-design", names)
+        # A UI request routes to ui-ux-design
+        text, names = self.skills.context("Build a website landing page", "agent")
+        self.assertIn("ui-ux-design", names)
+        self.assertIn("planning", names)  # always-on for code work
+        # A documentation request routes to document-creation
+        text, names = self.skills.context("Write a README for the project", "agent")
+        self.assertIn("document-creation", names)
+        # A simple question loads nothing specific
+        text, names = self.skills.context("What is 2 + 2?", "agent")
+        self.assertIn("planning", names)  # always-on fallback for code mode
 
     def test_context_is_bounded(self):
         for index in range(8):
@@ -82,4 +101,5 @@ class SkillContextTests(unittest.TestCase):
         self.assertIn("Use four spaces.", skill_message)
         self.assertEqual(shown[-1]["content"], "Explain")  # the objective still comes last
         used = next(e for e in data["events"] if e["kind"] == "skills")
-        self.assertEqual(used["data"]["names"], ["Deploy", "style"])
+        self.assertIn("Deploy", used["data"]["names"])
+        self.assertIn("style", used["data"]["names"])

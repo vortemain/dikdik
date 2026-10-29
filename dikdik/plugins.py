@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 from .skills_market import RECORD, _inside, fetch, parse_source, remove_tree, InstallConflict
+from .hooks import document_rules
 
 NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MAX_FILES, MAX_BYTES = 200, 2 * 1024 * 1024
@@ -64,18 +65,17 @@ def read_manifest(folder: Path, fallback_name: str | None = None) -> dict:
             isinstance(p, dict) and isinstance(p.get("name"), str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,31}", p["name"])
             and p.get("type", "text") in PARAMETER_TYPES for p in parameters):
         raise ValueError("parameters must be a list of {name, type: text | number | boolean}")
-    hooks = document.get("hooks") or {}
-    if not isinstance(hooks, dict) or not isinstance(hooks.get("block", []), list):
-        raise ValueError("hooks must be {\"block\": [...]}")
+    hooks = document.get("hooks", {})
+    document_rules(hooks)
     return {"name": name, "version": str(document.get("version") or "")[:40], "description": str(document.get("description") or "")[:500],
             "skills": _dir(document.get("skills"), "skills"), "agents": _dir(document.get("agents"), "agents"),
-            "hooks": hooks.get("block", [])[:50], "mcp_servers": servers, "parameters": parameters,
+            "hooks": hooks.get("block", []), "lifecycle_hooks": hooks.get("hooks", []), "mcp_servers": servers, "parameters": parameters,
             "prompt": str(document.get("prompt") or "")[:4000]}
 
 
 def _dir(value, default: str) -> str:
     value = value if isinstance(value, str) and value.strip() else default
-    if value.startswith(("/", "\\")) or ".." in Path(value).parts:
+    if value.startswith(("/", "\\")) or Path(value).is_absolute() or ":" in value or ".." in Path(value).parts:
         raise ValueError("Plugin folders must stay inside the plugin")
     return value
 
@@ -88,6 +88,7 @@ def contents(folder: Path, manifest: dict) -> dict:
     agents = sorted(p.stem for p in agents_dir.glob("*.md")) if agents_dir.is_dir() else []
     servers = [{"name": s.get("name"), "transport": s.get("transport", "http"), "target": s.get("url") or s.get("command") or ""} for s in manifest["mcp_servers"]]
     hooks = [{"tool": h.get("tool", "*"), "pattern": h.get("pattern", ""), "message": h.get("message", "")} for h in manifest["hooks"] if isinstance(h, dict)]
+    hooks += manifest.get("lifecycle_hooks", [])
     return {"skills": skills, "agents": agents, "mcp_servers": servers, "hooks": hooks}
 
 
@@ -137,9 +138,12 @@ class PluginStore:
         """(scope, name, folder) for every plugin; an installed plugin wins over a project one of the same name."""
         seen = set()
         for scope, base in (("installed", self.dir), ("project", self.project_dir)):
-            if not base.is_dir():
+            boundary = self.dir.parent.resolve() if scope == "installed" else self.project_dir.parent.parent.resolve()
+            if not base.is_dir() or base.is_symlink() or boundary not in base.resolve().parents:
                 continue
             for folder in sorted(p for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")):
+                if folder.is_symlink() or base.resolve() not in folder.resolve().parents:
+                    continue
                 if folder.name in seen or not NAME.fullmatch(folder.name) or manifest_path(folder) is None:
                     continue
                 seen.add(folder.name)
@@ -323,13 +327,27 @@ class PluginStore:
         return out
 
     def skill_dirs(self) -> list[tuple[str, Path]]:
-        return [(name, folder / manifest["skills"]) for name, folder, manifest in self.active() if (folder / manifest["skills"]).is_dir()]
+        return [(name, folder / manifest["skills"]) for name, folder, manifest in self.active()
+                if (folder / manifest["skills"]).is_dir() and folder.resolve() in (folder / manifest["skills"]).resolve().parents]
 
     def agent_dirs(self) -> list[tuple[str, Path]]:
-        return [(f"plugin {name}", folder / manifest["agents"]) for name, folder, manifest in self.active() if (folder / manifest["agents"]).is_dir()]
+        return [(f"plugin {name}", folder / manifest["agents"]) for name, folder, manifest in self.active()
+                if (folder / manifest["agents"]).is_dir() and folder.resolve() in (folder / manifest["agents"]).resolve().parents]
 
     def hook_documents(self) -> list[tuple[str, dict]]:
-        return [(name, {"block": manifest["hooks"]}) for name, _, manifest in self.active() if manifest["hooks"]]
+        # Do not silently drop an enabled plugin whose policy became malformed.
+        # Preserve a failure document so the central engine closes its gates.
+        documents = []
+        for scope, name, folder in self._folders():
+            state = self._record(name) if scope == "installed" else self._project_state(name)
+            if not (state.get("enabled") and state.get("trusted")):
+                continue
+            try:
+                manifest = read_manifest(folder)
+                documents.append((name, {"block": manifest["hooks"], "hooks": manifest["lifecycle_hooks"]}))
+            except (OSError, ValueError, TypeError):
+                documents.append((name, {"invalid": True}))
+        return documents
 
     # --- catalog from the shared marketplaces --------------------------------------------------------
     def catalog(self, marketplaces: list[dict]) -> list[dict]:

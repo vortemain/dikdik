@@ -70,7 +70,7 @@ class ModelDiscoveryTests(unittest.TestCase):
         self.assertEqual(listed["models"][0]["context"], 131072)
 
     def test_generic_openai_compatible_provider_formats_and_azure_header(self):
-        for provider in ("openai", "google", "deepseek", "xai", "mistral", "groq", "together", "moonshot", "zai", "qwen", "perplexity-orchestrator", "ollama", "lmstudio", "custom"):
+        for provider in ("nvidia", "openai", "google", "deepseek", "xai", "mistral", "groq", "together", "moonshot", "zai", "qwen", "perplexity-orchestrator", "ollama", "lmstudio", "custom"):
             with self.subTest(provider=provider):
                 result, calls = self.discover(provider, [{"data": [{"id": "one"}]}])
                 self.assertTrue(result["complete"])
@@ -105,6 +105,7 @@ class ModelDiscoveryTests(unittest.TestCase):
             self.assertNotIn("test-private-key", str(caught.exception))
 
     def test_normalizes_native_metadata_and_explicit_non_chat_models(self):
+        self.assertEqual(normalize_model({"id": "nvidia/model", "max_model_len": 1048576}, "nvidia")["context"], 1048576)
         self.assertEqual(normalize_model({"name": "models/gemini", "displayName": "Gemini", "supportedGenerationMethods": ["embedContent"]}, "google")["chat_supported"], False)
         self.assertEqual(normalize_model({"id": "m", "max_context_length": 32000, "capabilities": {"completion_chat": True}}, "mistral")["context"], 32000)
         self.assertIsNone(normalize_model({"id": "bad\nname"}, "custom"))

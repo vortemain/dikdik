@@ -1,6 +1,24 @@
 import { expect, test } from "bun:test";
 import { conversationLabel, eventsToChat, eventToMessages } from "../../dikdik/web/contracts";
 
+test("context compaction is a plain system notice without raw diagnostic code blocks", () => {
+  const row = eventToMessages({ seq: 9, task_id: "t", time: 1, kind: "agent_context_compacted", data: {
+    before_bytes: 100310, context_bytes: 28934, context_limit: 131072, compaction_version: 2,
+  } }, "")[0];
+  expect(row).toMatchObject({ role: "system", title: "Working context shortened" });
+  expect(row?.body).toContain("plan");
+  expect(row?.details).toBeUndefined();
+  const old = eventToMessages({ seq: 10, task_id: "t", time: 1, kind: "agent_context_compacted", data: {} }, "")[0];
+  expect(old?.body).not.toContain("were retained");
+});
+
+test("model failures and retries show the useful safe diagnosis", () => {
+  const row = eventToMessages({ seq: 1, task_id: "t", time: 1, kind: "agent_model", data: {
+    phase: "retry", kind: "output_limit", error: "Output-token budget exhausted", attempt: 1, retryable: true,
+  } }, "")[0];
+  expect(row).toMatchObject({ title: "Retrying model request", body: "Output-token budget exhausted", details: { kind: "output_limit", attempt: 1 } });
+});
+
 test("eventsToChat maps the objective to a user message and terminal events to system messages", () => {
   const objective = "Fix the add function.";
   const events = [
@@ -26,6 +44,16 @@ test("eventsToChat maps the objective to a user message and terminal events to s
 test("eventToMessages ignores unknown event kinds rather than executing or inventing content", () => {
   const msgs = eventToMessages({ seq: 1, task_id: "t1", time: 0, kind: "unknown_event", data: { evil: "<script>" } }, "obj");
   expect(msgs).toEqual([]);
+});
+
+test('old canned workflow plans disappear on replay while request-specific and ACP plans remain', () => {
+  const steps = ['Discover workspace files and read relevant ranges', 'Make targeted edits with conflict checks',
+    'Update workspace files and record an Undo checkpoint', 'Run selected checks', 'Report changes and verification evidence'];
+  const event = { seq: 2, task_id: 't1', time: 1000, kind: 'plan', data: { steps } };
+  expect(eventToMessages(event, 'What makes a website look AI-generated?')).toEqual([]);
+  expect(eventToMessages({ ...event, data: { steps, source: 'acp' } }, 'Implement feature')).toHaveLength(1);
+  expect(eventToMessages({ ...event, data: { steps: ['Inspect the existing checkout flow', 'Add validation for the requested field', 'Run checkout tests'] } }, 'Fix checkout')).toHaveLength(1);
+  expect(eventToMessages({ ...event, data: { steps: ['Internal stage'], source: 'workflow' } }, 'Question')).toEqual([]);
 });
 
 test("eventToMessages sanitizes control characters in agent message content", () => {

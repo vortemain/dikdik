@@ -48,7 +48,7 @@ def normalize_model(row: dict, provider: str) -> dict | None:
     name = _text(row.get("display_name") or row.get("displayName") or row.get("name")) or identifier
     if name == "models/" + identifier:
         name = identifier
-    context = next((_number(row.get(k)) for k in ("context_length", "context_window", "max_context_length", "max_input_tokens", "inputTokenLimit", "contextWindow", "contextLength") if _number(row.get(k))), None)
+    context = next((_number(row.get(k)) for k in ("context_length", "context_window", "max_context_length", "max_model_len", "max_input_tokens", "inputTokenLimit", "contextWindow", "contextLength") if _number(row.get(k))), None)
     if context is None and isinstance(row.get("limits"), dict):
         context = _number(row["limits"].get("max_context_length"))
     capabilities = row.get("capabilities") if isinstance(row.get("capabilities"), dict) else {}

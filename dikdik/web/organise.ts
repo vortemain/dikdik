@@ -130,7 +130,19 @@ export function alertKind(line: string): AlertKind | null {
 }
 function cells(line: string): string[] {
   const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
-  return trimmed.split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, "|"));
+  const out: string[] = []; let cell = '', code = 0;
+  for (let i = 0; i < trimmed.length; i++) {
+    const character = trimmed[i]!;
+    if (character === '\\' && trimmed[i + 1] === '|') { cell += '|'; i++; continue; }
+    if (character === '`') {
+      let count = 1; while (trimmed[i + count] === '`') count++;
+      if (!code) code = count; else if (code === count) code = 0;
+      cell += '`'.repeat(count); i += count - 1; continue;
+    }
+    if (character === '|' && !code) { out.push(cell.trim()); cell = ''; }
+    else cell += character;
+  }
+  out.push(cell.trim()); return out;
 }
 /** A GitHub table starting at `lines[start]`, or null. */
 export function parseTable(lines: readonly string[], start: number): { header: string[]; align: ("left" | "center" | "right" | "")[]; rows: string[][]; end: number } | null {

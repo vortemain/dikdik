@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { detectLanguage, grammarFor, highlight, highlightLines, supportedLanguages, HIGHLIGHT_LIMIT } from "../../dikdik/web/highlight";
+import { boundedFilePreview, detectLanguage, grammarFor, highlight, highlightLines, supportedLanguages, HIGHLIGHT_LIMIT } from "../../dikdik/web/highlight";
+
+test("large file previews cap rendering while retaining exact normal-file content", () => {
+  expect(boundedFilePreview("a\nb\n")).toEqual({ text: "a\nb\n", truncated: false });
+  expect(boundedFilePreview("abcdef", 3)).toEqual({ text: "abc", truncated: true });
+  expect(boundedFilePreview("a\nb\nc\n", 100, 2)).toEqual({ text: "a\nb\n", truncated: true });
+  expect(boundedFilePreview("a\nb\n", 100, 2)).toEqual({ text: "a\nb\n", truncated: false });
+});
 
 const SAMPLES: Record<string, string> = {
   python: 'import os\n\n@cache\ndef add(a, b):\n    """Sum.\n    Two lines."""\n    return a + b  # done\nprint(f"x={add(1, 2)}", None)\n',

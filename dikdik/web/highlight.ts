@@ -74,6 +74,17 @@ export function highlight(text: string, lang: string): Token[] {
 }
 
 /** The same tokens cut at line breaks, for numbered file views (a token may span lines). */
+export function boundedFilePreview(text: string, maxChars = 1_000_000, maxLines = 20_000): { text: string; truncated: boolean } {
+  let end = Math.min(text.length, maxChars), position = 0;
+  for (let lines = 0; lines < maxLines; lines++) {
+    const newline = text.indexOf("\n", position);
+    if (newline < 0 || newline >= end) break;
+    position = newline + 1;
+    if (lines === maxLines - 1) end = position;
+  }
+  return { text: text.slice(0, end), truncated: end < text.length };
+}
+
 export function highlightLines(text: string, lang: string): Token[][] {
   const lines: Token[][] = [[]];
   for (const [kind, value] of highlight(text, lang)) {

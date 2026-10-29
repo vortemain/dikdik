@@ -12,7 +12,7 @@ from urllib.parse import quote
 from pathlib import Path
 
 from dikdik.engine import Engine
-from dikdik.projects import check_clone_url, list_folders, pick_folder
+from dikdik.projects import Projects, check_clone_url, check_location, list_folders, pick_folder
 from dikdik.server import make_server
 from dikdik.store import Store
 
@@ -50,7 +50,7 @@ class ProjectTests(unittest.TestCase):
     def finished_task(self):
         task = self.call("POST", "/api/tasks", edit_request())[1]["id"]
         for _ in range(100):
-            if self.call("GET", f"/api/tasks/{task}")[1]["state"] not in {"queued", "running"}:
+            if self.call("GET", f"/api/tasks/{task}")[1]["state"] not in {"queued", "running"} and not self.server.projects.engine.active:
                 return task
             time.sleep(0.1)
         self.fail("task did not finish")
@@ -82,6 +82,21 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual((self.b / "app.py").read_text(encoding="utf-8"), "value = 1\n")
         self.call("POST", "/api/projects/open", {"path": str(self.a)})
         self.assertEqual([t["id"] for t in self.call("GET", "/api/tasks")[1]], [task])
+
+    def test_open_project_with_large_cover_svg_keeps_asset_visible_and_previewable(self):
+        asset = self.b / "client/public/Cover.svg"
+        asset.parent.mkdir(parents=True)
+        svg = '<svg xmlns="http://www.w3.org/2000/svg">' + " " * 400000 + '</svg>'
+        asset.write_text(svg, encoding="utf-8")
+        self.assertEqual(self.call("POST", "/api/projects/open", {"path": str(self.b)})[0], 200)
+        status, project = self.call("GET", "/api/project")
+        self.assertEqual(status, 200)
+        self.assertIn("app.py", [entry["path"] for entry in project["files"]])
+        self.assertIn("client/public/Cover.svg", [entry["path"] for entry in project["large_files"]])
+        status, preview = self.call("GET", "/api/files/content?path=client/public/Cover.svg")
+        self.assertEqual(status, 200)
+        self.assertEqual(preview["text"], svg)
+        self.assertFalse(preview["indexed"])
 
     def test_keys_and_settings_are_shared_across_projects(self):
         self.assertEqual(self.call("POST", "/api/secrets", {"ref": "shared-key", "plaintext": "value-123"})[0], 201)
@@ -182,6 +197,67 @@ class FolderChooserTests(unittest.TestCase):
             self.assertIn("Elijah''s folder", run.call_args.args[0][-1])
             run.return_value = subprocess.CompletedProcess([], 0, "", "")
             self.assertIsNone(pick_folder())
+
+
+class ProgramFolderTests(unittest.TestCase):
+    """Dikdik's own program code can never become a project: not at startup, not
+    through the folder picker, and not as a new or cloned project's location."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.data = self.base / "data"
+        self.install = self.base / "dikdik-src"
+        (self.install / "dikdik").mkdir(parents=True)
+        (self.install / "dikdik" / "projects.py").write_text("", encoding="utf-8")
+        (self.install / "examples").mkdir()
+        self.project = self.base / "real"
+        self.project.mkdir()
+        (self.project / "app.py").write_text("value = 1\n", encoding="utf-8")
+
+    def test_check_location_refuses_the_program_folder_and_everything_inside_it(self):
+        with patch("dikdik.projects.program_root", return_value=self.install):
+            for path in (self.install, self.install / "dikdik", self.install / "examples"):
+                with self.subTest(path=path), self.assertRaisesRegex(ValueError, "program code"):
+                    check_location(path, self.data)
+            self.assertEqual(check_location(self.project, self.data), self.project.resolve())
+
+    def test_open_refuses_and_keeps_the_current_project(self):
+        engine = Engine(self.project, self.data)
+        self.addCleanup(engine.close)
+        with patch("dikdik.projects.program_root", return_value=self.install):
+            projects = Projects(engine)
+            with self.assertRaisesRegex(ValueError, "program code"):
+                projects.open(str(self.install))
+            self.assertEqual(projects.describe()["current"]["path"], str(self.project.resolve()))
+
+    def test_recent_projects_never_offer_the_program_folder(self):
+        engine = Engine(self.project, self.data)
+        self.addCleanup(engine.close)
+        with patch("dikdik.projects.program_root", return_value=self.install):
+            engine.workspaces.add(str(self.install))  # a stale entry from before this rule
+            engine.workspaces.add(str(self.project))
+            described = Projects(engine).describe()
+        self.assertEqual([entry["name"] for entry in described["recent"]], ["real"])
+
+    def test_new_and_cloned_projects_cannot_land_in_the_program_folder(self):
+        engine = Engine(self.project, self.data)
+        self.addCleanup(engine.close)
+        with patch("dikdik.projects.program_root", return_value=self.install):
+            projects = Projects(engine)
+            with self.assertRaisesRegex(ValueError, "program folder"):
+                projects.create({"name": "inside", "parent": str(self.install)})
+            with self.assertRaisesRegex(ValueError, "program folder"):
+                projects.clone({"url": "https://github.com/owner/repo", "parent": str(self.install)})
+        self.assertFalse((self.install / "inside").exists())
+
+    def test_a_venv_install_does_not_block_the_surrounding_project(self):
+        """site-packages lives deep inside user folders; ancestors stay openable."""
+        site_packages = self.base / "myapp" / ".venv" / "Lib" / "site-packages"
+        site_packages.mkdir(parents=True)
+        with patch("dikdik.projects.program_root", return_value=site_packages):
+            self.assertEqual(check_location(self.base / "myapp", self.data), (self.base / "myapp").resolve())
 
 
 class SharedStoreTests(unittest.TestCase):

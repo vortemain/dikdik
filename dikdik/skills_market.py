@@ -213,7 +213,15 @@ class SkillStore:
         target = self.root / name
         if not NAME.fullmatch(name) or not target.is_dir():
             raise KeyError(name)
+        record_path = target / ".installed.json"
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8")) if record_path.is_file() else {}
+        except (OSError, ValueError):
+            record = {}
         remove_tree(target)
+        if record.get("source") == "bundled":  # tombstone so a removed bundled skill does not reseed
+            with self.store.connect() as db:
+                db.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (f"bundled_uninstalled:{name}", "1"))
         return {"deleted": name}
 
     # --- marketplaces ---------------------------------------------------------------------

@@ -52,6 +52,7 @@ test("actual polling retains file selection and control nodes, with safe fallbac
   let result: unknown = { diff, file_changes: [{ path, status: "added", start_line: 0, end_line: 2 }] };
   let state = "running", requests = 0, poll: (() => void) | undefined;
   let holdGet: Promise<void> | null = null;
+  let stopRequests = 0, releaseStop: (() => void) | undefined;
   const tick = () => new Promise(resolve => setTimeout(resolve, 0));
   try {
     install("HTMLElement", Node); install("HTMLButtonElement", Button); install("HTMLInputElement", Input);
@@ -59,6 +60,12 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     install("document", { getElementById: node, createElement: (tag: string) => tag === "button" ? new Button() : new Node(), createElementNS: () => new Node() });
     install("setInterval", (callback: () => void) => { poll = callback; return 1; });
     install("fetch", async (url: string) => {
+      if (url === '/api/tasks/task-1/interrupt') {
+        stopRequests++;
+        await new Promise<void>(resolve => { releaseStop = resolve; });
+        state = 'paused';
+        return Response.json({ requested: true });
+      }
       if (url === "/api/session") return Response.json({ signed_in: true });
       if (url === "/api/model") return Response.json({ configured: false, source: "none", problem: "No model is set up." });
       if (url === "/api/project") return Response.json({ name: "fixture", files: [], python_tests: [], manifests: [], limitations: "fixture" });
@@ -134,6 +141,21 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     holdGet = null; release(); await tick(); await tick();
     expect(node('task-state').textContent).toBe('running');
     expect(node('cancel').disabled).toBe(false);
+    expect(node('start').hidden).toBe(true);
+    expect(node('cancel').hidden).toBe(false);
+    // A single click sends Stop immediately, even with an empty draft or missing model.
+    node('objective').value = '';
+    node('model-banner').hidden = false;
+    node('cancel').onclick!();
+    expect(stopRequests).toBe(1);
+    expect(node('cancel').disabled).toBe(true);
+    expect(node('cancel').attributes.get('aria-label')).toBe('Stopping response');
+    node('cancel').onclick!();
+    expect(stopRequests).toBe(1); // no duplicate request, no confirmation timer
+    releaseStop!(); await tick(); await tick();
+    expect(node('cancel').hidden).toBe(true);
+    expect(node('start').hidden).toBe(false);
+    expect(node('task-state').textContent).toBe('paused');
   } finally {
     for (const [name, descriptor] of saved) {
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);

@@ -1,6 +1,7 @@
 // Settings → MCP servers: built-in library, custom servers, editing, connection tests,
 // per-server key mappings and OAuth sign-in. Server-provided text is always textContent.
 import type { PaneDeps } from "./models-pane";
+import { formDialog, confirmDialog } from "./dialogs";
 
 export interface McpServer {
   id: string; name: string; transport: "http" | "stdio"; url: string; command: string;
@@ -127,10 +128,13 @@ export function mcpPane(root: HTMLElement, deps: PaneDeps): () => Promise<void> 
       for (const tool of info.tools) {
         const item = make("li", "m4-row"), title = make("p", "m4-title"); title.append(make("span", "m4-strong m4-mono", tool.name));
         const description = make("p", "hint", tool.description || "No description."), run = button("Call tool"), result = make("pre", "skill-content"); result.hidden = true;
-        run.onclick = () => {
-          const raw = prompt(`JSON arguments for ${tool.name}`, "{}"); if (raw === null) return;
-          let args: unknown; try { args = JSON.parse(raw); } catch { message("Arguments must be valid JSON.", true); return; }
-          if (!args || Array.isArray(args) || typeof args !== "object") { message("Arguments must be a JSON object.", true); return; }
+        run.onclick = async () => {
+          const data = await formDialog({ title: `Call ${tool.name}`, description: tool.description || "Send arguments to this MCP tool.", fields: [{ name: "arguments", label: "JSON arguments", type: "textarea", value: "{}", required: true }], submit: "Call tool", validate: values => {
+            try { const args = JSON.parse(values.arguments ?? ""); return args && !Array.isArray(args) && typeof args === "object" ? null : "Arguments must be a JSON object."; }
+            catch { return "Arguments must be valid JSON."; }
+          } });
+          if (!data) return;
+          const args: unknown = JSON.parse(data.arguments!);
           run.disabled = true; result.hidden = false; result.textContent = "Calling…";
           void request<McpTest>(`/api/mcp/${server.id}/test`, "POST", { tool_call: { name: tool.name, arguments: args } }).then(reply => {
             result.textContent = reply.tool_result?.content ?? "No result"; result.classList.toggle("error-text", Boolean(reply.tool_result?.is_error));
@@ -252,8 +256,8 @@ export function mcpPane(root: HTMLElement, deps: PaneDeps): () => Promise<void> 
         if (server.auth === "oauth") actions.append(server.signed_in
           ? button("Sign out", "secondary small", () => { void act(() => request(`/api/mcp/${server.id}/oauth`, "DELETE"), `${server.name} signed out.`); })
           : button("Sign in", "primary small", () => { void signIn(server); }));
-        actions.append(button("Test", "secondary small", () => testDialog(server)), button("Edit", "secondary small", () => serverForm(server)), button("Delete", "secondary small", () => {
-          if (!confirm(`Delete ${server.name}?`)) return; void act(() => request(`/api/mcp/${server.id}`, "DELETE"), "Server deleted.");
+        actions.append(button("Test", "secondary small", () => testDialog(server)), button("Edit", "secondary small", () => serverForm(server)), button("Delete", "secondary small", async () => {
+          if (!await confirmDialog(`Delete ${server.name}?`, "This removes the saved MCP server connection.", "Delete server", true)) return; void act(() => request(`/api/mcp/${server.id}`, "DELETE"), "Server deleted.");
         }));
         row.append(title, target, keys, actions); return row;
       }));

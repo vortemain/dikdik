@@ -1,4 +1,6 @@
 /* Workspace surfaces use the same theme tokens as the rest of Dikdik. */
+.file-read-note { margin: 0; padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 11px; line-height: 1.7; }
+.file-read-note[hidden] { display: none; }
 .vscode-logo { width: 18px; height: 18px; object-fit: contain; flex: 0 0 auto; vertical-align: middle; }
 .vscode-action, .vscode-mention { display: inline-flex; align-items: center; gap: 7px; }
 .vscode-action .vscode-logo { padding: 2px; box-sizing: content-box; }

@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -54,6 +55,24 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(data["providers"]["openrouter"]["base"], "https://openrouter.ai/api/v1")
         self.assertIn("z-ai/glm-5.2", data["providers"]["openrouter"]["models"])
         self.assertIsNone(data["providers"]["openrouter"]["connection"])
+
+    def test_nvidia_default_setup_requires_key_then_selects_connected_profile(self):
+        from dikdik.model_catalog import NVIDIA_DEFAULT_MODEL
+        catalog = self.call("GET", "/api/model-catalog")[1]
+        self.assertEqual((catalog["default_provider"], catalog["default_model"]), ("nvidia", NVIDIA_DEFAULT_MODEL))
+        self.assertEqual(catalog["order"][0], "nvidia")
+        self.assertTrue(catalog["providers"]["nvidia"]["public_models"])
+        with patch("dikdik.server_routes.discover_models", return_value={"models": [], "complete": True}) as directory:
+            self.assertEqual(self.call("GET", "/api/model-catalog/nvidia/models")[0], 200)
+            self.assertIsNone(directory.call_args.args[1])
+        self.assertEqual(self.call("POST", "/api/model-catalog/nvidia/connect", {})[0], 400)
+        self.assertEqual(self.call("POST", "/api/model-catalog/nvidia/connect", {"api_key": KEY})[0], 200)
+        self.assertEqual(self.call("POST", "/api/model-catalog/nvidia/use", {"model": NVIDIA_DEFAULT_MODEL, "default": True})[0], 200)
+        config = self.engine.models.resolve()
+        self.assertEqual((config.model, config.key, config.auth), (NVIDIA_DEFAULT_MODEL, KEY, "bearer"))
+        self.assertEqual(config.url, "https://integrate.api.nvidia.com/v1/chat/completions")
+        self.assertEqual(config.public["provider_name"], "NVIDIA")
+        self.assertNotIn(KEY, json.dumps(self.call("GET", "/api/model-catalog")[1]))
 
     def test_connect_then_use_a_model_as_the_default(self):
         self.assertEqual(self.call("POST", "/api/model-catalog/openrouter/connect", {})[0], 400)  # a key is needed

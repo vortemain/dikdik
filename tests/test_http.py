@@ -118,6 +118,8 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual((content["version"], content["text"].strip()), ("candidate", "x = 2"))
         self.assertEqual(json.loads(self.call("GET", "/api/files/content?path=app.py")[2])["text"].strip(), "x = 1")
         self.assertEqual(self.call("GET", "/api/files/content?path=nope.py")[0], 404)
+        self.assertEqual(self.call("GET", f"/api/tasks/{task}/diff", auth=False)[0], 401)
+        self.assertEqual(self.call("GET", f"/api/tasks/{task}/diff")[2], self.engine.full_diff(task))
         self.assertEqual(self.call("POST", f"/api/tasks/{task}/apply", {})[0], 400)  # needs explicit confirmation
         (self.engine.root / "app.py").write_text("x = 9\n")
         status, _, body = self.call("POST", f"/api/tasks/{task}/apply", {"confirm": True})

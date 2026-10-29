@@ -57,6 +57,18 @@ class ModelResolutionTests(unittest.TestCase):
         self.assertEqual((config.url, config.model, config.key), (ENV["DIKDIK_MODEL_URL"], "env-model", "env-key"))
         self.assertEqual((info["configured"], info["source"]), (True, "environment"))
 
+    def test_nvidia_environment_key_uses_default_free_developer_model(self):
+        from dikdik.model_catalog import NVIDIA_DEFAULT_MODEL
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "test-nvidia-key"}):
+            config = self.engine.models.resolve()
+            info = self.engine.models.describe()
+        self.assertEqual((config.model, config.auth, config.key), (NVIDIA_DEFAULT_MODEL, "bearer", "test-nvidia-key"))
+        self.assertEqual(config.url, "https://integrate.api.nvidia.com/v1/chat/completions")
+        self.assertEqual((info["configured"], info["provider_name"]), (True, "NVIDIA"))
+        self.assertNotIn("test-nvidia-key", json.dumps(info))
+        with patch.dict(os.environ, {**ENV, "NVIDIA_API_KEY": "test-nvidia-key"}):
+            self.assertEqual(self.engine.models.resolve().model, "env-model")
+
     def test_default_profile_beats_environment_and_decrypts_its_key(self):
         self.secrets.set("openai-key", KEY.encode())
         self.profile(timeout_seconds=45)

@@ -1,9 +1,15 @@
 // Settings → Plugins: installed, project and marketplace plugins; a review before trusting one.
 // Every value from a plugin (names, descriptions, file text) is shown as plain text, never HTML.
 import type { PaneDeps } from "./models-pane";
+import { confirmDialog } from "./dialogs";
 import { isNetworkSource } from "./skills-pane";
 
-export interface PluginAdds { skills: string[]; agents: string[]; mcp_servers: { name: string; transport: string; target: string }[]; hooks: { tool: string; pattern: string; message: string }[] }
+export interface PluginHook {
+  tool?: string; pattern?: string; message?: string; id?: string; event?: string;
+  decision?: string; reason?: string; priority?: number; timeout_seconds?: number;
+  match?: { tool?: string; contains?: string; pattern?: string };
+}
+export interface PluginAdds { skills: string[]; agents: string[]; mcp_servers: { name: string; transport: string; target: string }[]; hooks: PluginHook[] }
 export interface Parameter { name: string; type?: "text" | "number" | "boolean"; label?: string }
 export interface Plugin {
   name: string; scope: "installed" | "project"; version?: string; description?: string; enabled: boolean; trusted: boolean;
@@ -13,6 +19,13 @@ export interface PluginEntry { marketplace: string; marketplace_name: string; na
 export type PluginView = "all" | "installed" | "available" | "project";
 export interface PluginCard { kind: "plugin"; plugin: Plugin }
 export interface EntryCard { kind: "entry"; entry: PluginEntry }
+
+/** Plain text shown before enabling a plugin; preserve the actual rule semantics. */
+export function pluginHookLabel(hook: PluginHook): string {
+  if (!hook.event) return `tool.before · block · ${hook.tool || "*"}: ${hook.pattern || "everything"}${hook.message ? ` · ${hook.message}` : ""}`;
+  const conditions = [hook.match?.tool || "*", hook.match?.contains ? `contains ${hook.match.contains}` : "", hook.match?.pattern ? `pattern ${hook.match.pattern}` : ""].filter(Boolean).join(" · ");
+  return `${hook.id || "Hook"} · ${hook.event} · ${hook.decision || "invalid"} · ${conditions} · priority ${hook.priority ?? 0} · ${hook.timeout_seconds ?? 5}s${hook.reason ? ` · ${hook.reason}` : ""}`;
+}
 
 /** The cards a view shows, filtered by the search text (name, description, source, ref). */
 export function pluginCards(plugins: readonly Plugin[], catalog: readonly PluginEntry[], view: PluginView, query: string): (PluginCard | EntryCard)[] {
@@ -73,7 +86,7 @@ export function pluginsPane(root: HTMLElement, deps: PaneDeps & { startTask: (pr
     const row = (label: string, items: string[]) => list.append(make("dt", "", label), make("dd", "", items.length ? items.join(", ") : "none"));
     row("Skills", adds?.skills ?? []);
     row("Subagents", adds?.agents ?? []);
-    row("Block rules", (adds?.hooks ?? []).map(h => `${h.tool}: ${h.pattern || "everything"}`));
+    row("Hooks", (adds?.hooks ?? []).map(pluginHookLabel));
     row("MCP servers (added switched off)", (adds?.mcp_servers ?? []).map(s => `${s.name} (${s.transport} ${s.target})`));
     return list;
   }
@@ -103,9 +116,9 @@ export function pluginsPane(root: HTMLElement, deps: PaneDeps & { startTask: (pr
       }));
     }
     if (plugin.scope === "installed") {
-      if (plugin.source && plugin.source !== "local") controls.append(button("Update", "secondary small", () => {
+      if (plugin.source && plugin.source !== "local") controls.append(button("Update", "secondary small", async () => {
         const network = isNetworkSource(plugin.source ?? "");
-        if (network && !confirm(`Fetch ${plugin.name} again from ${plugin.source}?`)) return;
+        if (network && !await confirmDialog(`Refresh ${plugin.name}?`, `Fetch this plugin again from ${plugin.source}.`, "Fetch plugin")) return;
         void act(() => request(url(plugin.name, "/refresh"), "POST", { approve_network: network }), "Plugin updated.").then(() => openDetail(plugin.name));
       }));
       controls.append(button("Uninstall", "secondary small", () => { box.close(); void act(() => request(url(plugin.name), "DELETE"), "Plugin uninstalled."); }));
