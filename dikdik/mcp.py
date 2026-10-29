@@ -7,12 +7,14 @@ commands the user typed or approved: they run on this machine with a minimal
 environment plus the API keys the user assigned, never inherited secrets.
 """
 
+import atexit
 import json
 import os
 import queue
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -27,6 +29,37 @@ PROTOCOL = "2025-06-18"
 CLIENT = {"name": "dikdik", "version": "0.1.0"}
 TIMEOUT = 30
 MAX_SERVERS = 20
+
+# Global registry of all living stdio MCP clients, so an unexpected process exit
+# (atexit, SIGTERM, SIGINT) kills their child processes instead of orphaning them.
+_stdio_clients: list = []
+_cleanup_registered = False
+
+
+def _cleanup_stdio_clients(*_args):
+    """Kill all stdio MCP child processes on process exit (atexit + signal)."""
+    for client in list(_stdio_clients):
+        try:
+            client.close()
+        except Exception:
+            pass
+    _stdio_clients.clear()
+
+
+def _register_cleanup():
+    global _cleanup_registered
+    if _cleanup_registered:
+        return
+    _cleanup_registered = True
+    atexit.register(_cleanup_stdio_clients)
+    # SIGTERM (e.g. docker stop, systemd) should not orphan MCP children.
+    try:
+        signal.signal(signal.SIGTERM, lambda *_: (_cleanup_stdio_clients(), os._exit(143)))
+    except (OSError, ValueError):
+        pass  # not main thread or not supported
+
+
+_register_cleanup()
 MAX_TOOLS = 64
 RESULT_LIMIT = 16384
 SCHEMA = """
@@ -337,6 +370,7 @@ class StdioClient(_Client):
         except OSError:
             raise McpError("The server command could not be started") from None
         self.lines: queue.Queue = queue.Queue()
+        _stdio_clients.append(self)
         threading.Thread(target=self._read, daemon=True).start()
 
     def _read(self):
@@ -385,6 +419,11 @@ class StdioClient(_Client):
             self.proc.kill()
             self.proc.wait(timeout=3)
         self.proc.stdout.close()
+        # Remove from the global registry so the exit handler doesn't retry a dead process.
+        try:
+            _stdio_clients.remove(self)
+        except ValueError:
+            pass
 
 
 def _key(reveal, ref: str) -> str:

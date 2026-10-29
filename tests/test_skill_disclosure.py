@@ -1,11 +1,12 @@
 import hashlib
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 from dikdik.agent import ModelResponse, ToolCall
-from dikdik.engine import Engine
+from dikdik.engine import Engine, TERMINAL
 from dikdik.control import load_subagents
 from dikdik.skills import CONTEXT_LIMIT, SKILL_UNTRUSTED_MARKER, _bundled_skills_dir, _front_matter
 
@@ -21,6 +22,15 @@ class SkillDisclosureTests(unittest.TestCase):
         self.engine = Engine(self.root, base / "data")
         self.addCleanup(self.engine.close)
         self.skills = self.engine.skills
+
+    def _wait(self, task):
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            data = self.engine.store.get(task)
+            if data["state"] in TERMINAL and not self.engine.busy(task):
+                return data
+            time.sleep(0.02)
+        return self.engine.store.get(task)
 
     def test_all_34_bundles_are_distinct_and_discoverable(self):
         files = sorted(_bundled_skills_dir().glob("*/SKILL.md"))
@@ -142,7 +152,7 @@ class SkillDisclosureTests(unittest.TestCase):
         request = {"objective": "Explain", "mode": "agent", "verification": "syntax", "approve_external": True}
         with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
             task = self.engine.submit(request)
-            self.engine.pool.submit(lambda: None).result(timeout=30)
+            self._wait(task)
         self.assertIn("source ids", model.observation)
         events = self.engine.store.get(task)["events"]
         tool_events = [e["data"] for e in events if e["kind"] == "hook_event" and e["data"].get("tool") == "read_skill"]
@@ -150,8 +160,8 @@ class SkillDisclosureTests(unittest.TestCase):
         profile = self.engine.agents.create({"name": "No skills", "use_skills": False})
         model = Reader()
         with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
-            self.engine.submit({**request, "agent_profile": profile["id"]})
-            self.engine.pool.submit(lambda: None).result(timeout=30)
+            task2 = self.engine.submit({**request, "agent_profile": profile["id"]})
+            self._wait(task2)
         self.assertNotIn("read_skill", model.tools)
 
 

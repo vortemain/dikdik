@@ -18,7 +18,7 @@ from .secrets_store import SecretsError
 # Providers whose public API speaks the chat-completions protocol at a known base URL.
 DEFAULT_ENDPOINTS = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
 PROVIDER_NAMES = {"openai": "OpenAI", "anthropic": "Anthropic", "azure": "Azure OpenAI", "local": "Local"}
-ENV_TIMEOUT, PROFILE_TIMEOUT = 30, 60
+ENV_TIMEOUT, PROFILE_TIMEOUT = 120, 180
 
 
 @dataclass(frozen=True)
@@ -160,5 +160,5 @@ class ModelResolver:
         else:
             raise ValueError(f"Model profile “{profile['name']}” has no API key. Add one under Settings → API keys and select it on the profile")
         timeout = profile["timeout_seconds"] or PROFILE_TIMEOUT
-        options = {k: profile.get(k) for k in ("temperature", "top_p", "max_output_tokens") if profile.get(k) is not None}
+        options = {k: profile.get(k) for k in ("temperature", "top_p", "max_output_tokens", "reasoning_effort") if profile.get(k) is not None}
         return ModelConfig(chat_url(base), profile["model"], key, auth, timeout, self._public(profile, base), options)

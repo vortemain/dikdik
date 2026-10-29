@@ -1,3 +1,5 @@
+import { terminalRuns, type TerminalRun } from "./terminal-format";
+
 export type Mode = "offline" | "model" | "agent" | "plan";
 export type Verification = "syntax" | "docker" | "local";
 export interface Edit { path: string; before: string; after: string }
@@ -34,6 +36,7 @@ export interface Project {
   limitations: string;
 }
 export interface TaskResult {
+  browser_session?: boolean;
   verification_level?: string | null;
   diff?: string;
   diff_truncated?: boolean;
@@ -80,6 +83,7 @@ export interface TerminalCommandView {
   id: string;
   command: string;
   output: string;
+  outputRuns: TerminalRun[];
   running: boolean;
   source?: "manual" | "agent";
   exitCode?: number | null;
@@ -234,7 +238,7 @@ export function buildTaskRequest(input: {
   if (policy.requiresExecution && !input.approveExecution) throw new Error(policy.verification === "local"
     ? "Approve running commands on this computer before starting this task." : "Approve execution inside Docker before starting this task.");
   const browsing = input.mode === "agent" && input.approveBrowser === true;
-  if (browsing && !input.approveExecution) throw new Error("Approve Docker execution to use the browser.");
+  if (browsing && !input.approveExecution) throw new Error("Approve browser tool execution to use the browser.");
   let edits: Edit[] = [];
   if (policy.showEdits) {
     const parsed: unknown = JSON.parse(input.edits);
@@ -313,6 +317,63 @@ export function contextUsage(events: TaskEvent[]): ContextUsage | null {
   }
   return null;
 }
+
+// --- live progress for long-task dashboard -----------------------------------
+export type ContextHealth = "ok" | "high" | "critical";
+export interface ProgressState {
+  modelCalls: number;
+  toolCalls: number;
+  context: ContextUsage | null;
+  contextHealth: ContextHealth | null;
+  currentStep: string;
+  lastCheckpointSeconds: number | null;
+  recentRecoveries: string[];
+  isRunning: boolean;
+}
+/** Derive live progress from the event stream for the dashboard. Pure, testable. */
+export function deriveProgress(events: TaskEvent[], now: number): ProgressState {
+  let modelCalls = 0, toolCalls = 0;
+  let context: ContextUsage | null = null;
+  let contextHealth: ContextHealth | null = null;
+  let currentStep = "";
+  let lastCheckpoint: number | null = null;
+  const recoveries: string[] = [];
+  let isRunning = false;
+  let seenCondensed = false;
+  for (const event of events) {
+    const data = event.data ?? {};
+    if (event.kind === "agent_model") {
+      if (data.phase === "end") { modelCalls = numOrUndef(data.model_calls) ?? modelCalls; isRunning = false; }
+      else if (data.phase === "start") { modelCalls = numOrUndef(data.model_calls) ?? modelCalls; isRunning = true; currentStep = "Thinking…"; }
+      const bytes = numOrUndef(data.context_bytes), limit = numOrUndef(data.context_limit);
+      if (bytes !== undefined && limit !== undefined && limit > 0) context = { bytes, limit, ratio: Math.min(1, bytes / limit) };
+    } else if (event.kind === "agent_tool" && data.phase === "start") {
+      isRunning = true;
+      const name = typeof data.name === "string" ? data.name : "";
+      currentStep = name === "run_tests" ? "Running tests…" : name === "edit_file" || name === "create_file" ? "Editing…" : name === "list_files" || name === "read_file" || name === "search_text" ? "Reading…" : name || "Working…";
+    } else if (event.kind === "agent_tool" && data.phase === "end") {
+      isRunning = false;
+      toolCalls = numOrUndef(data.tool_calls) ?? toolCalls;
+    } else if (event.kind === "context_health") {
+      const level = typeof data.level === "string" ? data.level as ContextHealth : null;
+      if (level === "ok" || level === "high" || level === "critical") contextHealth = level;
+    } else if (event.kind === "context_compacted") {
+      seenCondensed = true; context = null; contextHealth = null;
+    } else if (event.kind === "checkpoint_heartbeat") {
+      lastCheckpoint = event.time;
+    } else if (event.kind === "recovery") {
+      const reason = typeof data.reason === "string" ? data.reason : "";
+      if (reason) { recoveries.push(reason); if (recoveries.length > 2) recoveries.shift(); }
+    } else if (event.kind === "agent_message") {
+      currentStep = typeof data.content === "string" ? data.content.slice(0, 80) : currentStep;
+    }
+    if (["completed", "failed", "blocked", "cancelled", "interrupted", "paused", "draft"].includes(event.kind)) {
+      isRunning = false;
+    }
+  }
+  if (seenCondensed) context = null;
+  return { modelCalls, toolCalls, context, contextHealth, currentStep, lastCheckpointSeconds: lastCheckpoint !== null ? Math.max(0, Math.round(now - lastCheckpoint)) : null, recentRecoveries: recoveries, isRunning };
+}
 export interface TokenUsage {
   inputTokens?: number;
   outputTokens?: number;
@@ -381,6 +442,29 @@ export function usageMetrics(events: TaskEvent[]): UsageMetrics {
     addUsage(turn, usage); addUsage(task, usage);
   }
   return { context: contextUsage(events), task, turns: turns.filter(turn => turn.calls > 0) };
+}
+
+/** Estimate the cost rate and projected total from per-turn usage history. */
+export interface CostProjection {
+  totalCost: number;
+  turnsWithCost: number;
+  avgCostPerTurn: number;
+  projectedTotalAtCurrentRate: number | null;
+}
+export function costProjection(metrics: UsageMetrics): CostProjection | null {
+  if (!metrics.turns.length) return null;
+  let totalCost = 0, turnsWithCost = 0;
+  for (const turn of metrics.turns) {
+    if (turn.reportedCost !== undefined && turn.reportedCost > 0) {
+      totalCost += turn.reportedCost;
+      turnsWithCost++;
+    }
+  }
+  if (turnsWithCost === 0) return { totalCost: 0, turnsWithCost: 0, avgCostPerTurn: 0, projectedTotalAtCurrentRate: null };
+  const avgCostPerTurn = totalCost / turnsWithCost;
+  // Project forward: if we've done N turns at avg $X, and the task is ongoing,
+  // estimate the final cost based on the average. This is a rough heuristic, not a guarantee.
+  return { totalCost, turnsWithCost, avgCostPerTurn, projectedTotalAtCurrentRate: null };
 }
 export interface GoalView { status: string; turns: number; maxTurns: number; objective: string; reason: string }
 export function goalState(events: TaskEvent[]): GoalView | null {
@@ -609,6 +693,7 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
 /** Build a safe read-only terminal transcript from durable task events. */
 export function terminalTranscript(events: TaskEvent[]): TerminalView {
   const commands = new Map<string, TerminalCommandView>();
+  const rawOutput = new Map<string, string>();
   const order: string[] = [];
   let total = 0;
   for (const event of events) {
@@ -628,32 +713,40 @@ export function terminalTranscript(events: TaskEvent[]): TerminalView {
     if (event.kind === "terminal_command") {
       const command = textOf(data.command, 4000);
       if (!command || commands.has(id)) continue;
-      commands.set(id, { id, command, output: "", running: true, source: data.kind === "command" ? "manual" : "agent" });
+      commands.set(id, { id, command, output: "", outputRuns: [], running: true, source: data.kind === "command" ? "manual" : "agent" });
       order.push(id);
       continue;
     }
     const row = commands.get(id);
     if (!row) continue;
-    // Shells may emit ANSI styling or window-title escapes. Never treat either
-    // as markup, and do not discard a whole output chunk merely for using color.
-    const raw = typeof data.output === "string" ? data.output.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "") : data.output;
-    const chunk = textOf(raw, 1024 * 1024);
+    // Keep escape sequences together across chunks, within the display cap.
+    // Reject malformed NUL/control-bearing records; SGR and OSC are parsed as data.
+    const chunk = typeof data.output === "string" && !/[\u0000-\u0006\u000b\u000c\u000e-\u001a\u001c-\u001f\u007f]/.test(data.output) ? data.output : "";
     if (chunk && total < 1024 * 1024) {
       const kept = chunk.slice(0, 1024 * 1024 - total);
-      row.output += kept;
+      rawOutput.set(id, (rawOutput.get(id) ?? "") + kept);
       total += kept.length;
     }
     if (data.final === true) {
       row.running = false;
-      if (data.exit_code === null || typeof data.exit_code === "number") row.exitCode = data.exit_code as number | null;
+      if (data.exit_code === null || typeof data.exit_code === "number" && Number.isFinite(data.exit_code)) row.exitCode = data.exit_code as number | null;
       const status = textOf(data.status, 80);
       if (status) row.status = status;
       const error = textOf(data.error, 1000);
-      if (error) row.output += (row.output.endsWith("\n") ? "" : "\n") + error + "\n";
+      if (error) row.output += "\n" + error + "\n";
     }
   }
   const list = order.map(id => commands.get(id)!).filter(Boolean);
+  for (const command of list) {
+    const suffix = command.output;
+    command.outputRuns = terminalRuns(rawOutput.get(command.id) ?? "");
+    command.output = command.outputRuns.map(run => run.text).join("");
+    if (suffix) {
+      const tail = command.output.endsWith("\n") && suffix.startsWith("\n") ? suffix.slice(1) : suffix;
+      command.output += tail;
+      command.outputRuns.push({ text: tail });
+    }
+  }
   const text = list.map(command => {
     const ending = command.running ? "\n[running]"
       : command.status && !["passed", "failed"].includes(command.status) ? `\n[${command.status}]`
@@ -664,24 +757,43 @@ export function terminalTranscript(events: TaskEvent[]): TerminalView {
   return { commands: list, text };
 }
 
+export interface RunningTerminalCommand {
+  id: string; command: string; source: "manual" | "agent"; started: number; lastOutput: number; timeout?: number;
+}
+/** Activity polling needs metadata only, never megabytes of output or ANSI parsing. */
+export function runningTerminalCommands(events: TaskEvent[]): RunningTerminalCommand[] {
+  const running = new Map<string, RunningTerminalCommand>(), seen = new Set<string>();
+  for (const event of events) {
+    if (isTerminal(event.kind)) for (const [id, row] of running) if (row.source === "agent") running.delete(id);
+    const data = event.data ?? {}, id = textOf(data.command_id, 80);
+    if (!id) continue;
+    if (event.kind === "terminal_command" && !seen.has(id)) {
+      const command = textOf(data.command, 4000);
+      if (!command) continue;
+      const row: RunningTerminalCommand = { id, command, source: data.kind === "command" ? "manual" : "agent", started: event.time, lastOutput: event.time };
+      const timeout = numOrUndef(data.timeout); if (timeout !== undefined) row.timeout = timeout;
+      running.set(id, row); seen.add(id);
+    } else if (event.kind === "terminal_output") {
+      const row = running.get(id);
+      if (row && typeof data.output === "string" && data.output) row.lastOutput = event.time;
+      if (data.final === true) running.delete(id);
+    }
+  }
+  return [...running.values()];
+}
+
 /** Real command activity, not simulated progress. Updated even when SSE is silent. */
 export function commandActivity(events: TaskEvent[], now: number): string | null {
-  const running = terminalTranscript(events).commands.filter(command => command.running).at(-1);
+  const running = runningTerminalCommands(events).at(-1);
   if (!running) return null;
-  const start = events.find(event => event.kind === 'terminal_command' && event.data?.command_id === running.id);
-  if (!start) return null;
-  let lastOutput = start.time;
-  for (const event of events) {
-    if (event.kind === 'terminal_output' && event.data?.command_id === running.id && typeof event.data.output === 'string' && event.data.output) lastOutput = event.time;
-  }
-  const elapsed = Math.max(0, Math.floor(now - start.time)), quiet = Math.max(0, Math.floor(now - lastOutput));
-  const timeout = numOrUndef(start.data?.timeout);
+  const elapsed = Math.max(0, Math.floor(now - running.started)), quiet = Math.max(0, Math.floor(now - running.lastOutput));
+  const timeout = running.timeout;
   return `Command running · ${elapsed}s` + (quiet >= 5 ? ` · No output for ${quiet}s` : '')
     + (timeout && timeout > 0 ? ` · Timeout ${timeout}s` : '')
     + (quiet >= 5 ? running.source === 'manual' ? ' · Stop is available in Terminal.' : ' · Use Stop to interrupt.' : '');
 }
 
-export interface BrowserView { url: string; title: string; text: string; screenshot: string; status: string; error: string }
+export interface BrowserView { url: string; title: string; text: string; screenshot: string; status: string; error: string; interactive: boolean }
 export interface PlanView { task_id: string; planner_id: string | null; content: string; revision: number; built_revision: number }
 export function parsePlan(value: unknown): PlanView | null {
   if (typeof value !== 'object' || value === null) return null;
@@ -720,7 +832,7 @@ export function browserHistory(events: TaskEvent[]): BrowserPage[] {
   return pages;
 }
 export function browserView(events: TaskEvent[]): BrowserView {
-  const view = { url: "", title: "", text: "", screenshot: "", status: "", error: "" };
+  const view = { url: "", title: "", text: "", screenshot: "", status: "", error: "", interactive: false };
   for (const event of events) {
     const data = event.data ?? {};
     if (event.kind === "browser_started") { view.status = "running"; view.error = ""; continue; }
@@ -735,6 +847,7 @@ export function browserView(events: TaskEvent[]): BrowserView {
     } catch { /* malformed data cannot become a link */ }
     if (view.status === "passed" && url && /^\/api\/tasks\/[a-f0-9]{32}\/browser\/screenshots\/[a-f0-9]{32}$/.test(screenshot)) {
       view.url = url; view.screenshot = screenshot;
+      view.interactive = data.interactive === true;
       view.title = textOf(data.title, 256); view.text = textOf(data.text, 12000);
     }
   }
@@ -1584,6 +1697,7 @@ export function skillsPanel({ root, create, request }: M4PanelDom): M4PanelHandl
 
 
 export function resultStatus(state: string, result?: TaskResult | null): string {
+  if (result?.browser_session) return "Workspace browser session ready.";
   if (result && typeof result.error === "string" && result.error) return result.error;
   if (state === "paused") return result?.pause_reason || "Paused. Resume to continue from the exact step where it stopped.";
   if (result?.tests_verified === true) return `${result.direct === true ? "Local" : "Container"} tests passed. Review the diff; this is not proof of every acceptance criterion.`;

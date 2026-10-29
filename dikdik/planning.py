@@ -26,7 +26,7 @@ class Planning:
 
     def ensure(self, task):
         # Caller holds the engine lock, coordinating creation with task deletion.
-        parent = self.store.get(task)
+        parent = self.store.get(task, include_events=False)
         plan = self.get(task)
         if plan['planner_id']:
             return plan
@@ -39,7 +39,7 @@ class Planning:
         return self.get(task)
 
     def get(self, task):
-        self.store.get(task)
+        self.store.status(task)
         with self.store.connect() as db:
             row = db.execute('SELECT * FROM plans WHERE task_id=? OR planner_id=?', (task, task)).fetchone()
         return dict(row) if row else {'task_id': task, 'planner_id': None, 'content': '', 'revision': 0, 'built_revision': 0}
@@ -83,7 +83,7 @@ class Planning:
         if sum(item['status'] == 'in_progress' for item in clean) > 1:
             raise ValueError('Only one checklist step may be in progress')
         with self.engine.lock:
-            self.store.get(task)
+            self.store.status(task)
             with self.store.connect() as db:
                 db.execute('INSERT INTO task_progress(task_id,revision,items) VALUES(?,1,?) ON CONFLICT(task_id) DO UPDATE SET revision=revision+1,items=excluded.items', (task, json.dumps(clean)))
                 revision = db.execute('SELECT revision FROM task_progress WHERE task_id=?', (task,)).fetchone()[0]
@@ -91,7 +91,7 @@ class Planning:
         return {'tasks': clean, 'revision': revision, 'reported_only': True}
 
     def progress(self, task):
-        self.store.get(task)
+        self.store.status(task)
         with self.store.connect() as db:
             row = db.execute('SELECT * FROM task_progress WHERE task_id=?', (task,)).fetchone()
         return {'tasks': json.loads(row['items']), 'revision': row['revision'], 'reported_only': True} if row else {'tasks': [], 'revision': 0, 'reported_only': True}

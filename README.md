@@ -30,16 +30,25 @@ Dikdik brings the conversation, editor, terminal, browser, and change review int
 **34 bundled skills · 6 lifecycle events · Checkpoints and Undo · Your choice of models**
 
 > [!NOTE]
-> **v0.1.0 is a developer preview.** See the [release notes](https://github.com/vortemain/dikdik/releases/tag/v0.1.0) for downloads and validation, and [Security](SECURITY.md) for operating boundaries.
+> **v0.2.0 is a developer preview.** See the [release notes](https://github.com/vortemain/dikdik/releases/tag/v0.2.0) for downloads and validation, and [Security](SECURITY.md) for operating boundaries.
 
 ## Quick start
 
 ### 1. Install a release
 
+Download the **Windows setup `.exe`**, **macOS `.dmg`**, or **Linux amd64 `.deb`**
+from [Dikdik v0.2.0](https://github.com/vortemain/dikdik/releases/tag/v0.2.0).
+Desktop bundles include Python and Chromium. Windows requires WebView2;
+Linux packages target Ubuntu 24.04 or newer compatible Debian systems.
+These are unsigned developer previews; macOS builds are not notarized.
+See [desktop installation](docs/DESKTOP.md) for platform requirements.
+
+For the Python command-line and browser interface:
+
 Requires **Python 3.13 or newer**. Download the wheel and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/vortemain/dikdik/releases), verify its checksum, then install:
 
 ```bash
-python -m pip install ./dikdik-0.1.0-py3-none-any.whl
+python -m pip install ./dikdik-0.2.0-py3-none-any.whl
 dikdik --version
 dikdik /path/to/your-project
 ```
@@ -51,6 +60,17 @@ dikdik C:\Projects\my-app
 ```
 
 Dikdik opens its browser interface at **http://127.0.0.1:8787** and signs you in automatically. Use `--no-browser` to start without opening a tab, and **Ctrl+C** to stop the server.
+
+Python users can also install the optional desktop support:
+
+```powershell
+python -m pip install "./dikdik-0.2.0-py3-none-any.whl[desktop]"
+dikdik-desktop C:\Projects\my-app
+```
+
+From a source checkout, use `python -m pip install -e ".[desktop]"`, then
+double-click **Dikdik.pyw** on Windows. The desktop closes its local server when
+you close the window. [Desktop setup →](docs/DESKTOP.md)
 
 The wheel includes the web interface, fonts, icons, and bundled skills. Node.js, Bun, and Rust are not required to run it. On Windows, pip also installs `tzdata` for named time zones. [Download verification and release details →](docs/RELEASING.md)
 

@@ -79,7 +79,7 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
                 if rest:
                     upstream.sendall(rest)
                 self._pipe(upstream)
-            elif method in {"GET", "HEAD"} and target.startswith("http://"):
+            elif (method in {"GET", "HEAD"} or self.server.allow_http_writes and method in {"POST", "PUT", "PATCH", "DELETE", "OPTIONS"}) and target.startswith("http://"):
                 from urllib.parse import urlsplit
                 parts = urlsplit(target)
                 if parts.port not in (None, 80):
@@ -89,9 +89,13 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
                     return self._refuse(b"403 Not a public address")
                 path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
                 lines = head.split(b"\r\n\r\n", 1)[0].split(b"\r\n")[1:]
+                lengths = [h.split(b":", 1)[1].strip() for h in lines if h.lower().startswith(b"content-length:")]
+                if len(lengths) > 1 or any(h.lower().startswith(b"transfer-encoding:") for h in lines) or lengths and (not lengths[0].isdigit() or int(lengths[0]) > 1024 * 1024):
+                    upstream.close()
+                    return self._refuse(b"413 Request body too large or unsupported")
                 kept = [h for h in lines if not h.lower().startswith((b"proxy-", b"connection:", b"keep-alive:"))]
                 request = f"{method} {path} HTTP/1.1\r\n".encode() + b"\r\n".join(kept) + b"\r\nConnection: close\r\n\r\n"
-                upstream.sendall(request)
+                upstream.sendall(request + head.split(b"\r\n\r\n", 1)[1])
                 self._pipe(upstream)
             else:
                 self._refuse(b"405 Only page loads are allowed")
@@ -112,6 +116,7 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
 
     def _pipe(self, upstream):
         sockets = [self.request, upstream]
+        transferred = 0
         try:
             while True:
                 readable, _, _ = select.select(sockets, [], [], 20)
@@ -122,7 +127,8 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
                     if not data:
                         return
                     self.server.bytes += len(data)
-                    if self.server.bytes > TUNNEL_LIMIT:
+                    transferred += len(data)
+                    if transferred > TUNNEL_LIMIT:
                         return
                     (upstream if sock is self.request else self.request).sendall(data)
         finally:
@@ -133,10 +139,11 @@ class PublicProxy(socketserver.ThreadingTCPServer):
     daemon_threads = True
     allow_reuse_address = False
 
-    def __init__(self):
+    def __init__(self, *, allow_http_writes=False):
         super().__init__(("127.0.0.1", 0), _ProxyHandler)
         self.refused: list[str] = []
         self.bytes = 0
+        self.allow_http_writes = allow_http_writes
         threading.Thread(target=self.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True).start()
 
     @property

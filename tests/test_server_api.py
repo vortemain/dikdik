@@ -310,6 +310,48 @@ class ServerApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(all(t["state"] == "completed" for t in data["tasks"]))
 
+    # --- WP15: device-link pairing -----------------------------------------------
+    def test_pairing_code_and_verify(self):
+        # The pairing endpoints are pre-auth: no Authorization header needed.
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
+        conn.request("POST", "/api/pair", body=json.dumps({}), headers={"Content-Type": "application/json"})
+        r = conn.getresponse()
+        pair_body = json.loads(r.read())
+        conn.close()
+        self.assertEqual(r.status, 200)
+        self.assertTrue(pair_body["code"])
+        self.assertEqual(pair_body["expires_in"], 600)
+
+        # Verify the code to get a token
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
+        conn.request("POST", "/api/pair/verify", body=json.dumps({"code": pair_body["code"]}),
+                       headers={"Content-Type": "application/json"})
+        r = conn.getresponse()
+        verify_body = json.loads(r.read())
+        conn.close()
+        self.assertEqual(r.status, 200)
+        self.assertTrue(verify_body["paired"])
+        self.assertEqual(verify_body["token"], "test-token")
+
+        # An invalid code is rejected
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
+        conn.request("POST", "/api/pair/verify", body=json.dumps({"code": "BADCOD"}),
+                       headers={"Content-Type": "application/json"})
+        r = conn.getresponse()
+        conn.close()
+        self.assertEqual(r.status, 401)
+
+    # --- WP16: agent-driven browser tools in agent_info -------------------------
+    def test_agent_info_includes_browser_action_tools(self):
+        status, body = self.call("GET", "/api/agent-info")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        tool_names = {t["name"] for t in data["tools"]}
+        self.assertIn("browse_url", tool_names)
+        self.assertIn("browser_click", tool_names)
+        self.assertIn("browser_fill", tool_names)
+        self.assertIn("browser_screenshot", tool_names)
+
 
 if __name__ == "__main__":
     unittest.main()

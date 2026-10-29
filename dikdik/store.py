@@ -32,6 +32,7 @@ class Store:
                     time REAL NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS events_task ON events(task_id, seq);
+                CREATE INDEX IF NOT EXISTS events_task_time ON events(task_id, time);
             """)
             # Conversation metadata, added after the first release: migrate in place.
             columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)")}
@@ -44,11 +45,16 @@ class Store:
             bound = db.execute("SELECT value FROM settings WHERE key='workspace'").fetchone()
             if bound:
                 db.execute("UPDATE tasks SET workspace=? WHERE workspace IS NULL", (bound[0],))
+            db.execute("CREATE INDEX IF NOT EXISTS tasks_workspace ON tasks(workspace)")
 
     @contextmanager
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=10)
+        db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
+        # With up to 3 concurrent workers, a second writer may wait. A longer
+        # busy_timeout lets SQLite retry internally instead of raising "database
+        # is locked" when another thread's commit briefly holds the write lock.
+        db.execute("PRAGMA busy_timeout=30000")
         try:
             with db:
                 yield db
@@ -102,7 +108,13 @@ class Store:
             db.execute("UPDATE tasks SET state=?, result=? WHERE id=?", (state, json.dumps(result) if result is not None else None, task))
             db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, time.time(), state, json.dumps(details if details is not None else result or {})))
 
-    def get(self, task):
+    def status(self, task):
+        """Check project ownership and read state without loading conversation history."""
+        with self.connect() as db:
+            return self._owned(db, task)["state"]
+
+    def get(self, task, *, include_events=True):
+        """Read a task; metadata-only callers can avoid decoding its entire event history."""
         with self.connect() as db:
             db.execute("BEGIN")
             where, params = self._mine()
@@ -112,7 +124,8 @@ class Store:
             data = dict(row)
             data["request"] = json.loads(data["request"])
             data["result"] = json.loads(data["result"]) if data["result"] else None
-            data["events"] = [{**dict(r), "data": json.loads(r["data"])} for r in db.execute("SELECT * FROM events WHERE task_id=? ORDER BY seq", (task,))]
+            if include_events:
+                data["events"] = [{**dict(r), "data": json.loads(r["data"])} for r in db.execute("SELECT * FROM events WHERE task_id=? ORDER BY seq", (task,))]
             return data
 
     def list(self):

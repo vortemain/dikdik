@@ -4,9 +4,9 @@ import { browserView, buildTaskRequest, eventToMessages, type TaskEvent } from "
 const task = "a".repeat(32), screenshot = `/api/tasks/${task}/browser/screenshots/${"b".repeat(32)}`;
 const event = (data: Record<string, unknown>, kind = "browser_result"): TaskEvent => ({ seq: 1, task_id: task, time: 1, kind, data });
 
-test("browsing consent is separate and needs Docker approval even with syntax verification", () => {
+test("browsing consent is separate and needs tool approval even with syntax verification", () => {
   const input = { objective: "Browse", mode: "agent" as const, verification: "syntax" as const, edits: "", approveExternal: true, approveExecution: false, approveBrowser: true };
-  expect(() => buildTaskRequest(input)).toThrow("Docker");
+  expect(() => buildTaskRequest(input)).toThrow("browser tool execution");
   expect(buildTaskRequest({ ...input, approveExecution: true })).toMatchObject({ approve_execution: true, approve_browser: true, verification: "syntax" });
   expect(buildTaskRequest({ ...input, mode: "model" })).not.toHaveProperty("approve_browser");
 });

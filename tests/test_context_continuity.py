@@ -5,7 +5,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from dikdik.agent import AgentBudget, ModelResponse, ToolCall, _compact_context, context_size, run_agent
+from dikdik.agent import AgentBudget, ModelResponse, ToolCall, _compact_context, _structured_compact, context_size, run_agent
 from dikdik.agent_provider import CompatibleAgentModel
 from dikdik.context_memory import MARKER, PLAN_MARKER, observations_from_events
 from dikdik.model_config import ModelConfig
@@ -119,6 +119,54 @@ class ContextContinuityTests(unittest.TestCase):
         self.assertEqual(messages[0]["content"], "Policy")
         self.assertFalse(memory(messages)["current_candidate_verified"])
         self.assertIn("UNTRUSTED DATA", messages[2]["content"])
+
+    def test_structured_compact_replaces_older_turns_with_a_summary_and_keeps_a_recent_tail(self):
+        objective = {"role": "user", "content": "Refactor the auth module"}
+
+        class SummaryModel:
+            def __init__(self):
+                self.seen = []
+
+            def respond(self, messages, tools):
+                self.seen.append(messages)
+                if not tools:
+                    return ModelResponse('{"objective": "Refactor auth", "decisions": ["split sessions"], '
+                                         '"done": ["moved tokens into secrets", "edited auth.py"], '
+                                         '"next": "run the auth tests"}', [])
+                return ModelResponse("Continue", [])
+
+        model = SummaryModel()
+        original = {"role": "user", "content": "Older requirement that the auth module stays readable"}
+        messages = [{"role": "system", "content": "Policy"}, original, objective,
+                    *group("old", "read_file", {"path": "auth.py"}, {"content": "x" * 70000}),
+                    *group("newer", "read_file", {"path": "session.py"}, {"content": "recent useful finding"})]
+        before = context_size(messages)
+        self.assertTrue(_structured_compact(messages, objective, model, {"changed_files": ["auth.py"]}, tail_bytes=20000))
+        self.assertLess(context_size(messages), before)
+        # The retained recent tail (newer read) survives; the older read was summarized away.
+        self.assertTrue(any(m.get("tool_call_id") == "newer" for m in messages))
+        self.assertFalse(any(m.get("tool_call_id") == "old" for m in messages))
+        # The summary is one marked user message with objective/decisions/done/next.
+        summary = next(m for m in messages if m.get("role") == "user" and m.get("content", "").startswith(MARKER))
+        text = summary["content"]
+        self.assertIn("Objective: Refactor auth", text)
+        self.assertIn("split sessions", text)
+        self.assertIn("moved tokens", text)
+        self.assertIn("run the auth tests", text)
+        assert_protocol(self, messages)
+
+    def test_structured_compact_returns_false_when_the_model_gives_no_summary(self):
+        objective = {"role": "user", "content": "Work"}
+
+        class EmptyModel:
+            def respond(self, messages, tools):
+                return ModelResponse("no JSON here", [])
+
+        messages = [{"role": "system", "content": "Policy"}, {"role": "user", "content": "old"},
+                    objective, *group("r", "read_file", {"path": "a.py"}, {"content": "x" * 40000})]
+        before = list(messages)
+        self.assertFalse(_structured_compact(messages, objective, EmptyModel(), {}))
+        self.assertEqual(messages, before)  # untouched on failure
 
     def test_interleaved_repeated_reads_get_progress_guidance_after_the_whole_batch(self):
         class Model:

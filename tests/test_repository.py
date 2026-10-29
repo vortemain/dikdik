@@ -147,7 +147,9 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["files_checked"], 1)
         self.assertEqual(syntax_check({"app.py": "def ("})["status"], "failed")
-        self.assertEqual(syntax_check({"app.ts": "bad"})["status"], "not_run")
+        # TS/JS files are now brace-balance checked (not executed).
+        self.assertEqual(syntax_check({"app.ts": "const x = 1"})["status"], "passed")
+        self.assertEqual(syntax_check({"app.ts": "function f() {"})["status"], "failed")
 
     def test_non_utf8_is_not_indexed(self):
         (self.root / "binary.py").write_bytes(b"\xff\xfe")

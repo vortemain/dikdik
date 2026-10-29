@@ -23,9 +23,11 @@ MAX_PROFILES = 50
 # permission semantics, but a shared referral prevents accidental key reuse.
 NON_PATCHABLE_KEYS = {"id"}
 PATCHABLE = {"name", "provider", "model", "endpoint", "timeout_seconds", "is_default", "credential_secret_ref",
-             "connection_id", "temperature", "top_p", "max_output_tokens"}
+             "connection_id", "temperature", "top_p", "max_output_tokens", "fallback_profile_id", "reasoning_effort"}
 # Columns added after the first release; migrated in place.
-EXTRA_COLUMNS = (("connection_id", "TEXT"), ("temperature", "REAL"), ("top_p", "REAL"), ("max_output_tokens", "INTEGER"))
+EXTRA_COLUMNS = (("connection_id", "TEXT"), ("temperature", "REAL"), ("top_p", "REAL"),
+                 ("max_output_tokens", "INTEGER"), ("fallback_profile_id", "TEXT"), ("reasoning_effort", "TEXT"))
+EFFORTS = {"minimal", "low", "medium", "high"}  # provider reasoning variants, sent as reasoning_effort
 
 
 class ApiError(Exception):
@@ -136,6 +138,16 @@ class ProfileStore:
             if not isinstance(body["is_default"], bool):
                 raise ApiError(400, "Default flag must be boolean")
             out["is_default"] = body["is_default"]
+        if "reasoning_effort" in body:
+            value = body["reasoning_effort"]
+            if value is not None and (not isinstance(value, str) or value not in EFFORTS):
+                raise ApiError(400, "Reasoning effort must be one of minimal, low, medium or high")
+            out["reasoning_effort"] = value
+        if "fallback_profile_id" in body:
+            ref = body["fallback_profile_id"]
+            if ref is not None and (not isinstance(ref, str) or not _ref_valid(ref)):
+                raise ApiError(400, "Fallback profile reference must be a valid profile id (1–64 characters of letters, digits, '.', '_' or '-')")
+            out["fallback_profile_id"] = ref
         return out
 
     # --- CRUD ----------------------------------------------------------
@@ -151,9 +163,9 @@ class ProfileStore:
                 raise ApiError(409, f"Profile limit reached ({MAX_PROFILES}). Delete one before adding another")
             default = 0 if db.execute("SELECT 1 FROM profiles LIMIT 1").fetchone() else 1
             db.execute(
-                "INSERT INTO profiles(id,name,provider,model,endpoint,timeout_seconds,credential_secret_ref,is_default,created,connection_id,temperature,top_p,max_output_tokens) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO profiles(id,name,provider,model,endpoint,timeout_seconds,credential_secret_ref,is_default,created,connection_id,temperature,top_p,max_output_tokens,reasoning_effort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (profile_id, fields["name"], fields["provider"], fields["model"], fields.get("endpoint"), fields.get("timeout_seconds"), fields.get("credential_secret_ref"), default, time.time(),
-                 fields.get("connection_id"), fields.get("temperature"), fields.get("top_p"), fields.get("max_output_tokens")),
+                 fields.get("connection_id"), fields.get("temperature"), fields.get("top_p"), fields.get("max_output_tokens"), fields.get("reasoning_effort")),
             )
         return 201, {"id": profile_id}
 
@@ -172,9 +184,9 @@ class ProfileStore:
                 n += 1
                 name = f"{base}-copy-{n}"
             new = uuid.uuid4().hex
-            db.execute("INSERT INTO profiles(id,name,provider,model,endpoint,timeout_seconds,credential_secret_ref,is_default,created,connection_id,temperature,top_p,max_output_tokens) VALUES(?,?,?,?,?,?,?,0,?,?,?,?,?)",
+            db.execute("INSERT INTO profiles(id,name,provider,model,endpoint,timeout_seconds,credential_secret_ref,is_default,created,connection_id,temperature,top_p,max_output_tokens,reasoning_effort) VALUES(?,?,?,?,?,?,?,0,?,?,?,?,?,?)",
                        (new, name, row["provider"], row["model"], row["endpoint"], row["timeout_seconds"], row["credential_secret_ref"], time.time(),
-                        row["connection_id"], row["temperature"], row["top_p"], row["max_output_tokens"]))
+                        row["connection_id"], row["temperature"], row["top_p"], row["max_output_tokens"], row["reasoning_effort"]))
         return 201, {"id": new, "name": name}
 
     def list_profiles(self):
@@ -185,7 +197,9 @@ class ProfileStore:
         # is stable: endpoint defaults to "" (no override), timeout to 60s.
         return 200, [{"id": r["id"], "name": r["name"], "provider": r["provider"], "model": r["model"], "endpoint": r["endpoint"] or "", "timeout_seconds": r["timeout_seconds"] if r["timeout_seconds"] is not None else 60, "is_default": bool(r["is_default"]),
                      "connection_id": r["connection_id"] or "", "key_ref": r["credential_secret_ref"] or "",
-                     "temperature": r["temperature"], "top_p": r["top_p"], "max_output_tokens": r["max_output_tokens"]} for r in rows]
+                     "temperature": r["temperature"], "top_p": r["top_p"], "max_output_tokens": r["max_output_tokens"],
+                     "reasoning_effort": r["reasoning_effort"],
+                     "fallback_profile_id": r["fallback_profile_id"] or ""} for r in rows]
 
     def patch(self, profile_id: str, body):
         if not isinstance(body, dict):

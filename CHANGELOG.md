@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.0 — 2026-10-29
+
+Desktop developer preview and combined agent update.
+
+- Native desktop launcher, branded Windows/macOS icons and installer builds for
+  Windows, macOS and Linux, with bundled Python and Chromium.
+- Native task notifications, privacy controls, sounds and click-to-open task
+  navigation; Windows Start menu registration enables notification banners.
+- Animated Dikdik opening mark and subtle binary background, honoring reduced motion.
+- Persistent interactive browser sessions with page inputs, actions and real web
+  fetching, alongside the existing browser permission boundaries.
+- Faster event rendering, task navigation, repository indexing and message updates.
+- Colored terminal output, readable commands and improved process cancellation.
+- Combined agent work on planning, context continuity, provider recovery, controls,
+  local verification and ACP integration.
+- Versioned desktop downloads and complete SHA-256 checksums in the release workflow.
+
+Desktop installers remain unsigned developer previews. Windows source-desktop
+notifications and browser interactions were exercised locally; macOS and Linux
+require native installation and interaction validation.
+
 ## 0.1.0 — 2026-10-29
 
 First GitHub developer-preview release.

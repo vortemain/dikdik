@@ -10,7 +10,7 @@ test("real agent events become tool calls paired with readable results", () => {
     event(3, "agent_model", { phase: "start", model_calls: 1 }),
     event(4, "agent_tool", { phase: "start", id: "a", name: "read_file", arguments: { path: "calc.py" } }),
     event(5, "agent_tool", { phase: "end", id: "a", name: "read_file", failed: false, observation: { path: "calc.py", lines: ["def add(a, b):", "    return a - b"] } }),
-    event(6, "agent_tool", { phase: "end", id: "b", name: "edit_file", failed: true, observation: { error: "Replacement must match exactly once" } }),
+    event(6, "agent_tool", { phase: "end", id: "b", name: "edit_file", failed: true, observation: { error: "Replacement text not found in calc.py. Read the current file content and copy the exact text for 'before'." } }),
     event(7, "agent_check", { kind: "unittest", status: "passed" }),
     event(8, "agent_model", { phase: "error", error: "Model request failed" }),
   ], "Fix it");
@@ -22,7 +22,7 @@ test("real agent events become tool calls paired with readable results", () => {
   expect(messages[2]?.details).toEqual({ path: "calc.py" });
   expect(messages[3]?.body).toBe("def add(a, b):\n    return a - b");
   expect(messages[4]?.state).toBe("tool_failed");
-  expect(messages[4]?.body).toBe("Error: Replacement must match exactly once");
+  expect(messages[4]?.body).toBe("Error: Replacement text not found in calc.py. Read the current file content and copy the exact text for 'before'.");
   expect(messages[5]?.title).toBe("Check: unittest");
   expect(messages[6]?.title).toBe("Model request failed");
 });

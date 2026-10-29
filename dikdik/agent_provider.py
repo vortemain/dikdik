@@ -11,7 +11,7 @@ from .model_errors import ProviderError
 from .model_limits import MAX_MODEL_TEXT_BYTES, MAX_TOOL_ARGUMENT_BYTES
 
 DEFAULT_AGENT_OUTPUT_TOKENS = 8192
-ADAPTIVE_OUTPUT_CEILING = 32768
+ADAPTIVE_OUTPUT_CEILING = 65536
 
 
 def reasoning_context(message: dict) -> dict:
@@ -32,11 +32,14 @@ def reasoning_context(message: dict) -> dict:
 
 class CompatibleAgentModel:
     def __init__(self, approve_external: bool, resolve: Callable[[], ModelConfig] = from_environment,
-                 on_text: Callable[[str], None] | None = None, cancel=None):
+                 on_text: Callable[[str], None] | None = None, cancel=None,
+                 fallback_resolve: Callable[[], ModelConfig] | None = None):
         if approve_external is not True:
             raise ValueError("Explicit external-code disclosure approval required")
         self._resolve, self._config, self._on_text = resolve, None, on_text
         self._cancel = cancel
+        self._fallback_resolve = fallback_resolve
+        self._fallback_config: ModelConfig | None = None
         self._output_tokens = None
         self._repair_hint = ""
         self._plain_response = False
@@ -47,6 +50,25 @@ class CompatibleAgentModel:
         configured = (self._config.options or {}).get("max_output_tokens")
         if self._output_tokens is None:
             self._output_tokens = configured or DEFAULT_AGENT_OUTPUT_TOKENS
+        try:
+            return self._do_respond(messages, tools)
+        except ProviderError as exc:
+            # On a non-retryable provider failure (auth, quota, not_found, unreachable),
+            # try the fallback profile once before propagating the error.
+            if (exc.kind in {"authentication", "quota", "not_found", "unreachable"} and
+                    self._fallback_resolve is not None and self._fallback_config is None):
+                try:
+                    self._fallback_config = self._fallback_resolve()
+                    self._config = self._fallback_config
+                    configured = (self._config.options or {}).get("max_output_tokens")
+                    self._output_tokens = configured or DEFAULT_AGENT_OUTPUT_TOKENS
+                    return self._do_respond(messages, tools)
+                except ProviderError:
+                    pass  # fallback also failed; raise the original error
+            raise
+
+    def _do_respond(self, messages: list[dict], tools: list[dict]) -> ModelResponse:
+        configured = (self._config.options or {}).get("max_output_tokens")
         try:
             request_messages = messages + ([{"role": "user", "content": self._repair_hint}] if self._repair_hint else [])
             data = chat_completion(request_messages, tools, max_tokens=self._output_tokens, config=self._config,

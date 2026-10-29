@@ -38,9 +38,9 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   };
   const nodes = new Map<string, Node>();
-  for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url", "attach-input", "condenser", "palette-input", "meta-folder", "meta-tags", "sounds", "git-name", "git-email", "secrets-approval", "agent-critic", "agent-memory", "agent-secrets", "terminal-cwd", "terminal-command"]) nodes.set(id, new Input());
-  for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-back", "browser-forward", "browser-reload", "browser-external-empty", "planner-create", "planner-build", "pause", "git-save", "terminal-new", "terminal-copy", "terminal-clear", "terminal-stop", "terminal-run", "browser-text-toggle", "browser-example"]) nodes.set(id, new Button());
-  for (const id of ["run-mode", "mode", "verification", "confirmation-policy", "task-sort", "task-since", "task-scope", "title-model", "browser-history", "browser-zoom"]) nodes.set(id, new Select());
+  for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url", "attach-input", "condenser", "palette-input", "meta-folder", "meta-tags", "sounds", "notification-previews", "git-name", "git-email", "secrets-approval", "agent-critic", "agent-memory", "agent-secrets", "terminal-cwd", "terminal-command"]) nodes.set(id, new Input());
+  for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-back", "browser-forward", "browser-reload", "browser-external-empty", "planner-create", "planner-build", "pause", "git-save", "terminal-new", "terminal-copy", "terminal-clear", "terminal-stop", "terminal-run", "browser-text-toggle", "browser-example", "notification-test"]) nodes.set(id, new Button());
+  for (const id of ["run-mode", "mode", "verification", "confirmation-policy", "task-sort", "task-since", "task-scope", "title-model", "browser-history", "browser-zoom", "notification-mode"]) nodes.set(id, new Select());
   for (const id of ["edits", "objective"]) nodes.set(id, new Textarea());
   const node = (id: string): Node => {
     if (!nodes.has(id)) nodes.set(id, new Node());
@@ -52,6 +52,10 @@ test("actual polling retains file selection and control nodes, with safe fallbac
   let result: unknown = { diff, file_changes: [{ path, status: "added", start_line: 0, end_line: 2 }] };
   let state = "running", requests = 0, poll: (() => void) | undefined;
   let holdGet: Promise<void> | null = null;
+  let releaseProject!: () => void, releasePlanner!: () => void;
+  let holdProject: Promise<void> | null = new Promise(resolve => { releaseProject = resolve; });
+  let holdPlanner: Promise<void> | null = new Promise(resolve => { releasePlanner = resolve; });
+  let holdHistory: Promise<void> | null = null, historyRequests = 0;
   let stopRequests = 0, releaseStop: (() => void) | undefined;
   const tick = () => new Promise(resolve => setTimeout(resolve, 0));
   try {
@@ -68,22 +72,26 @@ test("actual polling retains file selection and control nodes, with safe fallbac
       }
       if (url === "/api/session") return Response.json({ signed_in: true });
       if (url === "/api/model") return Response.json({ configured: false, source: "none", problem: "No model is set up." });
-      if (url === "/api/project") return Response.json({ name: "fixture", files: [], python_tests: [], manifests: [], limitations: "fixture" });
+      if (url === "/api/project") { if (holdProject) await holdProject; return Response.json({ name: "fixture", files: [], python_tests: [], manifests: [], limitations: "fixture" }); }
       if (url.startsWith('/api/drafts/')) return Response.json({ scope: url.split('/').at(-1), content: '', revision: 0, updated: 0 });
-      if (url.endsWith('/planner')) return Response.json({ task_id: 'a'.repeat(32), planner_id: null, content: '', revision: 0, built_revision: 0 });
-      if (url === "/api/tasks") return Response.json([{ id: "task-1", state }]);
+      if (url.endsWith('/planner')) { if (holdPlanner) await holdPlanner; return Response.json({ task_id: 'a'.repeat(32), planner_id: null, content: '', revision: 0, built_revision: 0 }); }
+      if (url === "/api/tasks") { historyRequests++; if (holdHistory) await holdHistory; return Response.json([{ id: "task-1", state }]); }
       if (url === "/api/connections") return Response.json([]);
       if (url === "/api/routers") return Response.json({ routers: [], strategies: {} });
       if (url === "/api/model-catalog") return Response.json({ default_provider: "anthropic", providers: {} });
       if (url === "/api/settings/app") return Response.json({ confirmation: "never", condenser: true, git_name: "", git_email: "", sounds: false });
       if (url === '/api/tasks/task-1/messages') { state = 'running'; result = null; return Response.json({ queued: false }); }
       if (url === "/api/profiles" || url === "/api/secrets" || url === "/api/skills" || url === "/api/automations" || url === "/api/agent-profiles") return Response.json([]);
-      requests++;
+      if (url === '/api/tasks/task-1') requests++;
       const snapshot = { id: "task-1", state, request: { objective: "Review candidate" }, events: [], result };
       if (holdGet) await holdGet;
       return Response.json(snapshot);
     });
     await import("../../dikdik/web/app");
+    await tick();
+    // History starts while project inventory is still pending.
+    expect(historyRequests).toBe(1);
+    holdProject = null; releaseProject(); await tick();
     node("token").value = "local-test";
     await node("connect-form").listeners.get("submit")!({ preventDefault() {} });
     node("history").children[0]!.onclick!();
@@ -98,6 +106,8 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     expect(all.attributes.get("aria-pressed")).toBe("false");
     expect(node("selected-file").textContent).toBe(`Added · ${path}`);
     expect(node("diff").textContent).toBe(diff);
+    // The conversation and diff are ready even though the planner has not replied.
+    holdPlanner = null; releasePlanner(); await tick();
     const replacements = node("review-controls").replacements;
     poll!(); await tick();
     poll!(); await tick();
@@ -137,7 +147,15 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     node('history').children[0]!.onclick!(); await tick();
     node('objective').value = 'Start another turn';
     node('edits').value = '[{"path":"a.py","before":"1","after":"2"}]';
-    await node('task-form').listeners.get('submit')!({ preventDefault() {} });
+    let releaseHistory!: () => void;
+    holdHistory = new Promise<void>(resolve => { releaseHistory = resolve; });
+    let submitted = false;
+    const submission = Promise.resolve(node('task-form').listeners.get('submit')!({ preventDefault() {} })).then(() => { submitted = true; });
+    await tick(); await tick();
+    // A successful send releases the composer without waiting for sidebar history.
+    expect(submitted).toBe(true);
+    expect(node('objective').disabled).toBe(false);
+    holdHistory = null; releaseHistory(); await submission;
     holdGet = null; release(); await tick(); await tick();
     expect(node('task-state').textContent).toBe('running');
     expect(node('cancel').disabled).toBe(false);

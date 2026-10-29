@@ -269,20 +269,13 @@ def workspace_text(root: Path, path: str) -> dict:
     """Read-only preview under the same ignore/secret/link policy as inventory."""
     if not isinstance(path, str) or not path:
         raise KeyError(path)
-    large_files: list[dict] = []
-    files = _inventory_python(root, large_files)
-    if path in files:
-        return {"path": path, "version": "workspace", "text": files[path], "indexed": True, "truncated": False}
-    if not any(entry["path"] == path for entry in large_files):
-        raise KeyError(path)
-    target = root / path
-    for part in (target, *target.parents):
-        if part == root:
-            break
-        if part.is_symlink() or part.is_junction():
-            raise KeyError(path)
-    if target.resolve().relative_to(root.resolve()).as_posix() != path:
-        raise KeyError(path)
+    # Opening one editor tab must not walk/read every other file in the project.
+    # Reuse the agent's exact on-demand path policy, including each ancestor's ignores.
+    from .workspace_files import WorkspaceFiles
+    try:
+        target = WorkspaceFiles(root).target(path)
+    except (OSError, ValueError):
+        raise KeyError(path) from None
     with target.open("rb") as source:
         size = os.fstat(source.fileno()).st_size
         raw = source.read(MAX_PREVIEW_BYTES + 1)
@@ -302,6 +295,26 @@ def is_test_path(path: str) -> bool:
     return any(p.lower() in {"tests", "test", "__tests__"} for p in parts) or filename.startswith("test") or filename == "conftest.py" or ".test." in filename or ".spec." in filename
 
 
+def _edit_match_hint(content: str, before: str) -> str:
+    """Diagnose why an edit's 'before' text didn't match, so the model can fix it
+    without re-reading the whole file."""
+    if "\r\n" in content and "\n" in before and "\r\n" not in before:
+        return "The file uses CRLF line endings; your 'before' uses LF. Read the file to see exact line endings."
+    if "\n" in content and "\r\n" not in content and "\r\n" in before:
+        return "The file uses LF line endings; your 'before' uses CRLF. Read the file to see exact line endings."
+    if "\t" in content and "    " in before and "\t" not in before:
+        return "The file uses tabs for indentation; your 'before' uses spaces. Read the file to see exact whitespace."
+    if "    " in content and "\t" in before and "    " not in before:
+        return "The file uses spaces for indentation; your 'before' uses tabs. Read the file to see exact whitespace."
+    # Check if the text exists with whitespace normalized
+    import re
+    before_compact = re.sub(r"\s+", " ", before).strip()
+    content_compact = re.sub(r"\s+", " ", content)
+    if before_compact and len(before_compact) > 10 and before_compact in content_compact:
+        return "The text exists but with different whitespace (spaces, tabs, or newlines). Read the file and copy the exact text including whitespace."
+    return "Read the current file content and copy the exact text for 'before'. The text may have changed since you last read it."
+
+
 def apply_edits(files: dict[str, str], edits: list, *, protected_paths: set[str] | None = None, limits: dict | None = None) -> dict[str, str]:
     if not isinstance(edits, list) or not 1 <= len(edits) <= 20:
         raise ValueError("Provide 1–20 exact replacements")
@@ -314,8 +327,15 @@ def apply_edits(files: dict[str, str], edits: list, *, protected_paths: set[str]
             raise ValueError("Edits must address inventoried files")
         if is_test_path(path) and (protected_paths is None or path in protected_paths):
             raise ValueError("Existing tests are protected in this milestone")
-        if not before or before == after or result[path].count(before) != 1:
-            raise ValueError(f"Replacement must match exactly once and change content: {path}")
+        if not before or before == after:
+            raise ValueError(f"Replacement must change content: {path}")
+        occurrences = result[path].count(before)
+        if occurrences != 1:
+            # Give the model a specific reason so it can fix the edit without guessing.
+            if occurrences == 0:
+                hint = _edit_match_hint(result[path], before)
+                raise ValueError(f"Replacement text not found in {path}. {hint}")
+            raise ValueError(f"Replacement text found {occurrences} times in {path}; make it more specific (include surrounding context) so it matches exactly once")
         result[path] = result[path].replace(before, after, 1)
         _snapshot_limits(result, **(limits or {}))
     return result
@@ -331,4 +351,58 @@ def syntax_check(files: dict[str, str]) -> dict:
                 ast.parse(text.encode("utf-8"), filename=path)
             except (SyntaxError, ValueError, RecursionError) as exc:
                 errors.append(f"{path}: {exc}")
+        elif path.endswith((".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")):
+            count += 1
+            brace_error = _check_braces(text)
+            if brace_error:
+                errors.append(f"{path}: {brace_error}")
     return {"kind": "python_syntax", "status": "failed" if errors else "passed" if count else "not_run", "files_checked": count, "errors": errors, "note": "Parsing only; no repository code executed. Not a test-suite result."}
+
+
+def _check_braces(text: str) -> str | None:
+    """A lightweight bracket-balance check for JS/TS files. Catches the most common
+    syntax errors from a bad edit (unbalanced braces/brackets/parens) without needing
+    a JS engine. Returns an error message or None."""
+    stack: list[tuple[str, int]] = []
+    in_string: str | None = None
+    in_comment: bool = False
+    in_line_comment: bool = False
+    escaped = False
+    for i, char in enumerate(text):
+        if in_line_comment:
+            if char == "\n":
+                in_line_comment = False
+            continue
+        if in_comment:
+            if char == "*" and i + 1 < len(text) and text[i + 1] == "/":
+                in_comment = False
+            continue
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == in_string:
+                in_string = None
+            continue
+        if char in ('"', "'", "`"):
+            in_string = char
+        elif char == "/" and i + 1 < len(text) and text[i + 1] == "/":
+            in_line_comment = True
+        elif char == "/" and i + 1 < len(text) and text[i + 1] == "*":
+            in_comment = True
+        elif char in "{[(":
+            stack.append(("}])"["{[(".index(char)], i))
+        elif char in ")]}":
+            if not stack:
+                return f"Unexpected '{char}' at position {i}"
+            expected, _pos = stack.pop()
+            if char != expected:
+                return f"Mismatched '{char}' at position {i} (expected '{expected}')"
+    if in_string:
+        return "Unterminated string literal"
+    if stack:
+        expected, pos = stack[-1]
+        opener = {"}": "{", "]": "[", ")": "("}[expected]
+        return f"Unclosed '{opener}' at position {pos} (expected closing '{expected}')"
+    return None

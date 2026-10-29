@@ -10,7 +10,11 @@ in tan (`#E8C496`) on a deep forest rounded square (`#1F3D31`). Shapes are
 filled, not stroked, so the silhouette still reads at 16px. The lowercase
 `dikdik` wordmark sits beside it in Inter 650 with slight negative tracking.
 The mark is used as the favicon, the assistant avatar and the empty-state
-emblem; it is never animated to imply work.
+emblem. At launch, the mark resolves into view, its ears perk and occasionally twitch,
+and its eyes blink. Faint columns of binary digits drift behind the identity. This welcome animation ends as soon as the
+workspace is ready; it never adds an artificial delay or implies task progress.
+Reduced-motion preferences show the same identity without animation. During
+agent work, the mark stays still and a separate status indicator reports activity.
 
 ## Type
 

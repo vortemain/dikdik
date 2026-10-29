@@ -48,7 +48,7 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(set(row), {"id", "name", "provider", "model", "endpoint", "timeout_seconds", "is_default", "connection_id", "key_ref", "temperature", "top_p", "max_output_tokens"})
+        self.assertEqual(set(row), {"id", "name", "provider", "model", "endpoint", "timeout_seconds", "is_default", "connection_id", "key_ref", "temperature", "top_p", "max_output_tokens", "reasoning_effort", "fallback_profile_id"})
         self.assertEqual(row["is_default"], True)  # first profile becomes default
         self.assertNotIn("credential_secret_ref", json.dumps(rows))  # never returns credentials/refs
 
@@ -74,10 +74,23 @@ class ProfileStoreTests(unittest.TestCase):
 
     def test_patch_rejects_forbidden_fields(self):
         _, created = self.create()
-        for field in ({"id": "x"}, {"name": ""}, {"provider": "nope"}, {"credential_secret_ref": "..."}, {"temperature": 3}, {"top_p": -1}, {"max_output_tokens": 0}):
+        for field in ({"id": "x"}, {"name": ""}, {"provider": "nope"}, {"credential_secret_ref": "..."}, {"temperature": 3}, {"top_p": -1}, {"max_output_tokens": 0}, {"reasoning_effort": "extreme"}):
             with self.assertRaises(ApiError) as ctx:
                 self.store.patch(created["id"], field)
             self.assertEqual(ctx.exception.status, 400)
+
+    def test_reasoning_effort_variant(self):
+        status, created = self.create(reasoning_effort="high")
+        self.assertEqual(status, 201)
+        rows = self.store.list_profiles()[1]
+        self.assertEqual(rows[0]["reasoning_effort"], "high")
+        _, copy = self.store.duplicate(created["id"])
+        by_id = {r["id"]: r for r in self.store.list_profiles()[1]}
+        self.assertEqual(by_id[copy["id"]]["reasoning_effort"], "high")
+        self.store.patch(created["id"], {"reasoning_effort": "low"})
+        self.assertEqual(self.store.list_profiles()[1][0]["reasoning_effort"], "low")
+        self.store.patch(created["id"], {"reasoning_effort": None})
+        self.assertIsNone(self.store.list_profiles()[1][0]["reasoning_effort"])
 
     def test_rename_duplicate_and_settings(self):
         _, created = self.create()
@@ -150,7 +163,7 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(status, 200)
         # JSON round-trip keeps the contract shape and loses no credential field
         again = json.loads(json.dumps(rows))
-        self.assertEqual(set(again[0]), {"id", "name", "provider", "model", "endpoint", "timeout_seconds", "is_default", "connection_id", "key_ref", "temperature", "top_p", "max_output_tokens"})
+        self.assertEqual(set(again[0]), {"id", "name", "provider", "model", "endpoint", "timeout_seconds", "is_default", "connection_id", "key_ref", "temperature", "top_p", "max_output_tokens", "reasoning_effort", "fallback_profile_id"})
         profile_id = rows[0]["id"]
         self.assertEqual(self.routes("PATCH", f"/api/profiles/{profile_id}", {"timeout_seconds": 5})[0], 200)
         self.assertEqual(self.routes("DELETE", f"/api/profiles/{profile_id}?confirm_default=1", {})[0], 200)

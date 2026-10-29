@@ -2,7 +2,7 @@
 
 Original Dikdik source is MIT-licensed; third-party software, fonts and marks keep
 their own notices. Release downloads include a portable Python wheel, a source
-distribution and `SHA256SUMS.txt`. GitHub also provides archives of each Git tag.
+distribution, Windows setup, macOS disk image, Linux Debian package and `SHA256SUMS.txt`. GitHub also provides archives of each Git tag.
 The 0.x line is published as a developer preview, not as a production guarantee.
 
 ## Release checks
@@ -10,8 +10,8 @@ The 0.x line is published as a developer preview, not as a production guarantee.
 `.github/workflows/release.yml` validates pushes to main, pull requests, version
 tags and manual runs. It tests Python 3.13 on Windows and Linux, runs the frontend
 tests/typecheck/build, checks the committed browser bundle, builds distributions,
-validates metadata/notices, rejects private or native build files, installs the
-portable wheel outside the checkout and generates SHA-256 checksums.
+builds desktop installers on Windows, macOS and Linux, validates metadata/notices, rejects private or native build files, installs the
+portable wheel outside the checkout and generates SHA-256 checksums for all published assets.
 Windows tests install the declared `tzdata` dependency for named time zones;
 Linux uses its system IANA database. Project boundaries normalize Windows path
 aliases before comparisons.
@@ -49,7 +49,7 @@ python -m venv .venv
 python -m pip install -r scripts/requirements-release.txt
 python -m build --no-isolation
 python -m twine check --strict dist/*.whl dist/*.tar.gz
-python scripts/check_release.py dist --tag v0.1.0
+python scripts/check_release.py dist --tag v0.2.0
 ```
 
 Install the wheel in a second empty virtual environment and run `dikdik --version`

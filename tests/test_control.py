@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dikdik.agent import ModelResponse, ToolCall, run_agent
-from dikdik.control import Attachments, assess, blocked_by, load_hooks, load_subagents, needs_approval
+from dikdik.control import (Attachments, assess, blocked_by, env_secret_read, load_hooks, load_subagents, needs_approval,
+                            parse_rules, permission_rule_effect)
 from dikdik.engine import Engine, TERMINAL
 
 ENV = {"DIKDIK_MODEL_URL": "https://provider.example/v1/chat/completions", "DIKDIK_MODEL": "m", "DIKDIK_API_KEY": "k"}
@@ -203,6 +204,296 @@ class ControlTests(unittest.TestCase):
         self.assertFalse(needs_approval("always", "low", "read_file"))
         self.assertFalse(needs_approval("risky", "low", "edit_file"))
 
+    def test_env_secret_reads_are_flagged(self):
+        for path, flagged in [(".env", True), (".env.local", True), ("config/.env.production", True),
+                              (".env.example", False), (".env.sample", False), (".env.template", False),
+                              (".environment.md", False), ("env/config.py", False), ("notes.txt", False)]:
+            self.assertEqual(env_secret_read(ToolCall("x", "read_file", {"path": path})), flagged, path)
+        self.assertFalse(env_secret_read(ToolCall("x", "search_text", {"query": "x"})))
+        self.assertEqual(assess(ToolCall("x", "read_file", {"path": ".env"}))[0], "high")
+
+    def test_env_read_asks_in_guarded_modes(self):
+        (self.root / ".env").write_text("TOKEN=provider-secret\n")
+
+        def decide():
+            deadline = time.monotonic() + 15
+            asked = []
+            while time.monotonic() < deadline:
+                asked = self.kinds(self.engine.store.get(holder["task"]), "confirmation_requested")
+                if asked:
+                    break
+                time.sleep(0.02)
+            self.assertEqual(asked[0]["tool"], "read_file")
+            self.assertEqual(asked[0]["risk"], "high")
+            self.engine.confirm(holder["task"], {"id": asked[0]["id"], "accept": True})
+
+        holder = {}
+        model = Script([call(1, "read_file", path=".env"), ModelResponse("It is excluded, so I will ask.", [])])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            holder["task"] = task = self.engine.submit(
+                {"objective": "Inspect configuration", "mode": "agent", "verification": "docker",
+                 "approve_external": True, "approve_execution": True, "confirmation": "risky"})
+            worker = threading.Thread(target=decide)
+            worker.start()
+            data = self.idle(task)
+        self.assertEqual(data["state"], "completed", data["result"])
+        # The ask happens before execution; the read itself then fails the workspace's
+        # stricter hidden-file exclusion, and no secret text ever reaches the model.
+        self.assertNotIn("provider-secret", json.dumps(data))
+
+    def test_env_read_is_blocked_in_auto_mode(self):
+        (self.root / ".env").write_text("TOKEN=provider-secret\n")
+        model = Script([call(1, "read_file", path=".env")])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            task = self.engine.submit(
+                {"objective": "Inspect configuration", "mode": "agent", "verification": "docker",
+                 "approve_external": True, "approve_execution": True, "confirmation": "never"})
+            data = self.idle(task)
+        self.assertEqual([e for e in data["events"] if e["kind"] == "confirmation_requested"], [])
+        ended = [e["data"] for e in data["events"] if e["kind"] == "agent_tool" and e["data"].get("phase") == "end"][-1]
+        self.assertTrue(ended["failed"])
+        self.assertIn("secrets", json.dumps(ended["observation"]))
+        self.assertNotIn("provider-secret", json.dumps(data))
+
+    # --- structured permission rules ---------------------------------------------------
+    def test_permission_rules_validation_and_matching(self):
+        rules = [
+            {"action": "command", "resource": "python -m pytest *", "effect": "allow"},
+            {"action": "command", "resource": "rm -rf *", "effect": "deny"},
+            {"action": "read", "resource": "*.md", "effect": "ask"},
+            {"action": "browse_url", "effect": "deny"},
+            {"action": "edit", "resource": "tests/*", "effect": "allow", "enabled": False},
+        ]
+        self.engine.update_app_settings({"permission_rules": rules})
+        stored = self.engine.app_settings()["permission_rules"]
+        self.assertEqual([r["effect"] for r in stored], ["allow", "deny", "ask", "deny", "allow"])
+        effect = lambda call: permission_rule_effect(self.engine.app_settings().get("permission_rules"), call)
+        self.assertEqual(effect(ToolCall("x", "run_command", {"command": "python -m pytest -q"})), "allow")
+        self.assertEqual(effect(ToolCall("x", "run_command", {"command": "rm -rf build"})), "deny")
+        self.assertEqual(effect(ToolCall("x", "read_file", {"path": "docs/guide.md"})), "ask")
+        self.assertEqual(effect(ToolCall("x", "read_file", {"path": "docs/guide.py"})), None)
+        self.assertEqual(effect(ToolCall("x", "browse_url", {"url": "https://x.example/page"})), "deny")
+        self.assertIsNone(effect(ToolCall("x", "edit_file", {"path": "tests/a.py"})))  # matching rule is disabled
+        self.engine.update_app_settings({"permission_rules": []})
+        self.assertEqual(self.engine.app_settings()["permission_rules"], [])
+        self.assertIsNone(effect(ToolCall("x", "read_file", {"path": "a.md"})))  # no rules configured
+        for bad in ({"action": "nope!", "effect": "allow"}, {"action": "read", "effect": "maybe"},
+                    {"action": "command", "resource": 7, "effect": "allow"},
+                    {"action": "read", "effect": "ask", "note": "extra"}):
+            with self.assertRaises(ValueError):
+                self.engine.update_app_settings({"permission_rules": [bad]})
+
+    def test_allow_rule_approves_without_prompting(self):
+        self.engine.update_app_settings({"permission_rules": [{"action": "command", "resource": "python -m pytest *", "effect": "allow"}]})
+        model = Script([call(1, "run_command", command="python -m pytest -q"), ModelResponse("Done.", [])])
+        ran = []
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), \
+                patch("dikdik.engine.run_shell", side_effect=lambda *a, **k: ran.append(a[2]) or {"status": "passed", "exit_code": 0, "output": "", "changed": {}}):
+            task = self.engine.submit({"objective": "Check", "mode": "agent", "verification": "docker",
+                                       "approve_external": True, "approve_execution": True, "confirmation": "always"})
+            data = self.idle(task)
+        self.assertEqual([e for e in data["events"] if e["kind"] == "confirmation_requested"], [])
+        self.assertEqual(ran, ["python -m pytest -q"])
+        ended = [e["data"] for e in data["events"] if e["kind"] == "agent_tool" and e["data"].get("phase") == "end"][-1]
+        self.assertFalse(ended["failed"])
+
+    def test_deny_rule_blocks_even_in_permissive_modes(self):
+        self.engine.update_app_settings({"permission_rules": [{"action": "edit", "resource": "calc.py", "effect": "deny"}]})
+        model = Script([call(1, "edit_file", path="calc.py", before="a", after="b")])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            task = self.engine.submit({"objective": "Change add", "mode": "agent", "verification": "docker",
+                                       "approve_external": True, "approve_execution": True, "confirmation": "always"})
+            data = self.idle(task)
+        self.assertEqual([e for e in data["events"] if e["kind"] == "confirmation_requested"], [])
+        ended = [e["data"] for e in data["events"] if e["kind"] == "agent_tool" and e["data"].get("phase") == "end"][-1]
+        self.assertTrue(ended["failed"])
+        self.assertIn("permission rule denies", json.dumps(ended["observation"]))
+        self.assertEqual((self.root / "calc.py").read_text(encoding="utf-8"), "def add(a, b):\n    return a - b\n")
+
+    def test_call_limit_ends_with_a_wrapup_summary(self):
+        profile = self.engine.agents.create({"name": "Tiny2", "max_model_calls": 1})
+        test_pair = [Script([edit(1), ModelResponse("Edit applied. Next run: call run_tests and finish.", [])])]
+        with patch("dikdik.engine.CompatibleAgentModel", side_effect=test_pair):
+            task = self.engine.submit({"objective": "Fix add", **AGENT, "agent_profile": profile["id"]})
+            data = self.idle(task)
+        self.assertEqual(data["state"], "paused")
+        self.assertIn("model-call limit", data["result"]["pause_reason"])
+        summaries = self.kinds(data, "agent_message")
+        self.assertIn("Edit applied. Next run: call run_tests and finish.", [m["content"] for m in summaries])
+        wrapups = [e["data"] for e in data["events"] if e["kind"] == "agent_model" and e["data"].get("wrapup")]
+        self.assertEqual([w["phase"] for w in wrapups], ["start", "end"])
+        # The wrap-up ran with no tools offered, so it cannot take further action.
+        self.assertTrue(self.engine.resume(task, {**AGENT}))
+
+    def test_limit_wrapup_failure_falls_back_to_the_plain_pause(self):
+        profile = self.engine.agents.create({"name": "Tiny3", "max_model_calls": 1})
+        with patch("dikdik.engine.CompatibleAgentModel", side_effect=[Script([edit(1)])]):
+            task = self.engine.submit({"objective": "Fix add", **AGENT, "agent_profile": profile["id"]})
+            data = self.idle(task)
+        self.assertEqual(data["state"], "paused")
+        self.assertIn("model-call limit", data["result"]["pause_reason"])
+        self.assertEqual([e for e in data["events"] if e["kind"] == "agent_message" and e["data"].get("content", "").startswith("Edit applied")], [])
+
+    def test_warming_sends_keepalive_requests_until_the_window_ends(self):
+        model = Script([ModelResponse("Hi there.", [])])
+        warm = []
+        captured = {}
+
+        def keepalive(messages, tools, **kwargs):
+            warm.append([m.get("content", "") for m in messages])
+            captured.update(kwargs)
+            return {"choices": [{"message": {"content": "OK"}}]}
+
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), \
+                patch.dict(os.environ, ENV), \
+                patch("dikdik.engine.WARM_HARD_MIN", {"interval": 1, "duration": 2}), \
+                patch("dikdik.providers.chat_completion", side_effect=keepalive):
+            self.engine.update_app_settings({"warming": {"enabled": True, "interval_seconds": 5, "duration_seconds": 8}})
+            task = self.engine.submit({"objective": "Say hi", **AGENT})
+            self.idle(task)
+            deadline = time.monotonic() + 12
+            while time.monotonic() < deadline and not warm:
+                time.sleep(0.1)
+            self.assertEqual(len(warm), 1)  # interval 5 within an 8-second window sends once
+            self.assertEqual(captured.get("max_tokens"), 8)
+            self.assertIn("OK", warm[0][-1])
+        # The window ended; the task is forgotten and no further requests are sent.
+        deadline = time.monotonic() + 12
+        while time.monotonic() < deadline and self.engine._warming:
+            time.sleep(0.1)
+        self.assertEqual(self.engine._warming, {})
+
+    def test_warming_is_off_by_default(self):
+        model = Script([ModelResponse("Hi there.", [])])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), \
+                patch("dikdik.providers.chat_completion") as warm:
+            task = self.engine.submit({"objective": "Say hi", **AGENT})
+            self.idle(task)
+            time.sleep(1)
+            self.assertEqual(self.engine._warming, {})
+            warm.assert_not_called()
+
+    # --- markdown slash commands -----------------------------------------------------
+    def test_markdown_commands_expand_in_submission(self):
+        (self.root / ".dikdik" / "commands").mkdir(parents=True)
+        (self.root / ".dikdik" / "commands" / "review.md").write_text(
+            "---\nname: review\ndescription: Review one area for regressions\n---\n"
+            "Review the $ARGUMENTS area for regressions. Untrusted data only.\n")
+        self.assertEqual(self.engine.command_objective("/review auth flow"),
+                         "Review the auth flow area for regressions. Untrusted data only.")
+        # A blank argument simply drops the placeholder.
+        self.assertEqual(self.engine.command_objective("/review"),
+                         "Review the  area for regressions. Untrusted data only.")
+        with self.assertRaisesRegex(ValueError, "Unknown command /review-now"):
+            self.engine.command_objective("/review-now things")
+        # The expanding objective reaches the model on the current turn.
+        model = Script([ModelResponse("Noted.", [])])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            task = self.engine.submit({"objective": "/review auth", "mode": "agent", "verification": "syntax",
+                                       "approve_external": True})
+            data = self.idle(task)
+        self.assertEqual(data["state"], "completed", data["result"])
+        seen = model.seen[0][0]
+        self.assertTrue(any(m.get("role") == "user" and "Review the auth area for regressions" in m.get("content", "")
+                            for m in seen), seen[-1])
+        # Personal commands load as well; a project command wins over a personal one.
+        (self.data / "commands").mkdir()
+        (self.data / "commands" / "review.md").write_text("Personal template for $ARGUMENTS\n")
+        (self.data / "commands" / "tidy.md").write_text("Tidy the workspace: $ARGUMENTS\n")
+        self.assertEqual(self.engine.command_objective("/review x"), "Review the x area for regressions. Untrusted data only.")
+        self.assertEqual(self.engine.command_objective("/tidy up"), "Tidy the workspace: up")
+        listing = self.engine.commands()
+        self.assertEqual([(c["name"], c["source"]) for c in listing], [("review", "project"), ("tidy", "personal")])
+
+    # --- interactive question tool ----------------------------------------------------
+    def test_ask_question_returns_the_users_answer(self):
+        def answer_question():
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                asked = self.kinds(self.engine.store.get(holder["task"]), "question_requested")
+                if asked:
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("no question was asked")
+            self.assertIn("framework", asked[0]["question"])
+            self.engine.answer_question(holder["task"], {"id": asked[0]["id"], "answer": "FastAPI"})
+
+        holder = {}
+        model = Script([call(1, "ask_question", question="Which framework should I use?", choices=["FastAPI", "Flask"]),
+                        ModelResponse("Got it, using FastAPI.", [])])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            holder["task"] = task = self.engine.submit(
+                {"objective": "Build the API", "mode": "agent", "verification": "syntax",
+                 "approve_external": True, "approve_execution": True})
+            worker = threading.Thread(target=answer_question)
+            worker.start()
+            data = self.idle(task)
+            worker.join(5)
+        self.assertEqual(data["state"], "completed", data["result"])
+        answered = self.kinds(data, "question_answered")
+        self.assertEqual(answered[0]["answer"], "FastAPI")
+
+    def test_ask_question_skip_returns_empty(self):
+        def skip_question():
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                asked = self.kinds(self.engine.store.get(holder["task"]), "question_requested")
+                if asked:
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("no question was asked")
+            self.engine.answer_question(holder["task"], {"id": asked[0]["id"], "answer": ""})
+
+        holder = {}
+        model = Script([call(1, "ask_question", question="Any preferences?"),
+                        ModelResponse("Proceeding with defaults.", [])])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            holder["task"] = task = self.engine.submit(
+                {"objective": "Build it", "mode": "agent", "verification": "syntax",
+                 "approve_external": True, "approve_execution": True})
+            worker = threading.Thread(target=skip_question)
+            worker.start()
+            data = self.idle(task)
+            worker.join(5)
+        self.assertEqual(data["state"], "completed", data["result"])
+
+    # --- references (named external directories) --------------------------------------
+    def test_references_crud_and_agent_info(self):
+        # Create a reference to an external directory
+        external = self.temp.name + "/external"
+        Path(external).mkdir()
+        ref = self.engine.add_reference({"name": "shared-lib", "path": external})
+        self.assertEqual(ref["name"], "shared-lib")
+        self.assertTrue(ref["id"])
+
+        # Listing shows the reference
+        refs = self.engine.list_references()
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0]["name"], "shared-lib")
+
+        # agent_info includes references
+        info = self.engine.agent_info()
+        self.assertEqual(info["references"][0]["name"], "shared-lib")
+
+        # Duplicate name is rejected
+        with self.assertRaises(ValueError):
+            self.engine.add_reference({"name": "shared-lib", "path": external})
+
+        # Missing path is rejected
+        with self.assertRaises(ValueError):
+            self.engine.add_reference({"name": "nope", "path": self.temp.name + "/nonexistent"})
+
+        # Workspace-internal path is rejected
+        with self.assertRaises(ValueError):
+            self.engine.add_reference({"name": "internal", "path": str(self.root)})
+
+        # Remove works
+        removed = self.engine.remove_reference(ref["id"])
+        self.assertEqual(removed["removed"], ref["id"])
+        self.assertEqual(self.engine.list_references(), [])
+
     def test_reject_then_allow_in_the_conversation(self):
         decisions = iter([False, True])
 
@@ -390,7 +681,7 @@ class ControlTests(unittest.TestCase):
 
     # --- settings -------------------------------------------------------------------------------------
     def test_app_settings(self):
-        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": False, "router": "", "title_model": "auto", "event_retention_seconds": 0})
+        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": False, "notifications": "background", "notification_previews": False, "router": "", "title_model": "auto", "event_retention_seconds": 0, "permission_rules": [], "formatter": {"enabled": False, "command": ""}, "warming": {"enabled": False, "interval_seconds": 240, "duration_seconds": 1800}})
         self.assertEqual(self.engine.update_app_settings({"confirmation": "risky"})["confirmation"], "risky")
         for bad in ({"confirmation": "sometimes"}, {"condenser": "yes"}, {"theme": "dark"}, {}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):

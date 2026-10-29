@@ -1,5 +1,5 @@
 import { browserHistory, browserView, buildTaskRequest, commandActivity, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
-import { attachmentList, contextUsage, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
+import { attachmentList, contextUsage, costProjection, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, ChecklistItem, SlashCommand, TaskRequest, DiffReview, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
@@ -17,6 +17,11 @@ import { fileTree, organiseTasks, parentFolders, parseTags, rankCommands, splitD
 import { renderRichText } from './rich-text';
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
+import { TerminalRenderer } from './terminal-render';
+import { runningTerminalCommands } from './contracts';
+import { deriveProgress } from './contracts';
+import { frameBatch } from './render-scheduler';
+import { renderProgress } from './progress';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
   const found = document.getElementById(id);
@@ -50,7 +55,8 @@ const confirmDecisions = new Map<string, (accept: boolean) => void>();  // open 
 const secretCards = new Map<string, HTMLElement>();  // open secret requests
 // Organisation, onboarding and files: read by functions that run at load time.
 let modelReady = true, activeTag = "", listLimit = 40, folderOptions: string[] = [];
-let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean; title_model?: string } | null = null;
+let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean; title_model?: string; notifications?: 'off' | 'background' | 'all'; notification_previews?: boolean } | null = null;
+let nativeNotifications = false;
 const titled = new Set<string>();  // conversations we already asked to be titled this session
 let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsElement; summary: HTMLElement; count: number } | null = null;
 let showAllMessages = false, projectFileSet = new Set<string>();
@@ -608,6 +614,11 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   li.id = msg.id;
   const state = msg.state ?? "completed";
   const result = msg.details as TaskResult | undefined;
+  if (result?.browser_session) {
+    li.className = "msg msg-system msg-turn-note";
+    li.append(make("p", "turn-note", "Browser session ready. Open a page in the Browser panel."));
+    return li;
+  }
   if (state === "completed" && (result as { turn_changed?: unknown } | undefined)?.turn_changed === false) {
     // An answer-only turn: the reply says it all, so just note that nothing changed.
     li.className = "msg msg-system msg-turn-note";
@@ -1124,6 +1135,7 @@ function changedPaths(): Set<string> { return new Set(review.files.map(file => f
 
 let terminalClearedTask = "", terminalClearedSeq = 0, terminalHistoryIndex = -1, terminalDraft = "", terminalSubmitting = false;
 let terminalContinuing = new Set<string>();
+let terminalRenderer: TerminalRenderer | null = null, terminalCopyText = "", terminalRenderedTask: string | null = null;
 let showingCommandProgress = false;
 function renderCommandProgress(): void {
   if (selected && stoppingTasks.has(selected) && !isTerminal(selectedState)) {
@@ -1142,15 +1154,21 @@ function renderCommandProgress(): void {
   }
 }
 function renderTerminal(): void {
+  // Hidden panes need no transcript parsing or DOM work; opening the tab catches up.
+  if (canvasTab !== "terminal" || el("canvas").hidden) return;
   const view = terminalTranscript(liveEvents.filter(event => selected !== terminalClearedTask || event.seq > terminalClearedSeq
     || event.kind === "terminal_command" && terminalContinuing.has(String(event.data.command_id))));
   const terminal = el("terminal-view");
   const empty = el("terminal-empty");
   const screen = el("terminal-screen"), stick = nearBottom(screen);
-  if (terminal.textContent !== view.text) terminal.textContent = view.text;
+  if (!terminalRenderer || terminalRenderedTask !== selected) {
+    terminal.replaceChildren(); terminalRenderer = new TerminalRenderer(terminal); terminalRenderedTask = selected;
+  }
+  terminalRenderer.render(view.commands);
+  terminalCopyText = view.text;
   terminal.hidden = !view.commands.length;
   empty.hidden = !!view.commands.length;
-  const running = terminalTranscript(liveEvents).commands.some(command => command.running);
+  const running = runningTerminalCommands(liveEvents).length > 0;
   el("terminal-project").textContent = projectName || "your project";
   el("terminal-prompt-path").textContent = [projectName, input("terminal-cwd").value.trim()].filter(Boolean).join("/") || "project";
   el("terminal-runtime").textContent = taskRequest?.verification === "local" || !selected ? "Local terminal" : "Docker terminal";
@@ -1163,21 +1181,21 @@ function renderTerminal(): void {
 async function workspaceSession(): Promise<string> {
   await ensureTrusted(true);
   const session = await api<{ id: string }>("/api/terminal/sessions", { approve_execution: true });
-  selectTask(session.id); await loadHistory(); await observe(true);
+  selectTask(session.id); await loadHistory();
   return session.id;
 }
 button("terminal-new").onclick = () => { void workspaceSession().then(() => input("terminal-command").focus()).catch(error => message(String(error), true)); };
-button("terminal-copy").onclick = () => { void copyText(el("terminal-view").textContent ?? "", button("terminal-copy")); };
+button("terminal-copy").onclick = () => { terminalPaint.flush(); void copyText(terminalCopyText, button("terminal-copy")); };
 button("terminal-clear").onclick = () => {
   terminalClearedTask = selected ?? ""; terminalClearedSeq = liveSeq;
-  terminalContinuing = new Set(terminalTranscript(liveEvents).commands.filter(command => command.running).map(command => command.id));
+  terminalContinuing = new Set(runningTerminalCommands(liveEvents).map(command => command.id));
   renderTerminal();
 };
 async function stopTerminal(): Promise<void> {
   if (!selected) return;
   const task = selected;
   try {
-    const running = terminalTranscript(liveEvents).commands.filter(command => command.running);
+    const running = runningTerminalCommands(liveEvents);
     if (running.some(command => command.source === "agent")) await api(`/api/tasks/${task}/cancel`, {});
     await Promise.all(running.filter(command => command.source === "manual")
       .map(command => api(`/api/tasks/${task}/bash/commands/${command.id}/stop`, {})));
@@ -1233,6 +1251,13 @@ function renderUsage(): void {
   summary.append(make("p", "usage-cost", metrics.task.reportedCost === undefined
     ? "Provider cost not reported — no estimate shown."
     : `Provider-reported cost: ${metrics.task.reportedCost.toLocaleString(undefined, { maximumFractionDigits: 8 })}`));
+  // Cost projection: average per turn and rough extrapolation.
+  const projection = costProjection(metrics);
+  if (projection && projection.turnsWithCost > 0 && projection.avgCostPerTurn > 0) {
+    summary.append(make("p", "usage-projection",
+      `Average ${projection.avgCostPerTurn.toLocaleString(undefined, { maximumFractionDigits: 8 })}/turn across ${projection.turnsWithCost} turn${projection.turnsWithCost === 1 ? "" : "s"}. ` +
+      `So far: ${projection.totalCost.toLocaleString(undefined, { maximumFractionDigits: 8 })}.`));
+  }
 
   const context = make("section", "usage-card");
   context.append(make("h3", "", "Context"));
@@ -1262,6 +1287,57 @@ function renderUsage(): void {
 
 let browserIndex: number | null = null;  // a page from this conversation's history; null follows the latest
 let browserOpening: { task: string; url: string } | null = null, browserText = false;
+let browserActionQueue: Promise<void> = Promise.resolve();
+let browserScope = 0;
+let browserViewportKey = "";
+function browserViewport(): { width: number; height: number } | undefined {
+  const box = el("browser-viewport").getBoundingClientRect?.();
+  return box && box.width > 0 && box.height > 0 ? { width: Math.max(320, Math.min(1920, Math.floor(box.width))), height: Math.max(240, Math.min(1200, Math.floor(box.height))) } : undefined;
+}
+function syncBrowserViewport(): void {
+  if (!selected || browserIndex !== null || el("canvas").hidden || canvasTab !== "browser" || !browserView(liveEvents).interactive) return;
+  const size = browserViewport();
+  if (!size) return;
+  const key = `${selected}:${size.width}:${size.height}`;
+  if (key === browserViewportKey) return;
+  browserViewportKey = key;
+  void browserAction("resize", size);
+}
+// Observe the outer panel only: replacing the page image can change inner
+// scrollbars and must never trigger an endless resize/screenshot cycle.
+let browserResizeTimer: ReturnType<typeof setTimeout> | undefined;
+if (typeof ResizeObserver === "function") new ResizeObserver(() => {
+  if (browserResizeTimer !== undefined) clearTimeout(browserResizeTimer);
+  browserResizeTimer = setTimeout(syncBrowserViewport, 150);
+}).observe(el("canvas"));
+let browserTypedText = "", browserTypeTimer: ReturnType<typeof setTimeout> | undefined;
+function flushBrowserTyping(): void {
+  if (browserTypeTimer !== undefined) clearTimeout(browserTypeTimer);
+  browserTypeTimer = undefined;
+  if (!browserTypedText) return;
+  const text = browserTypedText; browserTypedText = "";
+  void browserAction("type", { text });
+}
+function typeInBrowser(text: string): void {
+  browserTypedText += text;
+  if (browserTypeTimer !== undefined) clearTimeout(browserTypeTimer);
+  browserTypeTimer = setTimeout(flushBrowserTyping, 80);
+}
+function browserAction(action: string, arguments_: Record<string, unknown>): Promise<void> {
+  if (action !== "type") flushBrowserTyping();
+  const task = selected, browserEpoch = browserScope;
+  if (!task) return Promise.resolve();
+  browserActionQueue = browserActionQueue.then(async () => {
+    if (selected !== task || browserEpoch !== browserScope) return;
+    try {
+      el("browser-status").textContent = "Updating page…";
+      const result = await api<{ status: string; error?: string }>(`/api/tasks/${task}/browser/actions`, { action, arguments: arguments_, approve_browser: true, approve_execution: true });
+      if (result.status !== "passed") throw new Error(result.error || "Browser action failed");
+      if (selected === task) { browserIndex = null; watching = true; await observe(); }
+    } catch (error) { message(error instanceof Error ? error.message : "Browser action failed", true); }
+  });
+  return browserActionQueue;
+}
 function renderBrowser(): void {
   const latest = browserView(liveEvents), pages = browserHistory(liveEvents);
   const index = browserIndex !== null && browserIndex < pages.length ? browserIndex : pages.length - 1;
@@ -1269,14 +1345,14 @@ function renderBrowser(): void {
   const view = { ...latest, ...(page && browserIndex !== null ? { url: page.url, title: page.title, screenshot: page.screenshot, text: page.text } : {}) };
   const busy = latest.status === "running" || browserOpening?.task === selected;
   el("browser-current-url").textContent = view.url || "No URL loaded";
-  el("browser-title").textContent = busy ? "Loading…" : view.title || "New tab";
+  el("browser-title").textContent = busy ? "Loading…" : view.title || (view.url ? new URL(view.url).hostname : "New tab");
   const address = input("browser-url");
   if (document.activeElement !== address) address.value = browserOpening?.task === selected ? browserOpening.url : view.url;
   setClass(el("browser-lock"), "secure", view.url.startsWith("https:"));
   el("browser-lock").title = view.url.startsWith("https:") ? "Captured over HTTPS" : "Public web preview";
   el("browser-progress").hidden = !busy;
-  button("browser-back").disabled = !(index > 0);
-  button("browser-forward").disabled = !(index >= 0 && index < pages.length - 1);
+  button("browser-back").disabled = busy || !view.screenshot || !view.interactive && !(index > 0);
+  button("browser-forward").disabled = busy || !view.screenshot || !view.interactive && !(index >= 0 && index < pages.length - 1);
   button("browser-reload").disabled = !view.url || busy;
   const link = el("browser-external") as HTMLAnchorElement;
   link.hidden = !view.url; link.href = view.url || "#";
@@ -1284,16 +1360,40 @@ function renderBrowser(): void {
   el("browser-empty").hidden = !!view.screenshot;
   const mount = el("browser-snapshot"); mount.hidden = !view.screenshot || browserText;
   if (mount.dataset.screenshot !== view.screenshot) {
+    const restoreFocus = document.activeElement?.classList?.contains("browser-image");
     mount.dataset.screenshot = view.screenshot;
     mount.replaceChildren();
     if (view.screenshot) {
       const image = make("img", "browser-image"); image.src = view.screenshot; image.alt = view.title || `Screenshot of ${view.url}`;
+      image.draggable = false;
+      image.tabIndex = view.interactive ? 0 : -1;
+      image.setAttribute("aria-label", "Browser page. Click a control, then type. Use Page text for readable content.");
+      if (view.interactive) {
+        image.addEventListener("click", event => {
+          if (browserIndex !== null) return;
+          const box = image.getBoundingClientRect(); image.focus();
+          void browserAction("click", { x: Math.min(image.naturalWidth - 1, Math.max(0, (event.clientX - box.left) * image.naturalWidth / box.width)), y: Math.min(image.naturalHeight - 1, Math.max(0, (event.clientY - box.top) * image.naturalHeight / box.height)) });
+        });
+        image.addEventListener("keydown", event => {
+          if (event.ctrlKey || event.metaKey) {
+            if (event.key.toLowerCase() === "a") { event.preventDefault(); void browserAction("press", { key: "ControlOrMeta+A" }); }
+            return;
+          }
+          if (event.key.length === 1 && !event.altKey) { event.preventDefault(); typeInBrowser(event.key); }
+          else if (["Enter", "Tab", "Backspace", "Delete", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
+            event.preventDefault(); void browserAction("press", { key: event.key === "Tab" && event.shiftKey ? "Shift+Tab" : event.key });
+          }
+        });
+        image.addEventListener("paste", event => { event.preventDefault(); typeInBrowser(event.clipboardData?.getData("text/plain") ?? ""); });
+        image.addEventListener("wheel", event => { event.preventDefault(); void browserAction("scroll", { x: Math.max(-3000, Math.min(3000, event.deltaX)), y: Math.max(-3000, Math.min(3000, event.deltaY)) }); }, { passive: false });
+      }
       image.addEventListener("error", () => { el("browser-status").textContent = "This screenshot is no longer available. Open the URL again to capture it."; });
       mount.append(image);
+      if (restoreFocus) image.focus();
     }
   }
-  el("browser-status").textContent = busy ? "Capturing page…" : latest.error ? latest.error
-    : view.screenshot ? `Captured page · ${index + 1} of ${pages.length} · Open ↗ to use links and forms` : "Public web · Captures layout and text";
+  el("browser-status").textContent = busy ? "Loading page…" : latest.error ? latest.error
+    : view.screenshot ? view.interactive ? "Interactive page · Click, type, paste or scroll here · Agent and workspace share this page" : `Captured page · ${index + 1} of ${pages.length}` : "Public web · Open a page alongside your project";
   setClass(el("browser-status"), "browser-error", !!latest.error && !busy);
   button("browser-open").disabled = busy;
   button("browser-stop").disabled = !busy;
@@ -1351,6 +1451,22 @@ function renderChecklist(): void {
   }
   if (view.used && !view.tasks.length) list.append(make('li', '', 'No checklist steps.'));
 }
+
+let progressTimer: ReturnType<typeof setInterval> | null = null;
+function updateProgress(): void {
+  const panel = el('progress-panel');
+  if (!panel) return;
+  const state = deriveProgress(liveEvents, Date.now() / 1000);
+  if (state.isRunning) {
+    const firstEvent = liveEvents[0];
+    const startTime = firstEvent ? firstEvent.time : Date.now() / 1000;
+    renderProgress(panel, state, Math.max(0, Math.round(Date.now() / 1000 - startTime)));
+    if (!progressTimer) progressTimer = setInterval(() => updateProgress(), 1000);
+  } else {
+    if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+    panel.hidden = true; panel.replaceChildren();
+  }
+}
 async function enterPlanning(): Promise<void> {
   if (!selected) { select('mode').value = 'plan'; syncMode(); syncComposer(); textarea('objective').focus(); return; }
   if (!isTerminal(selectedState)) throw new Error('Wait for the current turn before planning.');
@@ -1382,13 +1498,24 @@ el('planner-create').addEventListener('click', () => { void enterPlanning().catc
 el('planner-build').addEventListener('click', () => { void buildReviewedPlan(); });
 
 async function openPage(url: string): Promise<void> {
+  browserScope++; browserTypedText = "";
+  if (browserTypeTimer !== undefined) clearTimeout(browserTypeTimer);
   if (browserOpening?.task === selected && selected) return;
   let task: string | null = null;
   try {
-    task = selected ?? await workspaceSession();
+    if (!selected) {
+      const session = await api<{ id: string }>("/api/browser/sessions", { approve_browser: true, approve_execution: true });
+      selectTask(session.id);
+      void loadHistory().catch(() => undefined);
+      openCanvas("browser");
+    }
+    task = selected;
+    if (!task) return;
     browserIndex = null; browserOpening = { task, url }; renderBrowser();
     // Typing an address and pressing Go is the user's own explicit request for this one page.
-    const capture = api(`/api/tasks/${task}/browser`, { url, approve_browser: true, approve_execution: true });
+    const viewport = browserViewport();
+    if (viewport) browserViewportKey = `${task}:${viewport.width}:${viewport.height}`;
+    const capture = api(`/api/tasks/${task}/browser`, { url, viewport, approve_browser: true, approve_execution: true });
     watching = true; startStream(task);
     await capture;
     browserOpening = null;
@@ -1406,15 +1533,17 @@ el("browser-form").addEventListener("submit", event => {
   if (url) void openPage(url);
 });
 el("browser-back").addEventListener("click", () => {
+  if (browserView(liveEvents).interactive) { void browserAction("back", {}); return; }
   const count = browserHistory(liveEvents).length;
   browserIndex = Math.max(0, (browserIndex ?? count - 1) - 1); renderBrowser();
 });
 el("browser-forward").addEventListener("click", () => {
+  if (browserView(liveEvents).interactive) { void browserAction("forward", {}); return; }
   const count = browserHistory(liveEvents).length;
   const next = (browserIndex ?? count - 1) + 1;
   browserIndex = next >= count - 1 ? null : next; renderBrowser();
 });
-el("browser-reload").addEventListener("click", () => { const url = el("browser-current-url").textContent ?? ""; if (url.startsWith("http")) void openPage(url); });
+el("browser-reload").addEventListener("click", () => { if (browserView(liveEvents).interactive) { void browserAction("reload", {}); return; } const url = el("browser-current-url").textContent ?? ""; if (url.startsWith("http")) void openPage(url); });
 el("browser-stop").addEventListener("click", () => {
   if (selected) void api(`/api/tasks/${selected}/browser/stop`, {}).catch(error => message(String(error), true));
 });
@@ -1422,7 +1551,9 @@ el("browser-stop").addEventListener("click", () => {
 async function loadBrowserSettings(): Promise<void> {
   const info = await api<{ enabled: boolean; image: string; availability: string; launch_verified: boolean }>("/api/browser");
   input("browser-enabled").checked = info.enabled;
-  el("browser-availability").textContent = info.availability === "host_ready"
+  el("browser-availability").textContent = info.availability === "interactive_ready"
+    ? "Persistent Chromium browser in your workspace. Supports page reading, clicks, typing, forms and navigation without Docker."
+    : info.availability === "host_ready"
     ? `Uses ${(info as { browser?: string }).browser ?? "the browser"} on this computer with a fresh, empty profile; pages can only reach public Internet addresses.`
     : info.availability === "image_ready" ? info.launch_verified ? "Browser image installed. A capture completed in this service session." : "Browser image installed. A successful launch has not been verified."
     : `No browser available. Install Edge or Chrome, or build the local ${info.image} image and start Docker.`;
@@ -1671,6 +1802,8 @@ async function applyChanges(): Promise<void> {
 
 // --- task lifecycle / polling ---------------------------------------------
 function resetConversation(): void {
+  browserScope++; browserTypedText = "";
+  if (browserTypeTimer !== undefined) clearTimeout(browserTypeTimer);
   terminalHistoryIndex = -1; terminalDraft = ""; input("terminal-command").value = "";
   rendered = new Set(); pendingCalls = []; lastRole = ""; renderedDiff = ""; applyStep = "idle"; lastApplied = [];
   confirmCards.clear(); confirmDecisions.clear(); secretCards.clear(); taskRequest = null; stepGroup = null; showAllMessages = false;
@@ -1722,13 +1855,15 @@ function selectTask(id: string): void {
   viewEpoch++;
   selected = id; watching = true; selectedState = "";
   resetConversation();
-  el("chat-title").textContent = "Loading…";
+  const summary = lastTasks.find(task => task.id === id);
+  el("chat-title").textContent = summary ? conversationLabel(summary) : "Loading…";
   setState("");
   markCurrent();
   closeSidebarDrawer();
   setUrl(id);
   syncComposer();
   void composerDrafts.select(id);
+  void observe();
 }
 function newTask(): void {
   composerSize.reset();
@@ -1912,7 +2047,7 @@ function taskRowBase(task: TaskSummary): HTMLElement {
   more.addEventListener("click", event => { event.stopPropagation(); openTaskMenu(task.id, more); });
   item.append(more);
   item.setAttribute("aria-current", String(task.id === selected));
-  item.onclick = () => { selectTask(task.id); void observe(); };
+  item.onclick = () => { selectTask(task.id); };
   item.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.target === item && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); item.click(); }
   });
@@ -2089,7 +2224,16 @@ async function runMenuAction(action: string): Promise<void> {
 
 // --- live stream: events as they are stored, the reply as it is written ------
 let live: EventSource | null = null, liveTask: string | null = null, liveEvents: TaskEvent[] = [], liveObjective = "", liveSeq = 0;
+let pendingReply = "";
+const replyPaint = frameBatch(() => showLiveReply(pendingReply));
+const terminalPaint = frameBatch(renderTerminal);
+const streamPaint = frameBatch(() => {
+  lastMessages = eventsToChat(liveEvents, liveObjective);
+  renderMessageStream(lastMessages);
+  renderRunState();
+});
 function stopStream(): void {
+  replyPaint.cancel(); streamPaint.cancel(); terminalPaint.cancel(); pendingReply = "";
   live?.close();
   live = null; liveTask = null;
   showLiveReply("");
@@ -2127,13 +2271,14 @@ function startStream(id: string): void {
     if (record.seq <= liveSeq) return;  // a reconnect replays from the start
     liveSeq = record.seq;
     liveEvents.push(record);
-    if (record.kind === "agent_message" || record.kind === "agent_tool") showLiveReply("");
-    renderMessageStream(eventsToChat(liveEvents, liveObjective));
-    if (record.kind === "terminal_command" || record.kind === "terminal_output") renderTerminal();
+    if (record.kind === "agent_message" || record.kind === "agent_tool") { replyPaint.cancel(); pendingReply = ""; showLiveReply(""); }
+    streamPaint.schedule();
+    if (record.kind === "terminal_command" || record.kind === "terminal_output" || isTerminal(record.kind)) terminalPaint.schedule();
     if (record.kind === "browser_started" || record.kind === "browser_result") renderBrowser();
     if (record.kind === 'plan_updated') void loadPlan(id);
     if (record.kind === 'task_tracker') renderChecklist();
     if ((record.kind === "agent_model" || record.kind === "running") && canvasTab === "usage" && !el("canvas").hidden) renderUsage();
+    updateProgress();
     if (record.kind === "running" || isTerminal(record.kind)) {
       setState(record.kind);
       selectedState = record.kind;
@@ -2143,13 +2288,15 @@ function startStream(id: string): void {
     }
     if (record.kind === "running") { el("working").hidden = false; el("working-label").textContent = "Working"; button("cancel").disabled = false; }
     else if (isTerminal(record.kind)) { el("working").hidden = true; button("cancel").disabled = true; }
-    renderRunState();
   });
   source.addEventListener("delta", event => {
     if (id !== selected) return stopStream();
-    showLiveReply((JSON.parse((event as MessageEvent).data) as { text: string }).text);
+    pendingReply = (JSON.parse((event as MessageEvent).data) as { text: string }).text;
+    replyPaint.schedule();
   });
   source.addEventListener("end", () => {
+    streamPaint.flush();
+    terminalPaint.flush();
     stopStream();
     watching = true;
     void observe();  // pick up the final result, diff and history
@@ -2173,6 +2320,7 @@ async function observe(force = false): Promise<void> {
     setTitle(el("chat-title").textContent ?? "");
     setState(task.state);
     selectedState = task.state;
+    updateProgress();
     parentTask = typeof task.request.parent_task === 'string' ? task.request.parent_task : null;
     taskRequest = task.request;
     if (!observedTaskMode) {
@@ -2183,8 +2331,10 @@ async function observe(force = false): Promise<void> {
     renderTerminal();
     renderBrowser();
     if (canvasTab === "usage") renderUsage();
-    renderChecklist(); await loadPlan(id);
-    if (id !== selected || epoch !== viewEpoch) return;
+    renderChecklist();
+    // A plan is secondary to the conversation. Its request must never hold up
+    // the first message paint or prevent the event stream from connecting.
+    void loadPlan(id).catch(() => undefined);
     button("cancel").disabled = isTerminal(task.state);
     const messages = eventsToChat(task.events as TaskEvent[], task.request.objective);
     lastMessages = messages;
@@ -2197,7 +2347,7 @@ async function observe(force = false): Promise<void> {
     const known = lastTasks.find(item => item.id === id);
     if (isTerminal(task.state) || (known && known.state !== task.state)) await loadHistory();
     if (id !== selected || epoch !== viewEpoch) return;
-    const toolsRunning = terminalTranscript(liveEvents).commands.some(command => command.running) || browserView(liveEvents).status === "running" || browserOpening?.task === id;
+    const toolsRunning = runningTerminalCommands(liveEvents).length > 0 || browserView(liveEvents).status === "running" || browserOpening?.task === id;
     if (isTerminal(task.state) && !toolsRunning) { watching = false; maybeTitle(id, task.state); }
     else startStream(id);
   } catch (error) {
@@ -2212,7 +2362,7 @@ function twoPanes(...loaders: (() => Promise<void>)[]): () => Promise<void> {
 let refreshPanels: Record<string, () => Promise<void>> = {};
 
 async function connect(): Promise<void> {
-  await project(); await loadHistory();
+  await Promise.all([project(), loadHistory()]);
   void loadModel().catch(() => undefined);
   void loadAgents().catch(() => undefined);
   el("boot").hidden = true;
@@ -2429,7 +2579,7 @@ function renderAutomations(): void {
         const started = await request<{ task_id: string }>(`/api/automations/${auto.id}/run`, "POST", {});
         (el("settings") as HTMLDialogElement).close?.();
         await loadHistory();
-        selectTask(started.task_id); void observe();
+        selectTask(started.task_id);
       } catch (error) { message(error instanceof Error ? error.message : "Could not start a run", true); }
     };
     const edit = make("button", "secondary", "Edit");
@@ -2447,7 +2597,7 @@ function renderAutomations(): void {
           const open = make("button");
           open.type = "button";
           open.append(make("span", `auto-state state-${run.state}`, run.state), make("span", "", run.created ? new Date(run.created * 1000).toLocaleString() : run.id.slice(0, 8)));
-          open.onclick = () => { (el("settings") as HTMLDialogElement).close?.(); selectTask(run.id); void observe(); };
+          open.onclick = () => { (el("settings") as HTMLDialogElement).close?.(); selectTask(run.id); };
           const logs = make("button", "ghost", "Logs");
           logs.type = "button";
           logs.onclick = async event => {
@@ -2911,8 +3061,10 @@ async function sendMessage(text: string, goalMaxTurns?: number): Promise<boolean
     if (task === selected) watching = true;
     if (reply.queued) message("Queued. Dikdik will reply when the current step finishes.");
   } catch (error) { message(error instanceof Error ? error.message : "Message failed", true); return false; }
-  try { await loadHistory(); if (task === selected) await observe(true); }
-  catch { message('Message sent. Refresh to load the latest conversation.', true); }
+  // Acceptance releases the composer immediately. History, the task snapshot
+  // and draft persistence do not sit on the message submission path.
+  if (task === selected) void observe(true);
+  void loadHistory().catch(() => message('Message sent. Refresh to load the latest conversation.', true));
   return true;
 }
 
@@ -2942,15 +3094,15 @@ el("task-form").addEventListener("submit", async event => {
     await ensureTrusted();
     if (selected) {
       composerRequest(text, goalTurns);  // validate before clearing the field
-      if (await sendMessage(text, goalTurns)) await composerDrafts.sent(originalScope, originalText);
+      if (await sendMessage(text, goalTurns)) void composerDrafts.sent(originalScope, originalText);
       return;
     }
     const task = await api<TaskSummary>("/api/tasks", composerRequest(text, goalTurns));
     clearAttachments();
     if (pendingFolder) { const folder = pendingFolder; pendingFolder = null; await patchTask(task.id, { folder }).catch(() => undefined); }
-    await composerDrafts.sent(originalScope, originalText);
+    void composerDrafts.sent(originalScope, originalText);
     selectTask(task.id);
-    await loadHistory(); await observe();
+    void loadHistory().catch(() => undefined);
   } catch (error) { message(error instanceof Error ? error.message : "Task failed", true); }
   finally { submitting = false; textarea('objective').disabled = false; composerDrafts.display(); autosize(); syncSend(); }
 });
@@ -3235,6 +3387,10 @@ async function loadAppSettings(): Promise<void> {
   select("confirmation-policy").value = settings.confirmation;
   input("condenser").checked = settings.condenser;
   input("sounds").checked = settings.sounds === true;
+  select("notification-mode").value = settings.notifications ?? "background";
+  input("notification-previews").checked = settings.notification_previews === true;
+  input("notification-previews").disabled = settings.notifications === "off";
+  void loadNotificationStatus();
   input("git-name").value = settings.git_name ?? "";
   input("git-email").value = settings.git_email ?? "";
   syncGitSave();
@@ -3256,6 +3412,42 @@ async function saveAppSetting(change: Record<string, unknown>): Promise<void> {
   catch (error) { message(error instanceof Error ? error.message : "Could not save", true); void loadAppSettings().catch(() => undefined); }
 }
 select("confirmation-policy").addEventListener("change", () => { void saveAppSetting({ confirmation: select("confirmation-policy").value }); });
+select("notification-mode").addEventListener("change", () => {
+  input("notification-previews").disabled = select("notification-mode").value === "off";
+  void saveAppSetting({ notifications: select("notification-mode").value });
+});
+input("notification-previews").addEventListener("change", () => { void saveAppSetting({ notification_previews: input("notification-previews").checked }); });
+async function loadNotificationStatus(): Promise<void> {
+  try {
+    const status = await api<{ desktop: boolean; ready: boolean; available: boolean; permission: string; error: string }>("/api/desktop/notifications");
+    nativeNotifications = status.desktop === true;
+    button("notification-test").disabled = !status.available || !status.ready;
+    el("notification-status").textContent = status.error || (!status.desktop ? "Open the desktop application to use native notifications." : !status.ready ? "Native notifications are starting. Reopen Settings in a moment." : status.permission === "allowed" ? "Ready. Your operating system controls banners, sounds and Do Not Disturb." : "Notification permission has not been granted. Send a test to request it.");
+  } catch { button("notification-test").disabled = true; el("notification-status").textContent = "Desktop notification status is unavailable."; }
+}
+button("notification-test").addEventListener("click", async () => {
+  button("notification-test").disabled = true;
+  try {
+    const reply = await api<{ sent: boolean; error?: string }>("/api/desktop/notifications/test", {});
+    message(reply.sent ? "Test sent to your system notification center." : reply.error || "The notification could not be sent.", !reply.sent);
+  } catch (error) { message(error instanceof Error ? error.message : "Could not send test notification", true); }
+  finally { await loadNotificationStatus(); }
+});
+globalThis.addEventListener?.("dikdik-open-notification", event => {
+  const detail = (event as CustomEvent).detail as { task?: unknown; project?: unknown } | null;
+  if (!detail || typeof detail.task !== "string" || !/^[a-f0-9]{32}$/.test(detail.task) || typeof detail.project !== "string" || detail.project.length > 1000) return;
+  void (async () => {
+    try {
+      await composerDrafts.flush();
+      if (composerDrafts.hasUnsaved()) { message("Save or resolve your draft before opening this notification.", true); return; }
+      const projects = await api<{ current: { path: string } }>("/api/projects");
+      if (projects.current.path !== detail.project) {
+        await request("/api/projects/open", "POST", { path: detail.project });
+        globalThis.location.assign(`${globalThis.location.pathname}?task=${encodeURIComponent(String(detail.task))}`);
+      } else selectTask(String(detail.task));
+    } catch (error) { message(error instanceof Error ? error.message : "Could not open the notification task", true); }
+  })();
+});
 input("condenser").addEventListener("change", () => { void saveAppSetting({ condenser: input("condenser").checked }); });
 
 // --- files: tree, tabs, Markdown preview, open from chat, resizable panel -------
@@ -3412,7 +3604,7 @@ function paletteCommands(): Command[] {
   const conversations = lastTasks.filter(item => item.id !== task).map(item => ({
     label: conversationLabel(item), keywords: `${item.folder ?? ""} ${(item.tags ?? []).join(" ")} conversation`,
     hint: item.folder || (item.archived ? "Archived" : ""), icon: "list",
-    run: () => { selectTask(item.id); void observe(); },
+    run: () => { selectTask(item.id); },
   }));
   return [...actions, ...conversations];
 }
@@ -3632,6 +3824,7 @@ function settingsHub(on: boolean): void { setClass(el("settings"), "hub", on); }
 el("settings-back").addEventListener("click", () => settingsHub(true));
 input("sounds").addEventListener("change", () => { void saveAppSetting({ sounds: input("sounds").checked }); });
 function chime(): void {
+  if (nativeNotifications) return; // The native host owns sounds, including background tasks.
   if (!appSettings?.sounds || (globalThis.document?.hasFocus?.() && !document.hidden)) return;
   const Context = (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
   if (!Context) return;

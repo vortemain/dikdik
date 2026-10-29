@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from dikdik.agent import ModelResponse, ToolCall, run_agent
-from dikdik.engine import Engine
+from dikdik.engine import Engine, TERMINAL
 from dikdik.hooks import Decision, HookEngine, HookEvent, HookResult, document_rules, load_hook_engine
 from dikdik.plugins import read_manifest
 
@@ -254,7 +254,12 @@ class EngineHookTests(unittest.TestCase):
         self.addCleanup(self.engine.close)
 
     def wait(self, task):
-        self.engine.pool.submit(lambda: None).result(timeout=30)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            data = self.engine.store.get(task)
+            if data["state"] in TERMINAL and not self.engine.busy(task):
+                return data
+            time.sleep(0.02)
         return self.engine.store.get(task)
 
     def test_task_gate_blocks_before_inventory_and_model(self):

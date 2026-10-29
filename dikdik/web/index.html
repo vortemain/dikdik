@@ -65,9 +65,40 @@
   <symbol id="i-server" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="6" rx="2"/><rect x="3.5" y="13.5" width="17" height="6" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
   <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
   <symbol id="i-spiral" viewBox="0 0 24 24"><path d="M12 2.5 A9.5 9.5 0 0 1 21.5 12 A9.5 9.5 0 0 1 12 21.5 A9.5 9.5 0 0 1 3.5 12 A8 8 0 0 1 12 4.5 A7.5 7.5 0 0 1 19.5 12 A7 7 0 0 1 12 18.5 A6 6 0 0 1 6.5 12 A5 5 0 0 1 12 7.5 A4 4 0 0 1 16 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2.5 7 4-14L16 12h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-loader" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3.5h11l3 3v14h-14Z M8 3.5v5h7M8 13.5h8v6.5h-8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
   </svg>
 
-  <div id="boot" class="boot" aria-hidden="true"><img src="/icon.svg" alt=""></div>
+  <div id="boot" class="boot" role="status" aria-live="polite">
+    <div class="boot-binary" aria-hidden="true">
+      <span>0010 0000 0100 0001 0000 0010 0100 0000</span>
+      <span>0000 0100 0000 1000 0010 0000 0001 0000</span>
+      <span>0100 0000 0010 0000 0000 0100 0000 1000</span>
+      <span>0000 0001 0000 0100 0000 0010 0000 0000</span>
+      <span>0010 0000 0000 1000 0001 0000 0100 0000</span>
+      <span>0000 0100 0010 0000 0000 0001 0000 0100</span>
+      <span>0001 0000 0000 0010 0100 0000 1000 0000</span>
+      <span>0000 0010 0100 0000 0000 1000 0000 0001</span>
+    </div>
+    <div class="boot-identity">
+      <div class="boot-mark" aria-hidden="true">
+        <svg class="boot-logo" viewBox="0 0 64 64">
+          <rect width="64" height="64" rx="15" fill="#1F3D31"/>
+          <g class="boot-face" fill="#E8C496">
+            <path class="boot-ear boot-ear-left" d="M25.5 25.5C18 25.2 10.8 20 8 11.5c8.6.4 15.6 4.6 19.6 10.6Z"/>
+            <path class="boot-ear boot-ear-right" d="M38.5 25.5c7.5-.3 14.7-5.5 17.5-14-8.6.4-15.6 4.6-19.6 10.6Z"/>
+            <path d="m27.6 21.4 1.6-12.2 2.3 12.2Zm8.8 0-1.6-12.2-2.3 12.2Z"/>
+            <path d="M22.8 27.6c0-5.6 4.1-8.4 9.2-8.4s9.2 2.8 9.2 8.4c0 8.2-3.9 16.8-6.4 22.1-.9 1.9-4.7 1.9-5.6 0-2.5-5.3-6.4-13.9-6.4-22.1Z"/>
+          </g>
+          <g fill="#1F3D31"><g class="boot-eyes"><circle cx="27.4" cy="31" r="2.3"/><circle cx="36.6" cy="31" r="2.3"/></g><path d="M29.6 46.6c0-1.1 1.1-1.8 2.4-1.8s2.4.7 2.4 1.8-1.1 1.7-2.4 1.7-2.4-.6-2.4-1.7Z"/></g>
+        </svg>
+      </div>
+      <div class="boot-wordmark">dikdik</div>
+      <p class="boot-tagline">Small name. Serious intelligence.</p>
+      <p class="boot-status">Opening your workspace<span aria-hidden="true">…</span></p>
+    </div>
+  </div>
 
   <div id="connect-view" class="connect-view" hidden>
     <section class="connect-card" aria-labelledby="connect-title">
@@ -161,6 +192,8 @@
         </div>
       </header>
 
+      <div id="progress-panel" class="progress-panel" role="status" aria-live="polite" hidden></div>
+
       <div id="thread" class="thread">
         <section class="welcome" aria-label="Welcome">
           <img class="welcome-mark" src="/icon.svg" alt="">
@@ -224,7 +257,7 @@
               <label id="external-field" class="toggle" title="Sends the objective, bounded repository text and tool output to your configured model provider."><input id="external" type="checkbox">Share code with model</label>
               <label id="execution-field" class="toggle" title="Runs approved tools and tests inside restricted Docker containers." hidden><input id="execution" type="checkbox">Run tools in Docker</label>
               <label id="secrets-field" class="toggle" title="Agent commands in Docker can read the keys you exposed to the sandbox (Settings → API keys) as environment variables. Their values are redacted from output." hidden><input id="secrets-approval" type="checkbox">Use sandbox secrets</label>
-              <label id="browser-field" class="toggle" title="Allows public web GET requests for this task. Pages run in Docker and may be sent to the model as untrusted text."><input id="browser-approval" type="checkbox">Browse public web</label>
+              <label id="browser-field" class="toggle" title="Allows web fetch and browser tools for this task. Page content is sent to your model as untrusted data. Website interactions follow your action approval settings."><input id="browser-approval" type="checkbox">Browse public web</label>
             </div>
             <div class="composer-controls">
               <button id="attach" class="ghost icon" type="button" aria-label="Attach files" title="Attach images or text files (or paste / drop them)"><svg class="i"><use href="#i-paperclip"/></svg></button>
@@ -332,8 +365,8 @@
           <button id="terminal-clear" class="ghost icon" type="button" aria-label="Clear terminal display" title="Clear display"><svg class="i"><use href="#i-trash"/></svg></button>
         </div>
         <div class="terminal-screen" id="terminal-screen">
-          <div id="terminal-empty" class="terminal-welcome"><p>Terminal ready in <strong id="terminal-project">your project</strong></p><small>↑ ↓ command history · Ctrl+C stop · Ctrl+L clear<br>Each command starts a fresh shell in the folder below.</small></div>
-          <pre id="terminal-view" tabindex="0" aria-label="Terminal output" hidden></pre>
+          <div id="terminal-empty" class="terminal-welcome"><span class="terminal-welcome-mark" aria-hidden="true">❯_</span><p>Ready when you are.</p><p class="terminal-welcome-project">Run a command in <strong id="terminal-project">your project</strong></p><small>↑ ↓ history · Ctrl+C stop · Ctrl+L clear<br>Each command starts a fresh shell in the folder below.</small></div>
+          <div id="terminal-view" tabindex="0" role="region" aria-label="Terminal command history and output" hidden></div>
         </div>
         <form id="terminal-form" class="terminal-form">
           <div class="terminal-options"><label for="terminal-cwd">Folder</label><input id="terminal-cwd" placeholder="Project root" aria-label="Command working directory relative to project" autocomplete="off" spellcheck="false"><span id="terminal-state" role="status">Ready</span></div>
@@ -342,7 +375,7 @@
       </div>
       <div class="canvas-body browser-panel" data-pane="browser" hidden>
         <div class="browser-window">
-          <div class="browser-tabbar"><span class="browser-tab"><svg class="i"><use href="#i-globe"/></svg><span id="browser-title">New tab</span></span><span class="browser-mode">Web preview</span><span id="browser-current-url" class="sr-only">No URL loaded</span></div>
+          <div class="browser-tabbar"><span class="browser-tab"><svg class="i"><use href="#i-globe"/></svg><span id="browser-title">New tab</span></span><span class="browser-mode">Workspace browser</span><span id="browser-current-url" class="sr-only">No URL loaded</span></div>
           <form id="browser-form" class="browser-toolbar">
             <button id="browser-back" class="ghost icon" type="button" aria-label="Back" title="Back" disabled><svg class="i flip"><use href="#i-chevron"/></svg></button>
             <button id="browser-forward" class="ghost icon" type="button" aria-label="Forward" title="Forward" disabled><svg class="i"><use href="#i-chevron"/></svg></button>
@@ -356,7 +389,7 @@
           <div id="browser-progress" class="browser-progress" hidden><span></span></div>
           <div class="browser-tools"><label class="sr-only" for="browser-history">Captured pages</label><select id="browser-history" aria-label="Captured page history"><option value="">No captured pages</option></select><span class="grow"></span><button id="browser-text-toggle" class="ghost small" type="button" aria-pressed="false" disabled>Page text</button><label class="sr-only" for="browser-zoom">Page zoom</label><select id="browser-zoom" aria-label="Page zoom"><option value="fit">Fit</option><option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option></select></div>
           <div class="browser-viewport" id="browser-viewport">
-            <div id="browser-empty" class="browser-home"><span class="browser-home-icon"><svg class="i"><use href="#i-globe"/></svg></span><h3>A window to the web</h3><p>Explore a page alongside your project.</p><small>Enter a public URL above to capture its layout and text.</small><button id="browser-example" class="ghost small" type="button">Try example.com <span aria-hidden="true">↗</span></button></div>
+            <div id="browser-empty" class="browser-home"><span class="browser-home-icon"><svg class="i"><use href="#i-globe"/></svg></span><h3>A window to the web</h3><p>Browse alongside your project.</p><small>Open a public page here. Click controls, type, paste and scroll in the page. Dikdik’s agent can read and interact with the same browser session.</small><button id="browser-example" class="ghost small" type="button">Open example.com</button></div>
             <div id="browser-snapshot" class="browser-snapshot" hidden></div>
             <pre id="browser-page-text" class="browser-page-text" tabindex="0" aria-label="Captured page text" hidden></pre>
           </div>
@@ -395,7 +428,10 @@
         <div class="setting-row"><div><h4>Appearance</h4><p>Match your system, or pick light or dark.</p></div><select id="theme" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
         <div class="setting-row"><div><h4>Confirm actions</h4><p>Ask before the agent runs a tool. “Risky only” asks for commands that delete, install, use the network or rewrite history.</p></div><select id="confirmation-policy" aria-label="Confirm actions"><option value="never">Never ask</option><option value="risky">Risky only</option><option value="ask">Every command</option><option value="always">Every action</option></select></div>
         <div class="setting-row"><div><h4>Condense long conversations</h4><p>When a conversation outgrows the history budget, older turns are replaced with a summary written by your model.</p></div><label class="check"><input id="condenser" type="checkbox" checked>On</label></div>
-        <div class="setting-row"><div><h4>Sound when a task finishes</h4><p>A short chime when a run ends while you are in another tab or window.</p></div><label class="check"><input id="sounds" type="checkbox">On</label></div>
+        <div class="setting-row"><div><h4>Notification sounds</h4><p>Play a sound with desktop alerts, or a completion chime in the browser.</p></div><label class="check"><input id="sounds" type="checkbox">On</label></div>
+        <div class="setting-row"><div><h4>Desktop notifications</h4><p>Native alerts for finished tasks, failures, approvals and questions. Click an alert to open its task.</p></div><select id="notification-mode" aria-label="Desktop notifications"><option value="background">When I’m away from the task</option><option value="all">Always</option><option value="off">Off</option></select></div>
+        <div class="setting-row"><div><h4>Task titles in notifications</h4><p>Include the task title and project name. Otherwise, alerts use generic text.</p></div><label class="check"><input id="notification-previews" type="checkbox">Show titles</label></div>
+        <div class="setting-row"><div><h4>Notification delivery</h4><p id="notification-status" role="status">Checking desktop notification support…</p></div><button id="notification-test" class="small" type="button" disabled>Send test notification</button></div>
         <div class="setting-row setting-stack"><div><h4>Git identity</h4><p>Name and email for commits made from the Git tab. Leave blank to use your Git configuration.</p></div>
           <form id="git-identity" class="inline-form"><label class="sr-only" for="git-name">Git name</label><input id="git-name" maxlength="100" placeholder="Your Name"><label class="sr-only" for="git-email">Git email</label><input id="git-email" type="email" maxlength="254" placeholder="you@example.com"><button id="git-save" class="small" type="submit" disabled>Save</button></form></div>
         <div class="setting-row"><div><h4>Conversation titles</h4><p>After the first finished turn, name the conversation with a short model-written title. Only conversations that already share content with a model are titled.</p></div><select id="title-model" aria-label="Title model"><option value="auto">The conversation’s model</option><option value="off">Off — use my first message</option></select></div>
@@ -423,7 +459,7 @@
             <span>Tools</span>
             <div class="agent-flags">
               <label class="check"><input id="agent-shell" type="checkbox" checked>Shell in Docker</label>
-              <label class="check"><input id="agent-browser" type="checkbox" checked>Browser in Docker</label>
+              <label class="check"><input id="agent-browser" type="checkbox" checked>Web fetch and browser actions</label>
               <label class="check"><input id="agent-mcp" type="checkbox" checked>MCP servers</label>
               <label class="check"><input id="agent-skills" type="checkbox" checked>Skills</label>
               <label class="check" title="After each finished turn, ask the model whether the request looks done. Shown as a note; never counts as verification."><input id="agent-critic" type="checkbox">Critic review</label>

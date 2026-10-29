@@ -246,3 +246,108 @@ def run_tests(root: Path, runners: list[dict], cancel: threading.Event, on_chunk
     worst = min((r["status"] for r in runs), key=lambda s: order.index(s) if s in order else 0) if runs else "cancelled"
     return {"kind": "tests" if all(r["kind"] in TEST_COMMANDS for r in runs) else "checks", "status": worst, "runs": runs, "runs_on": "this computer",
             "output": "\n\n".join(f"== {r['label']}: {r['status']} ==\n{r.get('output', '')}" for r in runs)[:OUTPUT_LIMIT]}
+
+
+class BackgroundShells:
+    """Long-running commands (dev servers, watchers) started in the project folder.
+
+    Each shell runs in its own process group; output is buffered for later polling.
+    A shell stops when the user stops it, the engine closes, or its process exits."""
+
+    def __init__(self):
+        self._shells: dict[str, dict] = {}
+        self._lock = threading.Lock()
+
+    def start(self, root: Path, command: str, *, env: dict[str, str] | None = None) -> dict:
+        import uuid
+        if not isinstance(command, str) or not command.strip() or len(command) > 4000:
+            raise ValueError("Command must contain 1-4000 characters")
+        shell_id = uuid.uuid4().hex[:12]
+        argv, shell_name = shell_argv(command)
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        process = subprocess.Popen(argv, cwd=root, env={**os.environ, **(env or {})}, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags,
+                                   start_new_session=os.name != "nt")
+        entry = {"id": shell_id, "command": command, "shell": shell_name, "pid": process.pid,
+                  "process": process, "output": [], "size": 0, "status": "running", "exit_code": None,
+                  "started": time.time()}
+        with self._lock:
+            self._shells[shell_id] = entry
+        threading.Thread(target=self._drain, args=(shell_id,), daemon=True).start()
+        return {"id": shell_id, "command": command, "shell": shell_name, "pid": process.pid, "status": "running"}
+
+    def _drain(self, shell_id: str):
+        entry = self._shells.get(shell_id)
+        if not entry:
+            return
+        process = entry["process"]
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        try:
+            for raw in iter(lambda: process.stdout.read1(CHUNK), b""):
+                text = decoder.decode(raw)
+                with self._lock:
+                    if entry["size"] < OUTPUT_LIMIT:
+                        kept = text[: OUTPUT_LIMIT - entry["size"]]
+                        entry["output"].append(kept)
+                        entry["size"] += len(kept)
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                with self._lock:
+                    if entry["size"] < OUTPUT_LIMIT:
+                        entry["output"].append(tail[: OUTPUT_LIMIT - entry["size"]])
+        except (OSError, ValueError):
+            pass
+        finally:
+            try:
+                process.stdout.close()
+            except OSError:
+                pass
+            entry["exit_code"] = process.wait()
+            with self._lock:
+                entry["status"] = "exited" if entry["process"].poll() is not None else "running"
+
+    def poll(self, shell_id: str) -> dict | None:
+        with self._lock:
+            entry = self._shells.get(shell_id)
+            if not entry:
+                return None
+            process = entry["process"]
+            status = entry["status"]
+            if status == "running" and process.poll() is not None:
+                status = "exited"
+                entry["status"] = status
+                entry["exit_code"] = process.returncode
+            return {"id": shell_id, "command": entry["command"], "shell": entry["shell"],
+                    "status": status, "exit_code": entry.get("exit_code"), "pid": entry["pid"],
+                    "output": "".join(entry["output"]), "started": entry["started"]}
+
+    def stop(self, shell_id: str) -> dict | None:
+        with self._lock:
+            entry = self._shells.get(shell_id)
+            if not entry:
+                return None
+            process = entry["process"]
+        if process.poll() is None:
+            _stop(process)
+        with self._lock:
+            entry["status"] = "stopped"
+            entry["exit_code"] = process.returncode
+            return {"id": shell_id, "command": entry["command"], "status": "stopped",
+                    "exit_code": entry["exit_code"], "output": "".join(entry["output"])}
+
+    def list_shells(self) -> list[dict]:
+        with self._lock:
+            return [{"id": sid, "command": e["command"], "shell": e["shell"], "status": e["status"],
+                     "pid": e["pid"], "exit_code": e.get("exit_code"), "started": e["started"]}
+                    for sid, e in self._shells.items()]
+
+    def close(self):
+        with self._lock:
+            shells = list(self._shells.values())
+        for entry in shells:
+            if entry["process"].poll() is None:
+                _stop(entry["process"])
+            try:
+                entry["process"].wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass

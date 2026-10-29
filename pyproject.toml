@@ -4,13 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dikdik"
-version = "0.1.0"
+version = "0.2.0"
 description = "Small name. Serious intelligence. Evidence-first engineering workspace."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "dikdik/web/assets/LICENSE-*.txt", "dikdik/web/fonts/LICENSE-*.txt"]
 requires-python = ">=3.13"
 dependencies = ["tzdata>=2026.5; sys_platform == 'win32'"]
+
+[project.optional-dependencies]
+desktop = ["pywebview>=6,<7", "playwright==1.64.1", "desktop-notifier==6.2.0"]
 
 [project.urls]
 Homepage = "https://github.com/vortemain/dikdik"
@@ -19,6 +22,9 @@ Issues = "https://github.com/vortemain/dikdik/issues"
 
 [project.scripts]
 dikdik = "dikdik.server:main"
+
+[project.gui-scripts]
+dikdik-desktop = "dikdik.desktop:main"
 
 [tool.setuptools]
 include-package-data = false

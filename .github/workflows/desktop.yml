@@ -1,0 +1,50 @@
+name: Desktop installers
+on:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13'
+      - name: Read release version
+        shell: bash
+        run: echo "DIKDIK_VERSION=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" >> "$GITHUB_ENV"
+      - run: python -m pip install ".[desktop]" "pyinstaller>=6.22,<7"
+      - if: runner.os == 'Linux'
+        run: python -m pip install "pywebview[qt]>=6,<7" PySide6
+      - run: python scripts/build_desktop.py
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:DIKDIK_VERSION" scripts/desktop-installer.iss'
+      - if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist/installers build/dmg
+          cp -R dist/desktop/Dikdik.app build/dmg/
+          ln -s /Applications build/dmg/Applications
+          hdiutil create -volname Dikdik -srcfolder build/dmg -ov -format UDZO "dist/installers/Dikdik-${DIKDIK_VERSION}-macOS-$(uname -m).dmg"
+      - if: runner.os == 'Linux'
+        run: |
+          mkdir -p build/deb/opt/dikdik build/deb/DEBIAN build/deb/usr/share/applications build/deb/usr/share/icons/hicolor/512x512/apps dist/installers
+          cp -R dist/desktop/Dikdik/. build/deb/opt/dikdik/
+          printf 'Package: dikdik\nVersion: %s\nArchitecture: amd64\nMaintainer: Dikdik\nDepends: libegl1, libgl1, libxcb-cursor0, libxkbcommon0, libnss3, libnspr4, libatk1.0-0t64, libatk-bridge2.0-0t64, libatspi2.0-0t64, libcups2t64, libdrm2, libxcomposite1, libxdamage1, libxfixes3, libxrandr2, libgbm1, libasound2t64, libpango-1.0-0, libcairo2, dbus-user-session\nDescription: Dikdik desktop coding workspace\n' "$DIKDIK_VERSION" > build/deb/DEBIAN/control
+          cp dikdik/web/icon.png build/deb/usr/share/icons/hicolor/512x512/apps/dikdik.png
+          printf '[Desktop Entry]\nType=Application\nName=Dikdik\nExec=/opt/dikdik/Dikdik\nIcon=dikdik\nTerminal=false\nCategories=Development;\n' > build/deb/usr/share/applications/dikdik.desktop
+          dpkg-deb --build --root-owner-group build/deb "dist/installers/Dikdik-${DIKDIK_VERSION}-Linux-amd64.deb"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: Dikdik-${{ runner.os }}
+          path: dist/installers/*
+          if-no-files-found: error

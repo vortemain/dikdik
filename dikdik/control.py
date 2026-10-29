@@ -6,6 +6,7 @@ stored in the private data directory and only ever reach a model as data.
 """
 
 import base64
+import fnmatch
 import json
 import os
 import re
@@ -27,11 +28,24 @@ HIGH = [
     (re.compile(r"\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f)\b"), "rewrites or publishes history"),
 ]
 READ_TOOLS = {"list_files", "read_file", "search_text", "read_skill", "read_plan", "task_tracker", "write_plan", "finish", "delegate",
-              "request_secret"}  # request_secret is itself a question to the user
+              "request_secret", "ask_question"}  # both are themselves questions to the user
+
+ENV_EXCLUDED = {".env.example", ".env.sample", ".env.template", ".env.defaults"}
+
+
+def env_secret_read(call: ToolCall) -> bool:
+    """A read of an environment secrets file (`.env`, `.env.local`, `.env.production`, ...)."""
+    if call.name != "read_file":
+        return False
+    path = str(call.arguments.get("path", "")).replace("\\", "/").strip("/")
+    name = path.rstrip("/").rsplit("/", 1)[-1]
+    return re.fullmatch(r"\.env(\..+)?", name) is not None and name not in ENV_EXCLUDED
 
 
 def assess(call: ToolCall) -> tuple[str, str]:
     """A plain risk level ("low", "medium", "high") and the reason for it."""
+    if env_secret_read(call):
+        return "high", "reads a secrets file such as .env"
     if call.name in READ_TOOLS:
         return "low", "reads or reports only"
     if call.name == "run_command":
@@ -42,6 +56,12 @@ def assess(call: ToolCall) -> tuple[str, str]:
         return "medium", "runs a command"
     if call.name == "browse_url":
         return "medium", "opens a public web page"
+    if call.name == "web_fetch":
+        return "medium", "fetches public web content"
+    if call.name in {"browser_click", "browser_fill", "browser_press", "browser_select"}:
+        return "high", "interacts with a website and may send data or submit a form"
+    if call.name in {"browser_screenshot", "browser_scroll"}:
+        return "low", "observes the current browser page"
     if call.name.startswith("mcp__"):
         return "medium", "calls an outside tool through MCP"
     if call.name in {"edit_file", "create_file"}:
@@ -52,7 +72,72 @@ def assess(call: ToolCall) -> tuple[str, str]:
     return "medium", "uses a tool"
 
 
-ACTION_TOOLS = {"run_command", "browse_url"}  # reach outside the agent's own edits
+ACTION_TOOLS = {"run_command", "browse_url", "web_fetch", "browser_click", "browser_fill", "browser_press", "browser_select", "browser_scroll", "browser_screenshot"}
+
+
+# --- structured permission rules -------------------------------------------------------
+# The first matching rule decides: "allow" approves without a prompt, "deny" refuses,
+# "ask" always prompts. Rules come only from the settings screen (untrusted content
+# can never add one). An unmatched call falls through to the normal policy.
+RULE_ACTIONS = {"*", "read", "edit", "create", "command", "browse"}
+RULE_GROUPS = {"read": READ_TOOLS, "edit": {"edit_file"}, "create": {"create_file"},
+               "command": {"run_command"}, "browse": {"browse_url", "web_fetch", "browser_click", "browser_fill", "browser_press", "browser_select", "browser_scroll", "browser_screenshot"}}
+RULE_SUBJECT = {"list_files": "path", "read_file": "path", "search_text": "path", "edit_file": "path",
+                "create_file": "path", "run_command": "command", "browse_url": "url"}
+RULE_NAME = re.compile(r"[a-z0-9_.-]{1,60}")
+
+
+def permission_rule_effect(rules, call: ToolCall) -> str | None:
+    """The effect ("allow", "deny" or "ask") of the first matching rule, or None when no rule matches."""
+    if not isinstance(rules, list):
+        return None
+    for rule in rules:
+        if not _rule_matches(rule, call):
+            continue
+        effect = rule.get("effect")
+        return effect if effect in ("allow", "deny", "ask") else None
+    return None
+
+
+def _rule_matches(rule, call: ToolCall) -> bool:
+    if rule.get("enabled") is False or not isinstance(rule, dict):
+        return False
+    action = rule.get("action")
+    if not isinstance(action, str):
+        return False
+    if action != "*" and action != call.name and call.name not in RULE_GROUPS.get(action, ()):
+        return False
+    pattern = rule.get("resource", "*")
+    if not isinstance(pattern, str) or pattern == "*" or pattern == "":
+        return True
+    subject = str(call.arguments.get(RULE_SUBJECT.get(call.name, ""), ""))
+    return fnmatch.fnmatch(subject.casefold(), pattern.casefold())
+
+
+def parse_rules(value) -> list:
+    """Validate rule settings; anything malformed is rejected, not silently dropped."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 50:
+        raise ValueError("permission_rules must be a list of at most 50 rules")
+    out = []
+    for rule in value:
+        if not isinstance(rule, dict) or set(rule) - {"action", "resource", "effect", "enabled"}:
+            raise ValueError("Each permission rule takes action, resource, effect and optional enabled")
+        action = rule.get("action")
+        if not isinstance(action, str) or (action not in RULE_ACTIONS and not RULE_NAME.fullmatch(action)):
+            raise ValueError("permission rule action must be *, read, edit, create, command, browse or a tool name")
+        resource = rule.get("resource", "*")
+        if not isinstance(resource, str) or len(resource) > 256:
+            raise ValueError("permission rule resource must be a pattern of at most 256 characters")
+        effect = rule.get("effect")
+        if effect not in ("allow", "deny", "ask"):
+            raise ValueError("permission rule effect must be allow, deny or ask")
+        enabled = rule.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError("permission rule enabled must be true or false")
+        out.append({"action": action, "resource": resource, "effect": effect, "enabled": enabled})
+    return out
 
 
 def needs_approval(policy: str, risk: str, tool: str | None = None) -> bool:
@@ -72,6 +157,45 @@ REQUEST_SECRET = _tool(
     {"name": {"type": "string", "description": "Environment variable name, e.g. GITHUB_TOKEN"},
      "reason": {"type": "string", "description": "One sentence the user sees: what the secret is for"}},
     ["name", "reason"])
+
+
+ASK_QUESTION = _tool(
+    "ask_question",
+    "Ask the user a clarifying question and wait for their answer. Use when you need a decision or preference "
+    "that only the user can provide. The answer comes back as plain text; an empty answer means the user skipped it.",
+    {"question": {"type": "string", "description": "The question to ask the user"},
+     "choices": {"type": "array", "items": {"type": "string"}, "description": "Optional list of choices for the user to pick from"}},
+    ["question"])
+
+
+class QuestionRequests:
+    """Questions the agent asked, waiting for the user to answer (or skip)."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.pending: dict[tuple[str, str], dict] = {}
+
+    def wait(self, task: str, request_id: str, cancel, timeout: float = 1800) -> str | None:
+        slot = {"event": threading.Event(), "answer": None}
+        with self.lock:
+            self.pending[(task, request_id)] = slot
+        try:
+            deadline = time.monotonic() + timeout
+            while not slot["event"].wait(0.2):
+                if cancel.is_set() or time.monotonic() > deadline:
+                    return None
+            return slot["answer"]
+        finally:
+            with self.lock:
+                self.pending.pop((task, request_id), None)
+
+    def answer(self, task: str, request_id: str, value) -> None:
+        with self.lock:
+            slot = self.pending.get((task, request_id))
+        if slot is None:
+            raise KeyError(request_id)
+        slot["answer"] = str(value) if value is not None else ""
+        slot["event"].set()
 
 
 class SecretRequests:
@@ -221,6 +345,40 @@ def load_subagents(root: Path, personal: Path, extra: list[tuple[str, Path]] = (
             names.add(name)
             agents.append({"name": name, "description": meta.get("description", "")[:300], "instructions": body.strip()[:8000], "source": source})
     return agents
+
+
+# --- user-defined slash commands -----------------------------------------------------
+def load_commands(root: Path, personal: Path) -> list[dict]:
+    """Slash commands from `<scope>/.dikdik/commands/<name>.md` (front matter: name, description).
+    The body is a prompt template whose `$ARGUMENTS` placeholder receives the text after
+    the command. Commands add convenience phrasing only; they carry no permission semantics."""
+    commands, taken = [], set()
+    for source, directory in (("project", root / ".dikdik" / "commands"), ("personal", personal)):
+        if (not directory.is_dir() or directory.is_symlink() or directory.is_junction()
+                or directory.parent.is_symlink() or directory.parent.is_junction()):
+            continue
+        for path in sorted(directory.glob("*.md"))[:20]:
+            if path.is_symlink() or directory.resolve() not in path.resolve().parents:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")[:16384]
+            except OSError:
+                continue
+            meta, body = {}, text
+            if text.startswith("---"):
+                end = text.find("\n---", 3)
+                if end > 0:
+                    for line in text[3:end].splitlines():
+                        key, _, value = line.partition(":")
+                        meta[key.strip()] = value.strip()
+                    body = text[end + 4:]
+            name = re.sub(r"[^a-z0-9-]", "-", (meta.get("name") or path.stem).lower())[:40].strip("-")
+            if not name or name in taken:
+                continue
+            taken.add(name)
+            commands.append({"name": name, "description": meta.get("description", "")[:300],
+                             "template": body.strip()[:8000], "source": source})
+    return commands
 
 
 # --- single model calls: side questions, summaries, goal judging -----------------------

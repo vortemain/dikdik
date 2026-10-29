@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -28,8 +29,15 @@ class EngineTests(unittest.TestCase):
         self.addCleanup(self.engine.close)
 
     def wait(self, task):
-        # FIFO barrier avoids repeatedly contending with the worker's SQLite writes.
-        self.engine.pool.submit(lambda: None).result(timeout=20)
+        # Poll until the task reaches a terminal state AND its worker has released.
+        # (The old FIFO barrier only worked with max_workers=1; with a multi-worker
+        # pool a queued no-op runs immediately on a free thread without waiting.)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            data = self.engine.store.get(task)
+            if data["state"] in TERMINAL and not self.engine.busy(task):
+                return data
+            time.sleep(0.02)
         data = self.engine.store.get(task)
         self.assertIn(data["state"], TERMINAL, data)
         return data
@@ -79,22 +87,27 @@ class EngineTests(unittest.TestCase):
     def test_no_matching_edit_fails(self):
         result = self.wait(self.engine.submit(request(edits=[{"path": "calculator.py", "before": "not here", "after": "x"}])))
         self.assertEqual(result["state"], "failed")
-        self.assertIn("exactly once", result["result"]["error"])
+        self.assertIn("not found", result["result"]["error"])
 
-    def test_cancel_and_single_worker_limit(self):
+    def test_cancel_and_agent_task_limit(self):
+        from unittest.mock import Mock
+        from dikdik.agent import ModelResponse, ToolCall
         entered, release = threading.Event(), threading.Event()
+        model = Mock()
 
-        def delayed(*args):
+        def delayed_respond(messages, tools):
             entered.set()
             release.wait(3)
-            return request()["edits"], {"model_calls": 0}
+            return ModelResponse("Edit", [ToolCall("edit", "edit_file", {"path": "calculator.py", "before": "a - b", "after": "a + b"})])
+        model.respond.side_effect = delayed_respond
 
-        with patch("dikdik.engine.propose", side_effect=delayed):
-            task = self.engine.submit(request())
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            task = self.engine.submit(request(mode="agent", verification="docker", approve_external=True, approve_execution=True))
             self.assertTrue(entered.wait(2))
             try:
-                with self.assertRaisesRegex(ValueError, "One task"):
-                    self.engine.submit(request())
+                # A second agent task on the same workspace is rejected while one runs.
+                with self.assertRaisesRegex(ValueError, "agent task is already running"):
+                    self.engine.submit(request(mode="agent", verification="docker", approve_external=True, approve_execution=True))
                 self.assertTrue(self.engine.cancel(task))
             finally:
                 release.set()

@@ -2,6 +2,7 @@ import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -42,6 +43,16 @@ class ModelResolutionTests(unittest.TestCase):
     def profile(self, **fields):
         body = {"name": "Main", "provider": "openai", "model": "gpt-test", "credential_secret_ref": "openai-key", **fields}
         return self.profiles.create(body)[1]["id"]
+
+    def wait(self, task):
+        """Poll until terminal and worker released (FIFO barrier only works with max_workers=1)."""
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            data = self.engine.store.get(task)
+            if data["state"] in TERMINAL and not self.engine.busy(task):
+                return data
+            time.sleep(0.02)
+        return self.engine.store.get(task)
 
     def test_nothing_configured_explains_both_ways_to_set_up(self):
         info = self.engine.models.describe()
@@ -139,7 +150,7 @@ class ModelResolutionTests(unittest.TestCase):
         with patch("urllib.request.build_opener") as opener:
             opener.return_value.open.return_value = reply(json.dumps({"edits": EDITS}))
             task = self.engine.submit({"objective": "Fix addition", "mode": "model", "verification": "syntax", "approve_external": True})
-            self.engine.pool.submit(lambda: None).result(timeout=20)
+            self.wait(task)
             sent = opener.return_value.open.call_args
         result = self.engine.store.get(task)
         self.assertEqual(result["state"], "completed", result)
@@ -158,7 +169,7 @@ class ModelResolutionTests(unittest.TestCase):
         with patch("urllib.request.build_opener") as opener:
             opener.return_value.open.side_effect = OSError("offline")
             task = self.engine.submit({"objective": "Fix addition", "mode": "agent", "verification": "docker", "approve_external": True, "approve_execution": True})
-            self.engine.pool.submit(lambda: None).result(timeout=20)
+            self.wait(task)
         result = self.engine.store.get(task)
         self.assertIn(result["state"], TERMINAL)
         started = next(event for event in result["events"] if event["kind"] == "agent_started")

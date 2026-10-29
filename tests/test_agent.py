@@ -107,6 +107,57 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result.state, "paused")
         self.assertFalse(result.tests_verified)
 
+    def test_call_limit_wrapup_processes_no_tools(self):
+        edit = self.edit()
+
+        class WrapupModel:
+            def __init__(self):
+                self.toolsets = []
+
+            def respond(self, messages, tools):
+                self.toolsets.append([t["function"]["name"] for t in tools])
+                if len(self.toolsets) == 1:
+                    return ModelResponse("", [edit], 5)
+                return ModelResponse("Summary: one edit made; run tests next.", [], 3)
+
+        model = WrapupModel()
+        result = run_agent(self.original, "Change the value", model, self.verify,
+                           lambda kind, data: self.events.append((kind, data)), self.cancel,
+                           AgentBudget(max_model_calls=1, wrapup_on_limit=True))
+        self.assertEqual(result.state, "paused")
+        self.assertEqual(result.model_calls, 1)  # the wrap-up is not a counted work call
+        self.assertEqual(model.toolsets[1], [])
+        self.assertIn("model-call limit", result.error)
+        self.assertTrue(any(kind == "message" and "run tests next" in data["content"]
+                            for kind, data in self.events))
+        self.assertTrue(result.transcript)  # progress saved for an exact resume
+
+    def test_formatter_runs_after_writes_and_adjusts_content(self):
+        def strip_trailing(path, content):
+            return "\n".join(line.rstrip() for line in content.splitlines()) + "\n"
+
+        model = ScriptedModel([[self.call("edit_file", path="app.py", before="value = 1", after="value = 2   ")],
+                                [self.call("run_tests")],
+                                [self.call("finish")]])
+        result = run_agent(self.original, "Change the value", model, self.verify,
+                           lambda kind, data: self.events.append((kind, data)), self.cancel,
+                           AgentBudget(max_model_calls=3), formatter=strip_trailing)
+        self.assertEqual(result.state, "completed")
+        self.assertEqual(result.files["app.py"], "value = 2\n")  # trailing spaces stripped
+        self.assertTrue(any(kind == "formatted" for kind, _ in self.events))
+
+    def test_parallel_reads_run_concurrently_and_return_in_order(self):
+        calls = [self.call("read_file", path="app.py"), self.call("read_file", path="tests/test_app.py")]
+        model = ScriptedModel([calls, [self.call("finish")]])
+        result = run_agent(self.original, "Read two files", model, self.verify,
+                           lambda kind, data: self.events.append((kind, data)), self.cancel,
+                           AgentBudget(max_model_calls=2, parallel_reads=True))
+        self.assertEqual(result.state, "paused")  # no net change to finish
+        tool_results = [e for k, e in self.events if k == "tool" and e.get("phase") == "end" and e["name"] in {"read_file", "list_files", "search_text"}]
+        self.assertEqual(len(tool_results), 2)
+        self.assertEqual(tool_results[0]["id"], calls[0].id)
+        self.assertEqual(tool_results[1]["id"], calls[1].id)
+
     def test_strict_arguments(self):
         bad = [self.call("read_file", path="app.py", max_lines=True),
                self.call("read_file", path="app.py", max_lines=201),

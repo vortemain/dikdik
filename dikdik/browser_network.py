@@ -72,25 +72,29 @@ def fetch_public(url: str, timeout: float = 5) -> dict:
     address = resolve_public(host, port, min(3, timeout))
     connection = http.client.HTTPConnection(host, port, timeout=timeout)
     raw = socket.create_connection((address, port), timeout=timeout)
+    transport = raw
     def abort():
         try:
-            (connection.sock or raw).shutdown(socket.SHUT_RDWR)
+            (connection.sock or transport).shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
     watchdog = threading.Timer(timeout, abort)
     watchdog.daemon = True
     watchdog.start()
     try:
-        connection.sock = ssl.create_default_context().wrap_socket(raw, server_hostname=host) if parts.scheme == "https" else raw
+        transport = ssl.create_default_context().wrap_socket(raw, server_hostname=host) if parts.scheme == "https" else raw
+        connection.sock = transport
         target = urlunsplit(("", "", parts.path or "/", parts.query, ""))
         connection.request("GET", target, headers={"User-Agent": "Dikdik-Browser/1", "Accept": "*/*", "Accept-Encoding": "identity", "Connection": "close"})
         response = connection.getresponse()
         body, deadline = bytearray(), time.monotonic() + timeout
         while True:
+            if response.isclosed() is True:
+                break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ValueError("Browser resource timed out")
-            connection.sock.settimeout(remaining) if connection.sock else raw.settimeout(remaining)
+            (connection.sock or transport).settimeout(remaining)
             block = response.read1(min(65536, RESOURCE_LIMIT + 1 - len(body)))
             if not block:
                 break
@@ -105,4 +109,5 @@ def fetch_public(url: str, timeout: float = 5) -> dict:
     finally:
         watchdog.cancel()
         connection.close()
+        transport.close()
         raw.close()

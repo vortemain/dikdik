@@ -79,9 +79,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  desktop:
+    needs: test
+    uses: ./.github/workflows/desktop.yml
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
+    needs: [package, desktop]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -94,6 +98,18 @@ jobs:
         with:
           name: distribution
           path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: Dikdik-*
+          merge-multiple: true
+          path: dist
+      - name: Check desktop assets and write complete checksums
+        run: |
+          test -n "$(find dist -maxdepth 1 -name '*.exe' -print -quit)"
+          test -n "$(find dist -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$(find dist -maxdepth 1 -name '*.deb' -print -quit)"
+          cd dist
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' | sort | xargs sha256sum > SHA256SUMS.txt
       - name: Publish verified release
         env:
           GH_TOKEN: ${{ github.token }}

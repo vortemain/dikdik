@@ -78,6 +78,19 @@ class DirectWrites:
             raise ValueError(f"{path} is outside the project")
         return target
 
+    def preview(self, files: dict[str, str]) -> list[dict]:
+        """What write() would change, without writing. Each entry: path, before, after."""
+        changes = []
+        for path, text in sorted(files.items()):
+            if self.known.get(path) == text:
+                continue
+            target = self._target(path)
+            current = _read(target)
+            if current != self.known.get(path):
+                continue  # conflict — would be skipped
+            changes.append({"path": path, "before": current, "after": text})
+        return changes
+
     def write(self, files: dict[str, str]) -> list[str]:
         """Bring the folder up to date with the agent's files. Returns paths someone else
         changed meanwhile, which are left alone."""
@@ -132,18 +145,36 @@ def undo(root: Path, checkpoint: Path) -> dict:
         raise KeyError("checkpoint") from None
     if record.get("undone"):
         raise ValueError("This turn was already undone")
+    return _rollback(root, checkpoint, record, forward=False)
+
+
+def redo(root: Path, checkpoint: Path) -> dict:
+    """Re-apply an undone turn: put its changes back where Undo left them untouched.
+    Undo and Redo can be repeated in turn for as long as nobody edits the files."""
+    try:
+        record = json.loads(checkpoint.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise KeyError("checkpoint") from None
+    if not record.get("undone"):
+        raise ValueError("This turn has not been undone")
+    return _rollback(root, checkpoint, record, forward=True)
+
+
+def _rollback(root: Path, checkpoint: Path, record: dict, *, forward: bool) -> dict:
+    """`forward` re-applies a turn (its "after" content); otherwise restore its "before"."""
+    key, other = ("after", "before") if forward else ("before", "after")
     root = root.resolve()
     restored, conflicts = [], []
     for path, change in sorted(record["files"].items()):
         target = (root / path).resolve()
         if root not in target.parents:
             continue
-        if _read(target) != change["after"]:
+        if _read(target) != change.get(other, change["before"]):
             conflicts.append(path)
             continue
-        _write(target, change["before"])
+        _write(target, change[key])
         restored.append(path)
-    record["undone"] = True
+    record["undone"] = not forward
     record["conflicts"] = conflicts
     checkpoint.write_text(json.dumps(record), encoding="utf-8")
     return {"restored": restored, "conflicts": conflicts}

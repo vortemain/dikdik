@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from http.cookies import CookieError, SimpleCookie
@@ -162,6 +163,9 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
     engine, routes, gateway = _Live(wiring, "engine"), _Live(wiring, "routes"), _Live(wiring, "gateway")
     expected = ("Bearer " + token).encode("utf-8")
     started_at = time.monotonic()
+    # WP15: device-link pairing codes (short-lived, in-memory).
+    pairing_codes: dict[str, float] = {}
+    pairing_lock = threading.Lock()
     activity = {"last": time.monotonic()}
     server_state = ServerState(ready=not os.environ.get("DIKDIK_DORMANT", ""))
     api_keys = ApiKeyStore(Path(engine.data) if hasattr(engine, "data") else Path("."))
@@ -481,6 +485,10 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 return
             if not self.authorized():
                 return
+            if path == "/api/desktop/notifications":
+                notifications = getattr(self.server, "desktop_notifications", None)
+                self.reply(200, notifications.status() if notifications else {"desktop": False, "ready": True, "available": False, "permission": "unavailable", "error": "Native notifications are available in the desktop application"})
+                return
             answer = gateway.route("GET", path, {}, dict(self.headers))
             if answer is not None:
                 self.reply(*answer)
@@ -515,9 +523,14 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                             "git_name": {"type": "string", "maxLength": 100},
                             "git_email": {"type": "string", "maxLength": 200},
                             "sounds": {"type": "boolean"},
+                            "notifications": {"type": "string", "enum": ["off", "background", "all"]},
+                            "notification_previews": {"type": "boolean"},
                             "router": {"type": "string"},
                             "title_model": {"type": "string"},
                             "event_retention_seconds": {"type": "integer", "minimum": 0, "maximum": 86400 * 30},
+                            "permission_rules": {"type": "array", "items": {"type": "object"}},
+                            "formatter": {"type": "object"},
+                            "warming": {"type": "object"},
                         },
                         "defaults": {k: v for k, v in engine.app_settings().items()},
                     })
@@ -533,6 +546,18 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     return
                 if path == "/api/worktrees":
                     self.reply(200, {"worktrees": engine.worktrees.list()})
+                    return
+                elif path == "/api/shells":
+                    self.reply(200, {"shells": engine.list_background()})
+                    return
+                if path == "/api/references":
+                    self.reply(200, {"references": engine.list_references()})
+                    return
+                if path.startswith("/api/shells/") and path.count("/") == 3:
+                    try:
+                        self.reply(200, engine.poll_background(path.split("/")[3]))
+                    except KeyError:
+                        self.reply(404, {"error": "Shell not found"})
                     return
                 if path == "/api/vscode":
                     import shutil as _sh
@@ -697,10 +722,14 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(200, {"query": q, "results": gitops.search(engine.root, q, lim)})
                 elif path == "/api/agent-info":
                     self.reply(200, engine.agent_info())
+                elif path == "/api/commands":
+                    self.reply(200, {"commands": engine.commands()})
                 elif path.startswith("/api/tasks/") and path.endswith("/download") and path.count("/") == 4:
                     self.reply(200, engine.archive(path.split("/")[3]), "application/zip")
                 elif path.startswith("/api/tasks/") and path.endswith("/diff") and path.count("/") == 4:
                     self.reply(200, engine.full_diff(path.split("/")[3]), "text/plain; charset=utf-8")
+                elif path.startswith("/api/tasks/") and path.endswith("/preview") and path.count("/") == 4:
+                    self.reply(200, engine.preview_changes(path.split("/")[3]))
                 elif path.startswith("/api/tasks/") and path.endswith("/export") and path.count("/") == 4:
                     self.reply(200, engine.store.get(path.split("/")[3]))
                 elif path.startswith("/api/tasks/"):
@@ -721,6 +750,24 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if self.same_origin():
                     self.session_request()
                 return
+            if path == "/api/pair":
+                import secrets as _secrets
+                code = _secrets.token_hex(3).upper()  # 6-char hex code
+                with pairing_lock:
+                    pairing_codes[code] = time.monotonic() + 600  # 10-minute expiry
+                self.reply(200, {"code": code, "expires_in": 600})
+                return
+            if path == "/api/pair/verify":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length)) if length else {}
+                code = str(body.get("code") or "").upper()
+                with pairing_lock:
+                    expiry = pairing_codes.pop(code, None)
+                if expiry is None or time.monotonic() > expiry:
+                    self.reply(401, {"error": "Invalid or expired pairing code"})
+                    return
+                self.reply(200, {"token": expected.decode("utf-8")[7:], "paired": True})
+                return
             if not self.authorized():
                 return
             try:
@@ -731,6 +778,14 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if length > limit:
                     raise ValueError(f"Request must contain at most {limit} bytes")
                 body = json.loads(self.rfile.read(length)) if length else {}
+                if path == "/api/desktop/notifications/test":
+                    if self.api_key is not None:
+                        raise PermissionError("Use the desktop session to test native notifications")
+                    notifications = getattr(self.server, "desktop_notifications", None)
+                    if notifications is None:
+                        raise ValueError("Open the desktop application to test native notifications")
+                    self.reply(200, notifications.test())
+                    return
                 if path == '/api/previews':
                     if not isinstance(body, dict) or set(body) != {'html'}:
                         raise ValueError('Preview expects an HTML string')
@@ -870,8 +925,14 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(200, engine.apply(path.split("/")[3], body.get("files")))
                 elif path.startswith("/api/tasks/") and path.endswith("/undo") and path.count("/") == 4:
                     self.reply(200, engine.undo(path.split("/")[3]))
+                elif path.startswith("/api/tasks/") and path.endswith("/redo") and path.count("/") == 4:
+                    self.reply(200, engine.redo(path.split("/")[3]))
                 elif path == "/api/commands/allowed/forget":
                     self.reply(200, {"commands": engine.forget_command(str(body.get("command") or ""))})
+                elif path == "/api/shells":
+                    self.reply(200, engine.start_background(str(body.get("command") or "")))
+                elif path == "/api/references":
+                    self.reply(201, engine.add_reference(body))
                 elif path.startswith("/api/git/accounts/") and path.endswith("/login") and path.count("/") == 5:
                     if remote:
                         raise ValueError("Sign in on the server itself (run gh auth login there)")
@@ -941,6 +1002,8 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                         self.reply(201, engine.fork(task, body))
                     elif action == "secret":
                         self.reply(200, {"answered": engine.answer_secret(task, body)})
+                    elif action == "question":
+                        self.reply(200, {"answered": engine.answer_question(task, body)})
                     elif action == "title":
                         self.reply(200, engine.auto_title(task))
                     elif action in {"goal/stop", "goal/resume"}:
@@ -1023,6 +1086,18 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     except KeyError:
                         self.reply(404, {"error": "Worktree not found"})
                     return
+                if path.startswith("/api/shells/") and method == "DELETE":
+                    try:
+                        self.reply(200, engine.stop_background(path.split("/")[3]))
+                    except KeyError:
+                        self.reply(404, {"error": "Shell not found"})
+                    return
+                if path.startswith("/api/references/") and method == "DELETE":
+                    try:
+                        self.reply(200, engine.remove_reference(path.split("/")[3]))
+                    except KeyError:
+                        self.reply(404, {"error": "Reference not found"})
+                    return
                 if path.startswith("/api/tasks/") and path.count("/") == 3:
                     task = path.split("/")[3]
                     if method == "PATCH":
@@ -1069,7 +1144,7 @@ def early_exits(parser: argparse.ArgumentParser) -> None:
     raise SystemExit(0)
 
 
-def main():
+def main(*, desktop: bool = False):
     parser = argparse.ArgumentParser(description="Dikdik — Small name. Serious intelligence.",
                                      prog="python -m dikdik.server")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")
@@ -1078,8 +1153,10 @@ def main():
                         help="Project folder to open (default: the current folder, else the last project)")
     parser.add_argument("--workspace", help="Same as FOLDER")
     parser.add_argument("--data", default=str(Path.home() / ".dikdik"), help="Private durable state directory outside workspace")
-    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--port", type=int, default=8787,
+                        help="HTTP port (default: 8787; use 0 to choose a free port)")
     parser.add_argument("--no-browser", action="store_true", help="Do not open the browser automatically")
+    parser.add_argument("--desktop", action="store_true", default=desktop, help="Open a native desktop window (requires dikdik[desktop])")
     parser.add_argument("--rotate-token", action="store_true", help="Issue a new session secret, signing out every browser")
     server_flags = parser.add_argument_group("running on a server (see docs/CLOUD.md)")
     server_flags.add_argument("--listen", default="127.0.0.1", help="Address to listen on; anything but loopback needs the flags below")
@@ -1088,13 +1165,29 @@ def main():
     server_flags.add_argument("--tls-key", help="Private key file for built-in HTTPS")
     server_flags.add_argument("--behind-proxy", action="store_true", help="A reverse proxy terminates HTTPS in front of Dikdik")
     server_flags.add_argument("--projects-root", help="On a server, every project must live inside this folder")
+    parser.add_argument("--acp", action="store_true", help="ACP server mode: expose the agent over stdio JSON-RPC (for other ACP clients)")
     args = parser.parse_args()
     early_exits(parser)
     check_config_or_exit()
+    if args.acp:
+        from .acp_serve import serve as acp_serve
+        data = Path(args.data).resolve()
+        root = Path(args.workspace or args.workspace_arg or os.getcwd()).resolve()
+        acp_serve(root, data)
+        return 0
     try:
         remote = remote_mode.check(args.listen, args.public_url, args.tls_cert, args.tls_key, args.behind_proxy, args.projects_root)
     except ValueError as exc:
         parser.error(str(exc))
+    webview = None
+    if args.desktop:
+        if remote or args.no_browser:
+            parser.error("--desktop runs locally and cannot be combined with server mode or --no-browser")
+        from .desktop import load_webview
+        try:
+            webview = load_webview()
+        except ValueError as exc:
+            parser.error(str(exc))
     probe = socket.socket()
     probe.settimeout(0.5)
     if probe.connect_ex(("127.0.0.1", args.port)) == 0:
@@ -1110,9 +1203,17 @@ def main():
         if chosen:
             parser.error(f"Workspace {str(exc)}")
         root = last_project(data)  # started from a folder that cannot be a project, such as the home folder
+        if root is None and args.desktop:
+            try:
+                picked = pick_folder("Open a project in Dikdik")
+                if not picked:
+                    raise SystemExit(0)
+                root = check_location(Path(picked), data)
+            except (OSError, ValueError) as picker_error:
+                parser.error(str(picker_error))
         if root is None:
             parser.error(f"{str(exc).rstrip('.')}. Start Dikdik inside a project folder, or name one: dikdik C:\\path\\to\\project")
-        note = f"Note: {str(exc).rstrip('.')}. Opened your last project instead."
+        note = f"Note: {str(exc).rstrip('.')}. Opened another project instead."
     try:
         engine = Engine(root, data)
     except ValueError as exc:
@@ -1131,10 +1232,17 @@ def main():
     print(f"Dikdik is running at {url}\nProject: {root}"
           + (f"\n{note}" if note else "")
           + f"\nSign-in link (needed once per browser): {link}", flush=True)
-    if not args.no_browser and not remote:
+    if not args.no_browser and not remote and not args.desktop:
         webbrowser.open(link)
     try:
-        server.serve_forever()
+        if args.desktop:
+            from .desktop import run as run_desktop
+            try:
+                run_desktop(server, link, data, webview)
+            except Exception as exc:
+                parser.error(f"The desktop window could not start: {exc}. See docs/DESKTOP.md for renderer setup.")
+        else:
+            server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:

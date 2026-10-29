@@ -5,11 +5,12 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
 from dikdik.agent import AgentBudget, ModelResponse, ToolCall, run_agent
-from dikdik.engine import Engine
+from dikdik.engine import Engine, TERMINAL
 from dikdik.local_exec import run_tests
 from dikdik.runners import detect_local_checks
 
@@ -125,7 +126,12 @@ class ResumeCheckTests(unittest.TestCase):
         self.addCleanup(env.stop)
 
     def wait(self, task):
-        self.engine.pool.submit(lambda: None).result(timeout=30)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            data = self.engine.store.get(task)
+            if data["state"] in TERMINAL and not self.engine.busy(task):
+                return data
+            time.sleep(0.02)
         return self.engine.store.get(task)
 
     def edit(self):

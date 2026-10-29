@@ -14,6 +14,26 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def normalize_dependency(value):
+    """Ignore equivalent specifier ordering emitted by wheel metadata writers."""
+    value = re.sub(r"\s+", "", value).replace("'", '"')
+    requirement, separator, marker = value.partition(";")
+    match = re.fullmatch(r"([A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?)(.*)", requirement)
+    if match is not None:
+        requirement = match[1] + ",".join(sorted(match[2].strip("()").split(",")))
+    return requirement + (separator + marker if separator else "")
+
+
+def expected_dependencies(project):
+    requirements = list(project["dependencies"])
+    for extra, dependencies in project.get("optional-dependencies", {}).items():
+        for dependency in dependencies:
+            requirement, separator, marker = dependency.partition(";")
+            condition = f'({marker.strip()}) and extra == "{extra}"' if separator else f'extra == "{extra}"'
+            requirements.append(f"{requirement}; {condition}")
+    return {normalize_dependency(value) for value in requirements}
+
+
 def safe_names(names):
     for name in names:
         path = PurePosixPath(name)
@@ -57,12 +77,11 @@ def check_release(directory, tag=None):
             raise ValueError(f"Wheel is missing runtime files: {sorted(missing)}")
         prefix = f"dikdik-{version}.dist-info/"
         metadata = BytesParser().parsebytes(archive.read(prefix + "METADATA"))
-        normalize = lambda value: re.sub(r"\s+", "", value).replace("'", '"')
-        dependencies = {normalize(value) for value in metadata.get_all("Requires-Dist", [])}
-        expected_dependencies = {normalize(value) for value in project["dependencies"]}
+        dependencies = {normalize_dependency(value) for value in metadata.get_all("Requires-Dist", [])}
         if (metadata["Name"] != "dikdik" or metadata["Version"] != version
                 or metadata["Requires-Python"] != project["requires-python"]
-                or metadata["License-Expression"] != "MIT" or dependencies != expected_dependencies):
+                or metadata["License-Expression"] != "MIT" or dependencies != expected_dependencies(project)
+                or set(metadata.get_all("Provides-Extra", [])) != set(project.get("optional-dependencies", {}))):
             raise ValueError("Invalid package identity/license or unexpected runtime dependencies")
         if archive.read(prefix + "licenses/LICENSE") != (ROOT / "LICENSE").read_bytes():
             raise ValueError("Wheel root license differs from repository license")
@@ -73,7 +92,7 @@ def check_release(directory, tag=None):
             raise ValueError("Source distribution must not contain links or special files")
         prefix = f"dikdik-{version}/"
         names = {member.name for member in members}
-        expected = required | {"LICENSE", "LICENSE-STATUS.md", "README.md", "pyproject.toml", "Cargo.toml",
+        expected = required | {"LICENSE", "LICENSE-STATUS.md", "README.md", "Dikdik.pyw", "pyproject.toml", "Cargo.toml",
                                "Cargo.lock", "crates/dikdik-index/Cargo.toml", "scripts/build_native.py",
                                "scripts/check_release.py", "scripts/requirements-release.txt"}
         if not {prefix + name for name in expected}.issubset(names):

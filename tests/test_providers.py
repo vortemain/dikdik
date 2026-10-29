@@ -40,8 +40,23 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(req.get_header("Authorization"), "Bearer private-key")
         self.assertEqual(json.loads(req.data)["max_tokens"], 4096)
 
+    def test_reasoning_effort_is_sent_when_configured(self):
+        from dikdik.model_config import ModelConfig
+        from dikdik.providers import chat_completion
+        config = ModelConfig(ENV["DIKDIK_MODEL_URL"], "m", ENV["DIKDIK_API_KEY"], "bearer", 60,
+                             {"provider": "openai", "profile": "P", "provider_name": "OpenAI"},
+                             {"reasoning_effort": "high", "temperature": 0.3})
+        response = {"choices": [{"message": {"content": "{\"edits\":[]}"}}]}
+        with patch("urllib.request.build_opener") as opener:
+            opener.return_value.open.return_value = io.BytesIO(json.dumps(response).encode())
+            chat_completion([{"role": "user", "content": "x"}], None, config=config)
+            req = opener.return_value.open.call_args.args[0]
+        body = json.loads(req.data)
+        self.assertEqual(body["reasoning_effort"], "high")
+        self.assertEqual(body["temperature"], 0.3)
+
     def test_context_limit_prevents_request(self):
-        with patch.dict(os.environ, ENV), patch("urllib.request.build_opener") as opener, self.assertRaisesRegex(ValueError, "128KB"):
+        with patch.dict(os.environ, ENV), patch("urllib.request.build_opener") as opener, self.assertRaisesRegex(ValueError, "context"):
             propose({"mode": "model", "approve_external": True}, {"large.py": "x" * 128001})
         opener.assert_not_called()
 

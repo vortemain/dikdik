@@ -1,4 +1,39 @@
-# Browser tool and screenshot panel
+# Workspace browser and agent web tools
+
+Desktop installs include a persistent Chromium runtime. Browsing stays inside
+the workspace Browser panel: the page renders in a separate browser process,
+and the panel forwards clicks, typing, paste, scrolling and navigation. The
+agent uses that same task-scoped session. There is no popup browser window and
+no requirement to run Docker for this path.
+
+`web_fetch` returns real text, HTML or JSON through a bounded, credential-free
+public GET with validated redirects. `browse_url` loads the rendered page and
+returns text, a screenshot and CSS selectors for visible controls.
+`browser_click`, `browser_fill`, `browser_select`, `browser_press`,
+`browser_scroll` and `browser_screenshot` operate on the retained page. Input
+and clicks are classified as high-risk website actions by the approval policy;
+page content never grants permission. Profiles and the global browser switch
+still control whether these tools are offered.
+
+Sessions have empty browser profiles and separate cookies per task. Browser
+requests use the existing public-only proxy with pinned DNS. Service workers,
+WebSockets, browser downloads and native permission dialogs are not supported.
+Form interactions can send public HTTP/HTTPS requests after approval. Up to two
+task sessions are retained; opening another evicts the oldest session. Browser
+state ends on project/server shutdown, task deletion or eviction. Screenshots
+and page text remain subject to existing history retention.
+
+For source development install the desktop extra and run
+`python -m playwright install chromium`. Desktop bundles include the matching
+Chromium. Run real interaction tests with `DIKDIK_RUN_INTERACTIVE=1` and
+`python -m unittest tests.test_interactive_browser -v`; the fixture exercises a
+real browser with local-only forms and no external submissions.
+
+## Legacy capture fallback
+
+Without the optional persistent browser runtime, the existing one-shot system
+browser or Docker screenshot capture remains available. The following describes
+the Docker capture worker's narrower capabilities and historical validation.
 
 The agent's `browse_url` tool opens a public HTTP/HTTPS URL, returns bounded page
 text as untrusted tool data, and stores a 1440×900 screenshot. The screenshot

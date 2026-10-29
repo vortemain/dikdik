@@ -13,9 +13,12 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from .agent import BROWSER_TOOL, SHELL_TOOL, TOOLS
+from .agent import (BROWSER_TOOL, SHELL_TOOL, TOOLS, WEB_FETCH_TOOL, BROWSER_CLICK_TOOL,
+                    BROWSER_FILL_TOOL, BROWSER_SCREENSHOT_TOOL, BROWSER_PRESS_TOOL,
+                    BROWSER_SCROLL_TOOL, BROWSER_SELECT_TOOL)
 from .browser_network import fetch_public, public_url
 from . import host_browser
+from .interactive_browser import BrowserSessions, available as interactive_available, web_fetch
 from .sandbox import cleanup_container
 from .planning import TASK_TRACKER, WRITE_PLAN, READ_PLAN
 
@@ -180,6 +183,7 @@ class BrowserService:
         self._lock = threading.Lock()
         self._active: dict[str, CaptureCancel] = {}
         self._closed = False
+        self.sessions = BrowserSessions()
         self._probe_at, self._image_ready = 0.0, False
         self._launch_verified = False
         self._idle = threading.Event()
@@ -207,9 +211,17 @@ class BrowserService:
             with self._lock:
                 for cancel in self._active.values():
                     cancel.set()
+            if not self._idle.wait(75):
+                raise RuntimeError("Browser actions are still stopping")
+            self.sessions.close()
+            self.sessions = BrowserSessions()
         return self.info()
 
     def info(self):
+        if interactive_available():
+            return {"enabled": self.enabled(), "image": IMAGE, "runtime": "Chromium", "browser": "Chromium",
+                    "network": "public_only_proxy", "availability": "interactive_ready", "interactive": True,
+                    "launch_verified": self._launch_verified, "approval_required": ["approve_execution", "approve_browser"]}
         # This checks the local image protocol, not a successful Chromium launch.
         now = time.monotonic()
         with self._lock:
@@ -240,9 +252,10 @@ class BrowserService:
                 cancel.set()
         if not self._idle.wait(95):
             raise RuntimeError("Browser capture did not stop; keep the data directory locked")
+        self.sessions.close()
 
     def stop(self, task):
-        self.store.get(task)
+        self.store.status(task)
         with self._lock:
             cancel = self._active.get(task)
             if cancel:
@@ -250,7 +263,7 @@ class BrowserService:
         return {"stop_requested": cancel is not None}
 
     def visit(self, task, url, approval, cancel=None):
-        self.store.get(task)
+        self.store.status(task)
         if approval.get("approve_execution") is not True or approval.get("approve_browser") is not True:
             raise PermissionError("Approve running tools and public web browsing for this task")
         url = public_url(url)
@@ -258,7 +271,7 @@ class BrowserService:
             raise PermissionError("Browser tools are disabled in Settings")
         cancel = CaptureCancel(cancel)
         with self.engine.lock:
-            self.store.get(task)  # coordinate task deletion with launch
+            self.store.status(task)  # coordinate task deletion with launch
             with self._lock:
                 if not self.enabled():
                     raise PermissionError("Browser tools are disabled in Settings")
@@ -269,9 +282,9 @@ class BrowserService:
         started, snapshot = time.monotonic(), uuid.uuid4().hex
         try:
             on_host = self.info()["availability"] == "host_ready"
-            self.store.event(task, "browser_started", {"url": url, **({"runtime": "this computer"} if on_host else {"container": "dikdik-" + snapshot})})
+            self.store.event(task, "browser_started", {"url": url, **({"runtime": "Chromium"} if interactive_available() else {"runtime": "this computer"} if on_host else {"container": "dikdik-" + snapshot})})
             try:
-                result = host_browser.capture(url, cancel) if on_host else capture(url, cancel, name="dikdik-" + snapshot)
+                result = self.sessions.execute(task, "navigate", {"url": url, "viewport": approval.get("viewport")}, cancel) if interactive_available() else host_browser.capture(url, cancel) if on_host else capture(url, cancel, name="dikdik-" + snapshot)
             except Exception:
                 result = {"status": "inconclusive", "error": "Browser capture failed"}
             if on_host and len(result.get("png") or b"") > HOST_PNG_LIMIT:
@@ -296,31 +309,82 @@ class BrowserService:
                 if not self._active:
                     self._idle.set()
 
+    def action(self, task, action_type, arguments, cancel=None):
+        """Act on the same persistent page as browse_url and the workspace panel."""
+        self.store.status(task)
+        if not self.enabled():
+            raise PermissionError("Browser tools are disabled in Settings")
+        stop = CaptureCancel(cancel)
+        with self.engine.lock:
+            self.store.status(task)
+            with self._lock:
+                if not self.enabled():
+                    raise PermissionError("Browser tools are disabled in Settings")
+                if self._closed or task in self._active:
+                    raise ValueError("A browser action is already running")
+                self._active[task] = stop; self._idle.clear()
+        try:
+            self.store.event(task, "browser_started", {"action": action_type, "runtime": "Chromium"})
+            result = self.sessions.execute(task, action_type, arguments, stop)
+            png = result.pop("png", None)
+            if png and result["status"] == "passed":
+                snapshot = uuid.uuid4().hex
+                with self.store.connect() as db:
+                    db.execute("INSERT INTO browser_snapshots VALUES(?,?,?,?,?,?,?)", (snapshot, task, time.time(), result["url"], result["title"], result["text"], png))
+                    db.execute("DELETE FROM browser_snapshots WHERE task_id=? AND id NOT IN (SELECT id FROM browser_snapshots WHERE task_id=? ORDER BY created DESC LIMIT 10)", (task, task))
+                    db.execute("DELETE FROM browser_snapshots WHERE id NOT IN (SELECT id FROM browser_snapshots ORDER BY created DESC LIMIT 100)")
+                result["screenshot"] = f"/api/tasks/{task}/browser/screenshots/{snapshot}"
+            self.store.event(task, "browser_result", result)
+            return result
+        finally:
+            with self._lock:
+                self._active.pop(task, None)
+                if not self._active: self._idle.set()
+
     def screenshot(self, task, snapshot):
-        self.store.get(task)
+        self.store.status(task)
         with self.store.connect() as db:
             row = db.execute("SELECT png FROM browser_snapshots WHERE task_id=? AND id=?", (task, snapshot)).fetchone()
         if row is None:
             raise KeyError(snapshot)
         return row[0]
 
+    def fetch(self, task, url):
+        self.store.status(task)
+        if not self.enabled():
+            raise PermissionError("Browser tools are disabled in Settings")
+        return web_fetch(url)
+
     def route(self, method, raw_path, body=None):
         path = urlsplit(raw_path).path
         try:
-            tools = TOOLS + [SHELL_TOOL, BROWSER_TOOL, TASK_TRACKER, WRITE_PLAN, READ_PLAN]
+            actions = [BROWSER_CLICK_TOOL, BROWSER_FILL_TOOL, BROWSER_SCREENSHOT_TOOL, BROWSER_PRESS_TOOL, BROWSER_SCROLL_TOOL, BROWSER_SELECT_TOOL]
+            tools = TOOLS + [SHELL_TOOL, BROWSER_TOOL, WEB_FETCH_TOOL, TASK_TRACKER, WRITE_PLAN, READ_PLAN] + actions
             if method == 'GET' and path in {'/api/tools', '/api/tools/'}:
                 return 200, [tool['function']['name'] for tool in tools]
             if method == 'GET' and path in {'/api/tools/catalog', '/server_info'}:
                 info = self.info()
-                browser_usable = info['enabled'] and info['availability'] in {'image_ready', 'host_ready'}
+                browser_usable = info['enabled'] and info['availability'] in {'image_ready', 'host_ready', 'interactive_ready'}
                 if path == '/server_info':
-                    return 200, {'conversation_runtime': 'docker', 'browser': info, 'usable_tools': [tool['function']['name'] for tool in tools if tool is not BROWSER_TOOL or browser_usable]}
-                return 200, {'tools': [{'name': tool['function']['name'], 'user_selectable': tool not in [WRITE_PLAN, READ_PLAN], 'usable': tool is not BROWSER_TOOL or browser_usable,
+                    return 200, {'conversation_runtime': 'docker', 'browser': info, 'usable_tools': [tool['function']['name'] for tool in tools if (browser_usable if tool is BROWSER_TOOL else info['enabled'] if tool is WEB_FETCH_TOOL else info['enabled'] and info.get('interactive') if tool in actions else True)]}
+                return 200, {'tools': [{'name': tool['function']['name'], 'user_selectable': tool not in [WRITE_PLAN, READ_PLAN], 'usable': (browser_usable if tool is BROWSER_TOOL else info['enabled'] if tool is WEB_FETCH_TOOL else bool(info['enabled'] and info.get('interactive')) if tool in actions else True),
                                         'description': tool['function']['description'], 'in_default_set': tool in TOOLS or tool is TASK_TRACKER,
                                         **({'approval_required': info['approval_required']} if tool is BROWSER_TOOL else {})} for tool in tools]}
             if path == "/api/browser":
                 return (200, self.info()) if method == "GET" else (200, self.configure(body)) if method == "PATCH" else None
+            if path == "/api/browser/sessions" and method == "POST":
+                if not isinstance(body, dict) or body.get("approve_browser") is not True or body.get("approve_execution") is not True:
+                    raise PermissionError("Approve browser tools to start a browser session")
+                if not self.enabled():
+                    raise PermissionError("Browser tools are disabled in Settings")
+                task = self.store.create({"objective": "Browse the web", "mode": "agent", "verification": "syntax", "edits": [], "approve_execution": True, "approve_browser": True, "approve_external": False})
+                self.store.state(task, "completed", {"browser_session": True, "summary": "Workspace browser session"})
+                return 201, {"id": task}
             parts = path.split("/")
+            if len(parts) == 6 and parts[:3] == ["", "api", "tasks"] and parts[4:] == ["browser", "actions"] and method == "POST":
+                if not isinstance(body, dict) or body.get("approve_browser") is not True or body.get("approve_execution") is not True:
+                    raise PermissionError("Approve browser actions for this request")
+                return 200, self.action(parts[3], body.get("action"), body.get("arguments") or {})
             if len(parts) == 6 and parts[:3] == ["", "api", "tasks"] and parts[4:] == ["browser", "stop"] and method == "POST":
                 return 200, self.stop(parts[3])
             if len(parts) != 5 or parts[:3] != ["", "api", "tasks"] or parts[4] != "browser":

@@ -86,14 +86,17 @@ class ConversationTests(unittest.TestCase):
         self.idle(task)
         with self.assertRaisesRegex(ValueError, "Objective"):
             self.engine.send(task, {**offline("", "a", "b")})
+        agent_request = {"objective": "Again", "mode": "agent", "verification": "syntax", "approve_external": True}
+        other = self.engine.store.create(agent_request)
+        self.engine.store.state(other, "running")
         with self.engine.lock:
-            self.engine.active["other"] = threading.Event()
+            self.engine.active[other] = threading.Event()
         try:
-            with self.assertRaisesRegex(ValueError, "Another task is running"):
-                self.engine.send(task, offline("Again", "a + b", "b + a"))
+            with self.assertRaisesRegex(ValueError, "An agent task is already running"):
+                self.engine.send(task, agent_request)
         finally:
             with self.engine.lock:
-                self.engine.active.pop("other")
+                self.engine.active.pop(other)
 
     def test_message_sent_while_running_is_queued_then_run(self):
         gate, calls = threading.Event(), []

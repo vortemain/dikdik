@@ -273,11 +273,13 @@ def _chat_completion(messages, tools=None, max_tokens=4096, config=None, on_text
                 return self.do_open(tracked(http.client.HTTPSConnection), req, context=self._context)
 
         handlers.extend([HTTP(), HTTPS()])
-    if context_size(messages) > 128000:  # attached images count as a fixed weight
-        raise ProviderError("context_length", "Model context exceeds 128KB; use a smaller approved workspace")
     options = config.options or {}
+    if context_size(messages) > (options.get("context_limit_bytes") or 128000):  # attached images count as a fixed weight
+        raise ProviderError("context_length", "Model context exceeds the configured limit; use a smaller approved workspace or increase the profile's context limit")
     body = {"model": config.model, "max_tokens": min(max_tokens, options.get("max_output_tokens") or max_tokens), "messages": messages,
             **{k: options[k] for k in ("temperature", "top_p") if options.get(k) is not None}}
+    if options.get("reasoning_effort"):
+        body["reasoning_effort"] = options["reasoning_effort"]
     if tools is not None:
         body["tools"] = tools
         body["tool_choice"] = "auto"

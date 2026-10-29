@@ -59,13 +59,10 @@ class LocalModeTests(unittest.TestCase):
     def idle(self, task, timeout=60):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            # Wait behind the worker instead of repeatedly loading its SQLite
-            # history while it persists large SVG/diff/checkpoint records.
-            self.engine.pool.submit(lambda: None).result(timeout=max(.01, deadline - time.monotonic()))
             state = self.engine.store.get(task)
             if state["state"] in TERMINAL and not self.engine.busy(task):
                 return state
-            time.sleep(0.05)
+            time.sleep(0.02)
         self.fail("task did not finish")
 
     def calc(self):
@@ -86,6 +83,28 @@ class LocalModeTests(unittest.TestCase):
         self.assertIn("a - b", self.calc())
         with self.assertRaisesRegex(ValueError, "already undone"):
             self.engine.undo(task)
+
+    def test_redo_reapplies_an_undone_turn_and_the_cycle_repeats(self):
+        task, state = self.run_task(Script([call(1, "edit_file", **FIX), call(2, "run_tests"), call(3, "finish")]))
+        self.assertEqual(state["state"], "completed", state["result"])
+        self.assertEqual(self.engine.undo(task), {"restored": ["calc.py"], "conflicts": []})
+        self.assertIn("a - b", self.calc())
+        self.assertEqual(self.engine.redo(task), {"restored": ["calc.py"], "conflicts": []})
+        self.assertIn("a + b", self.calc())
+        with self.assertRaisesRegex(ValueError, "not been undone"):
+            self.engine.redo(task)
+        # The cycle repeats as long as nobody touched the file.
+        self.engine.undo(task)
+        self.assertIn("a - b", self.calc())
+        self.assertEqual(self.engine.redo(task), {"restored": ["calc.py"], "conflicts": []})
+        self.assertIn("a + b", self.calc())
+
+    def test_redo_conflicts_when_the_user_changed_the_file_after_undo(self):
+        task, state = self.run_task(Script([call(1, "edit_file", **FIX), call(2, "run_tests"), call(3, "finish")]))
+        self.engine.undo(task)
+        (self.root / "calc.py").write_text("def add(a, b):\n    return a * b  # mine\n", encoding="utf-8")
+        self.assertEqual(self.engine.redo(task), {"restored": [], "conflicts": ["calc.py"]})
+        self.assertIn("a * b", self.calc())  # the user's own edit stays
 
     def test_resume_can_finish_previously_verified_local_edits_without_changing_them_again(self):
         profile = self.engine.agents.create({'name': 'Two calls', 'max_model_calls': 2})
@@ -234,6 +253,40 @@ class LocalModeTests(unittest.TestCase):
         self.assertEqual((self.root / path).read_bytes().decode(), original.replace('red', 'green'))
         self.assertEqual(self.engine.undo(task), {'restored': [path], 'conflicts': []})
         self.assertEqual((self.root / path).read_bytes().decode(), original.replace('red', 'blue'))
+
+    # --- background shells -------------------------------------------------------
+    def test_background_shell_starts_polls_and_stops(self):
+        started = self.engine.start_background("echo first && sleep 0.3 && echo second")
+        self.assertEqual(started["status"], "running")
+        self.assertTrue(started["id"])
+        time.sleep(0.15)
+        polled = self.engine.poll_background(started["id"])
+        self.assertEqual(polled["status"], "running")
+        self.assertIn("first", polled["output"])
+        time.sleep(0.3)
+        # Give the drain thread a moment to read the final output after exit
+        time.sleep(0.1)
+        polled = self.engine.poll_background(started["id"])
+        self.assertIn("second", polled["output"])
+        self.assertEqual(polled["status"], "exited")
+
+    def test_background_shell_stop_terminates_a_running_command(self):
+        started = self.engine.start_background("sleep 30")
+        self.assertEqual(started["status"], "running")
+        stopped = self.engine.stop_background(started["id"])
+        self.assertEqual(stopped["status"], "stopped")
+
+    def test_background_shell_list_shows_all_shells(self):
+        a = self.engine.start_background("sleep 0.5")
+        b = self.engine.start_background("sleep 0.5")
+        listing = {s["id"] for s in self.engine.list_background()}
+        self.assertEqual({a["id"], b["id"]}, listing)
+        self.engine.stop_background(a["id"])
+        self.engine.stop_background(b["id"])
+
+    def test_background_shell_poll_missing_id(self):
+        with self.assertRaises(KeyError):
+            self.engine.poll_background("nonexistent")
 
 
 if __name__ == "__main__":
