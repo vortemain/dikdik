@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     # Ship the matching browser with each OS build; end users do not install it.
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
-    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium", "--only-shell"], check=True)
     command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--windowed",
                "--name", "Dikdik", "--distpath", str(ROOT / "dist" / "desktop"),
                "--workpath", str(ROOT / "build" / "desktop-freeze"),
@@ -18,7 +18,8 @@ def main():
     icon = ROOT / "dikdik" / "web" / ("icon.icns" if sys.platform == "darwin" else "icon.ico")
     command += ["--icon", str(icon)]
     if sys.platform.startswith("linux"):
-        command += ["--collect-all", "PySide6"]
+        os.environ["QT_API"] = "pyside6"
+        command += ["--collect-all", "PySide6", "--exclude-module", "PyQt5", "--exclude-module", "PyQt6", "--exclude-module", "PySide2"]
     elif sys.platform == "win32":
         command += ["--collect-all", "winrt"]
     elif sys.platform == "darwin":
