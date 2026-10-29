@@ -20,8 +20,8 @@ def main():
     executable = bundle / ("Dikdik.exe" if sys.platform == "win32" else "Dikdik")
     if sys.platform == "darwin":
         executable = bundle.with_suffix(".app") / "Contents/MacOS/Dikdik"
-    with tempfile.TemporaryDirectory(prefix="dikdik-desktop-smoke-") as directory:
-        base = Path(directory)
+    with tempfile.TemporaryDirectory(prefix="dikdik-desktop-smoke-", ignore_cleanup_errors=True) as directory:
+        base = Path(directory).resolve()
         project, data = base / "project", base / "data"
         project.mkdir()
         (project / "app.py").write_text("value = 1\n")
@@ -55,6 +55,8 @@ def main():
                     if time.monotonic() >= deadline:
                         raise RuntimeError("Frozen desktop did not initialize its native host")
                     time.sleep(.5)
+                if sys.platform == "win32":
+                    assert status.get("available"), status
                 assert api("/api/server-info")["version"] == version
                 task = api("/api/tasks", {"objective": "Desktop bundle smoke check", "mode": "offline",
                     "verification": "syntax", "approve_external": False, "approve_execution": False,
@@ -74,7 +76,11 @@ def main():
                 print(f"Frozen desktop {version}: native host, authenticated task and bundled Chromium passed")
             except Exception:
                 log.flush()
-                print((base / "desktop.log").read_text(errors="replace")[-12000:])
+                output = (base / "desktop.log").read_text(errors="replace")[-12000:]
+                token_file = data / "web.token"
+                if token_file.exists():
+                    output = output.replace(token_file.read_text().strip(), "<redacted>")
+                print(output)
                 raise
             finally:
                 if os.name == "nt":
