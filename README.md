@@ -1,455 +1,212 @@
-# Dikdik
+<div align="center">
+  <a href="https://github.com/vortemain/dikdik">
+    <img src="./dikdik/web/icon.svg" alt="Dikdik logo" width="104" height="104" />
+  </a>
 
-**Small name. Serious intelligence.**
+  <h1>Dikdik</h1>
+  <p><strong>Small name. Serious intelligence.</strong></p>
+  <p>An agentic coding workspace that runs on your computer.<br />Plan work, edit files, run tools, and review changes with the models you choose.</p>
 
-[MIT license](LICENSE) · [Downloads and releases](https://github.com/vortemain/dikdik/releases) · [Changelog](CHANGELOG.md)
+  <p>
+    <a href="https://github.com/vortemain/dikdik/actions/workflows/release.yml"><img src="https://github.com/vortemain/dikdik/actions/workflows/release.yml/badge.svg?branch=main" alt="Windows and Linux checks" /></a>
+    <a href="https://github.com/vortemain/dikdik/releases"><img src="https://img.shields.io/github/v/release/vortemain/dikdik?include_prereleases&amp;style=flat-square&amp;color=1F3D31&amp;label=release" alt="GitHub release" /></a>
+    <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.13%2B-1F3D31?style=flat-square" alt="Python 3.13 or newer" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1F3D31?style=flat-square" alt="MIT license" /></a>
+  </p>
 
-## Install a release
+  <p>
+    <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
+    <a href="#inside-your-workspace">Features</a> &nbsp;·&nbsp;
+    <a href="#skills-and-hooks">Skills &amp; hooks</a> &nbsp;·&nbsp;
+    <a href="#documentation">Documentation</a> &nbsp;·&nbsp;
+    <a href="https://github.com/vortemain/dikdik/releases">Downloads</a>
+  </p>
+</div>
 
-Download the wheel from [GitHub Releases](https://github.com/vortemain/dikdik/releases)
-and install it with Python 3.13 or newer:
+---
 
-```powershell
+Dikdik brings the conversation, editor, terminal, browser, and change review into one workspace. Give the agent an objective, choose how it may act, and inspect the files, checks, and execution history as it works.
+
+**34 bundled skills · 6 lifecycle events · Checkpoints and Undo · Your choice of models**
+
+> [!NOTE]
+> **v0.1.0 is a developer preview.** See the [release notes](https://github.com/vortemain/dikdik/releases/tag/v0.1.0) for downloads and validation, and [Security](SECURITY.md) for operating boundaries.
+
+## Quick start
+
+### 1. Install a release
+
+Requires **Python 3.13 or newer**. Download the wheel and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/vortemain/dikdik/releases), verify its checksum, then install:
+
+```bash
 python -m pip install ./dikdik-0.1.0-py3-none-any.whl
 dikdik --version
+dikdik /path/to/your-project
+```
+
+Replace the project path with your own folder. On Windows, for example:
+
+```powershell
 dikdik C:\Projects\my-app
 ```
 
-The portable wheel includes the web interface, 34 bundled skills and third-party
-notices. It uses the Python repository indexer. The optional Rust accelerator can
-be built from the source distribution. Verify downloads with the release's
-`SHA256SUMS.txt`. See [release verification and maintenance](docs/RELEASING.md).
-Version 0.1.0 is a developer preview.
-On Windows, pip also installs `tzdata` so named time zones work without a system
-IANA database.
+Dikdik opens its browser interface at **http://127.0.0.1:8787** and signs you in automatically. Use `--no-browser` to start without opening a tab, and **Ctrl+C** to stop the server.
 
-> **Current direction:** DIKDIK's core is independently engineered in Python,
-> Bun/TypeScript and justified Rust components. OpenHands is a research and
-> comparative-testing reference, **not a shipped code dependency or renamed fork**.
-> Its UI and Python runtime are cloned separately under `upstream/`. See
-> [current status](PROJECT_STATUS.md) and [source provenance](docs/UPSTREAM.md).
-> The preview is a conversational coding agent with its own tools, sandbox,
-> Git/apply workflow, skills, MCP servers, agent profiles and automations. It
-> still covers only part of OpenHands (see [the parity audit](docs/PARITY.md)),
-> and no run against a real model provider or a live Docker engine is recorded yet.
+The wheel includes the web interface, fonts, icons, and bundled skills. Node.js, Bun, and Rust are not required to run it. On Windows, pip also installs `tzdata` for named time zones. [Download verification and release details →](docs/RELEASING.md)
 
-An evidence-first local engineering workspace. This is an original **0.1 developer
-preview**, built from an empty directory—not an OpenHands fork or a complete
-autonomous engineering platform.
+### 2. Connect a model
 
-## What works
+Open **Settings → Models**, add a provider connection, and choose a model. Dikdik supports providers including OpenRouter, NVIDIA, OpenAI, Anthropic, Google, and compatible local servers such as Ollama and LM Studio.
 
-- **Conversations.** Each task is a conversation: reply, ask follow-ups, queue a
-  message while the agent works, stop and continue. Rename, pin, archive, search,
-  delete and export tasks; every task has a link (`/?task=<id>`).
-- **An agent with real tools.** It lists, reads, searches, edits and creates files,
-  runs your tests and repairs failures within limits, or simply answers questions.
-  With Docker approval it also gets a sandboxed shell (`run_command`).
-- **A durable, read-only Terminal.** Agent commands append live and survive reloads.
-  Authenticated task-scoped Bash endpoints can start, stop, inspect, page and clear
-  commands only for tasks that already have explicit Docker execution approval.
-- **Browser captures.** A separate browsing approval enables the Docker-only
-  `browse_url` tool. Page text and authenticated screenshots appear in chat and the
-  Browser tab; manual URL captures have their own approval. The optional browser
-  image must be built by the operator. Docker capture is contract-tested, with
-  live execution still blocked here. See [browser setup and limits](docs/BROWSER.md).
-- **Planning and checklists.** Plan in a separate read-only conversation, review
-  its private `PLAN.md`, then Build a chosen revision with fresh permissions.
-  `/plan` and `/code` switch conversations; the agent's reported checklist lives
-  in Task List. See [planning and Build](docs/PLANNING.md).
-- **Composer drafts.** Home and each conversation keep unsent text across navigation
-  and reload. Conflicting tabs offer an explicit choice; failed sends retain text.
-  Drafts stay in your private server data. See [drafts](docs/COMPOSER.md).
-  Drag the composer's top edge to resize; keyboard arrows resize and Home resets.
-- **Run control.** Stop an active sandbox action and Resume from its recorded
-  interruption, or Pause after the current step and Resume from the exact step; ask before
-  actions (never, risky only, or every action) with Allow/Reject cards; block
-  tools with `.dikdik/hooks.json`; let the agent delegate to read-only subagents
-  (`.dikdik/agents/*.md`). Attach images and text files (+, paste or drop). Type
-  `/` for commands: `/goal` (judged multi-turn loop), `/btw` (side question),
-  `/model`, `/condense`, `/fork`, `/plan`, `/code` and your skills. Fork any
-  conversation or branch from an earlier turn or message; a meter shows context use, and the
-  Usage tab lists provider-reported tokens per turn (cost only when the provider
-  reports it; never estimated).
-- **Find and organise.** Ctrl+K opens a command menu for every action, panel,
-  settings page and conversation. File conversations in folders, tag them, sort
-  and filter the sidebar, and download a conversation as a .zip. Files has a
-  tree (with image previews), pinned tabs that survive reloads and Markdown
-  preview; Changes shows a diff, a side-by-side split or the new version; paths
-  in replies open the file. Conversations get a short title after their first turn.
-- **Readable output.** Compact Markdown, nested lists and callouts, sortable/copyable
-  tables, data-backed bar/line charts and opt-in isolated HTML/CSS design previews.
-  See [conversation formatting](docs/CONVERSATION_FORMATTING.md) for formats and safety limits.
-- **Models and keys.** Provider connections share one key across profiles;
-  profiles can be renamed, duplicated, tuned and tested with one click; a router
-  can send first messages to a strong model and follow-ups to a fast one, or let
-  a classifier model pick from your table; the composer pill switches models,
-  and Test explains failures in plain words (rejected key, out of credit…). Keys can be rotated with undo, renamed, and
-  (only when a task allows it) exposed to sandbox commands, redacted from output.
-- **Tests for several stacks** in network-less Docker containers: Python
-  `unittest`, `bun test`, `npm test` and `cargo test --offline`, picked from the
-  project's files. Without Docker, tasks are syntax-checked and labelled so.
-- **Safe apply.** Work happens on an isolated copy. **Apply to workspace** writes
-  the files only after you confirm, and refuses if you edited them meanwhile.
-- **Files and Git.** Browse and read files (workspace or candidate version), see
-  Git status and history, and commit what you applied, with repository hooks off.
-- **Your models and keys.** Model profiles and encrypted API keys in Settings
-  drive every call (OpenAI, Anthropic, Azure or any local OpenAI-compatible
-  server); environment variables remain a fallback. Replies stream as they arrive.
-- **Skills, MCP servers and agent profiles.** Skills (guidance files) reach the
-  agent as marked, untrusted context; install them from a folder, a Git source
-  or a marketplace you add, and browse, filter and switch them on the Skills page.
-  MCP servers (HTTP or local command) add tools; browse the built-in server library,
-  edit key mappings, test tools, and sign in to supported remote servers with OAuth.
-  Agent profiles bundle instructions, a model, limits and tool access.
-- **Plugins** bundle skills, lifecycle hook rules, subagents and MCP server definitions.
-  Install from a folder, Git or a marketplace; nothing loads until you review
-  what a plugin adds and trust it, and its MCP servers arrive switched off.
+Use the model picker in the composer to switch profiles. Your selected provider receives the context you authorize; provider charges depend on your account and model.
 
-The agent ships with **34 distinct bundled skills**, a discoverable catalog and
-on-demand `read_skill` loading. A central hook engine handles `task.started`,
-`context.building`, `tool.before`, `tool.after`, `tool.failed` and `task.completed`
-with ordered decisions, deadlines and durable traces. Plugin rules cannot override
-security denials or approvals. See [skill coverage, hook configuration and security
-boundaries](docs/AGENT_SKILLS_AND_HOOKS.md).
-- **Automations** on daily, interval, cron or local Git-commit triggers. Search,
-  filter and sort the dashboard; start from built-in templates; save/test drafts;
-  import/export portable JSON; inspect every run. Sync definitions to a Git
-  repository you pick inside the workspace: secret-free deterministic exports,
-  a preview of what will change, hook-free commits and an explicit approval for
-  every push. Runs use the approvals you set.
-- **Python client and CLI** (`python -m dikdik.client`) and a native Rust
-  repository indexer loaded automatically when built.
-- Loopback-only server, automatic browser sign-in, SQLite history, crash recovery.
-- **OpenAI-compatible gateway** (`/v1/models`, `/v1/chat/completions`,
-  `/v1/responses`): one ordinary Dikdik agent task per request, always keyed
-  with the session bearer, consent explicit per request, no streaming yet.
+### 3. Open a project and start a conversation
 
-**Partly built:** API keys with read/write/admin scopes, webhooks signed with
-HMAC-SHA256, a WebSocket task socket, a TypeScript client and Git worktrees per
-task. **ACP agents** (Claude Code, Codex, Gemini CLI, OpenCode) run from
-Settings → ACP agents after two explicit approvals: on this computer, outside
-Docker, in a throwaway copy, with only the keys you map to them; their changes
-come back as a diff you apply. **Extension apps** install from a local folder and
-open in a sandboxed frame with no access to Dikdik, your files or the network.
-**Remote backends** can be checked (a real request to their `/health`) and opened
-in a new tab. ChatGPT sign-in is not available yet.
+Choose an existing folder, create a project, or clone a repository from the project picker. Review the project trust prompt, then choose a permission mode.
 
-**Live so far:** one agent task through OpenRouter (`z-ai/glm-5.2`) fixed the
-example bug for $0.0028; see the verification record.
+Start in **Plan only** to explore a repository before making changes:
 
-**Not yet:** a desktop app, and any recorded run against a live Docker engine or
-a real ACP agent CLI. See [the parity audit](docs/PARITY.md) and
-[the verification record](docs/VERIFICATION.md).
+> Inspect this project, explain how it works, and propose a plan for the next change.
 
-## Run without installation
+Switch to **Ask before commands** when you are ready to implement. Review the agent's steps, terminal output, checks, and diffs as it works.
 
-Prerequisite: **Python 3.13+**. Installation also supplies `tzdata` on Windows for
-named time zones. Node/Bun, a database server, model key and Docker are not needed
-for the syntax-only workflow.
+## Inside your workspace
 
-Install it once from this folder, then start it inside any project, like `claude`:
+| Capability | What you can do |
+| --- | --- |
+| **Code with an agent** | Discover files, search code, make targeted edits, create files, run commands, and work through failures. |
+| **Plan and continue** | Keep checklists, pause or stop work, resume saved progress, and branch conversations. |
+| **Review changes** | Inspect diffs and check results, keep a durable terminal history, and restore a turn with Undo. |
+| **Choose your models** | Save connections and profiles, tune model settings, route requests, and inspect provider-reported usage. |
+| **Extend the agent** | Load skills on demand, review plugins, connect MCP tools, and configure agent profiles. |
+| **Work with files and Git** | Browse source and images, preview Markdown, inspect repository status, and commit, push, or open pull requests. |
+| **Browse and preview** | Capture public web pages, inspect browsing history, and open isolated HTML/CSS previews. |
+| **Automate work** | Configure daily, interval, cron, or Git-revision triggers with explicit approvals and run history. |
+| **Build integrations** | Use the Python client or authenticated OpenAI-compatible gateway for programmatic access. |
 
-```powershell
-pip install -e .
-cd C:\Projects\my-app
-dikdik
+## Workspace modes
+
+| Mode | How it works |
+| --- | --- |
+| **Ask before commands** | The agent edits files in your project and asks before commands, web visits, and MCP calls. |
+| **Auto** | The agent works in your project and asks before actions classified as high risk. |
+| **Plan only** | Explore the repository and prepare a plan with read-only tools. |
+| **Classic** | Work on an isolated candidate, verify with Docker when approved, and review before applying changes. |
+
+Local modes run approved commands with your computer's tools and permissions. Checkpoints record a turn's changes; **Undo** restores them unless you have edited those files afterward.
+
+Result details distinguish **passing tests**, **passing static checks**, and **unavailable verification**. A syntax check or missing test tool is never reported as a passed test suite. See [verification behavior and recovery](docs/MODEL_RELIABILITY.md).
+
+## Skills and hooks
+
+Dikdik ships with **34 distinct skills** covering planning, debugging, research, implementation, review, testing, security, data work, UI, and delivery. Browse the catalog in Settings and load the workflow you need on demand.
+
+The central hook engine exposes six typed lifecycle events:
+
+```text
+task.started       context.building
+tool.before        tool.after
+tool.failed        task.completed
 ```
 
-`dikdik` opens the folder you are in (or `dikdik C:\path\to\project`). Started from a
-folder that cannot be a project — your home folder, or Dikdik's own program folder —
-it reopens the last project. Dikdik's own code is never a project: not this checkout,
-not anything inside it.
+Hooks support priority ordering, explicit allow/block decisions, timeouts, structured outputs, and correlated execution traces. Plugin hooks cannot grant permissions or override core security denials and required approvals.
 
-**How it works in a project.** Pick a mode in the composer:
+Plugins can bundle skills, hook rules, agent definitions, and MCP configuration. Review a plugin's contents before trusting it; its MCP servers start disabled.
 
-- **Ask before commands** (default): the agent edits files in your folder and asks
-  before each command, web visit or MCP call. *Always allow* remembers a command for
-  this project.
-- **Auto:** edits and runs commands; only risky ones (delete, install, network,
-  rewriting history) still ask.
-- **Plan only:** reads and plans; changes nothing.
-- **Classic:** the original isolated copy, Docker tests and Apply.
+[Explore the skill catalog and hook configuration →](docs/AGENT_SKILLS_AND_HOOKS.md)
 
-The first message in a folder asks once whether you trust it. Every turn that
-changed your files has **Undo changes**, which puts them back unless you edited them
-since. Commands run with your own tools (Git Bash on Windows when installed,
-otherwise PowerShell).
+## Models and connections
 
-**Starting a project.** The project name sits at the top of the sidebar and the chat;
-click it (or a card on an empty chat) to open a folder, clone a repository (your GitHub
-repositories are listed when the GitHub CLI is signed in) or start a new project.
+Connections hold credentials; profiles select a model and its settings. You can reuse a connection across profiles and select a different profile for each conversation.
 
-**Models.** Settings → Models lists providers the way OpenRouter does: OpenRouter,
-Anthropic, OpenAI, Google Gemini, DeepSeek, xAI, Mistral, Groq, Cerebras, Together,
-Fireworks, Moonshot, Z.ai, Qwen, Perplexity, Ollama, LM Studio and Azure. Paste a key
-once, pick a model (or **Load all models** for the provider's live list with context
-size and price) and it becomes the model Dikdik uses. **Custom provider** adds any
-OpenAI-compatible API by name, URL and key. Older settings live under Advanced.
+- **Hosted providers:** configure a supported provider or a custom OpenAI-compatible endpoint.
+- **Local models:** connect a local compatible server and choose a tool-capable model for agent work.
+- **Recovery:** bounded retries and response validation handle supported transient and malformed-response failures.
+- **Context:** automatic compaction retains requirements, plans, findings, and current change state.
+- **Usage:** inspect reported tokens and costs when the provider supplies them.
 
-**Git accounts.** Settings → Git shows your GitHub and GitLab sign-ins (through the `gh`
-and `glab` tools), signs you in with the browser and sets Git up to use that sign-in.
+<details>
+<summary><strong>Environment-variable configuration</strong></summary>
 
-**Code, files and Git.** Code is coloured everywhere (chat, files, diffs) for 15
-languages. Files shows type badges, indent guides and a breadcrumb, and **Open in
-VS Code** opens a file at the line you are reading (or the whole project from
-Projects). The Git tab switches and creates branches, shows ahead/behind, and
-fetches, pulls (fast-forward only), pushes (you confirm each push) and opens pull
-requests with the GitHub CLI, all with your computer's own sign-in.
+When no saved profile is configured, these server-side variables provide a fallback:
 
-**Browser.** The Browser tab looks and works like a browser (address bar, Back,
-Forward, Reload). Without Docker it uses the Edge or Chrome on your computer,
-headless, with a fresh empty profile, and every request goes through a proxy in
-Dikdik that only reaches public Internet addresses.
+| Variable | Purpose |
+| --- | --- |
+| `DIKDIK_MODEL_URL` | Exact HTTPS chat-completions endpoint; loopback HTTP is supported for local servers. |
+| `DIKDIK_MODEL` | Provider model ID. Agent work requires function-tool support. |
+| `DIKDIK_API_KEY` | Provider credential, when required by the endpoint. |
 
-**On a server.** `dikdik --listen 0.0.0.0 --public-url https://… --tls-cert … --tls-key …`
-runs it on a cloud VM for yourself; see [docs/CLOUD.md](docs/CLOUD.md).
+Set credentials in your environment or the application's encrypted key store. Keep them out of source files and committed configuration.
 
-**Projects.** Click the project name at the bottom of the sidebar to switch to a
-recent project, **Open folder** (type a path or press Browse… for this computer's own
-folder picker), start a **New project** (optionally with Git), or **Clone repository**
-from an `https://`, `ssh://` or `git@host:path` URL. Cloning uses this computer's Git
-sign-in (Git Credential Manager or SSH keys); Dikdik never asks for or stores a token.
-Each project keeps its own conversations; your keys, model profiles, MCP servers,
-skills and settings are shared by all of them in `~/.dikdik`.
+</details>
 
-`--version` and `--info` answer stand-alone before startup; a folder that cannot be a
-project, an occupied port or a data directory already in use each stop with one plain line.
+[Model discovery and configuration →](docs/MODEL_DISCOVERY.md) · [Failure diagnosis and reliability →](docs/MODEL_RELIABILITY.md)
 
-Your browser opens Dikdik and signs in automatically; there is no token to
-copy. The terminal also prints a one-time sign-in link (`http://127.0.0.1:8787/#token=…`)
-in case the browser didn't open, or for a second browser. After that the browser
-stays signed in for 30 days, across server restarts. Pass `--no-browser` to skip
-opening it, and `--rotate-token` to sign out every browser. Stop with Ctrl+C.
+## Documentation
 
-`--workspace` is the project approval boundary. `--data` must be a separate,
-private directory, neither inside nor an ancestor of the workspace. Each data
-directory is bound to one workspace and locked against concurrent services.
-Do not share it with untrusted users. `--port` defaults to 8787. The service
-always binds IPv4 loopback; it cannot be configured to listen publicly.
+| Guide | Covers |
+| --- | --- |
+| [Skills and lifecycle hooks](docs/AGENT_SKILLS_AND_HOOKS.md) | Skill catalog, hook rules, plugin trust, and execution traces. |
+| [Planning](docs/PLANNING.md) | Plan conversations, checklists, and building a reviewed plan. |
+| [Models](docs/MODEL_DISCOVERY.md) | Connections, model discovery, profiles, and provider setup. |
+| [Reliability](docs/MODEL_RELIABILITY.md) | Provider errors, response recovery, context continuity, and verification. |
+| [Browser](docs/BROWSER.md) | Browser setup, captures, permissions, and network boundaries. |
+| [Conversation formatting](docs/CONVERSATION_FORMATTING.md) | Markdown, tables, charts, and isolated design previews. |
+| [Composer](docs/COMPOSER.md) | Saved drafts, attachments, and conversation input. |
+| [Server deployment](docs/CLOUD.md) | HTTPS, remote access, and project boundaries. |
+| [Releases](docs/RELEASING.md) | Versioning, builds, checksums, and release automation. |
+| [Security](SECURITY.md) | Permissions, execution boundaries, and deployment considerations. |
 
-### Reproducible offline demo
+## Development
 
-1. Connect to the example project using the command above.
-2. In the composer choose **Offline edits** and **Syntax check**. The edit field
-   opens with this replacement prefilled:
+Requires **Python 3.13+** and **Bun 1.4.0** for frontend development. The compiled browser bundle is committed to the repository.
 
-   ```json
-   [{"path":"calculator.py","before":"return a - b","after":"return a + b"}]
-   ```
+```bash
+git clone https://github.com/vortemain/dikdik.git
+cd dikdik
+python -m pip install -e .
+bun install --frozen-lockfile
 
-3. Type **Fix addition without changing the tests.** and press Enter.
-4. Inspect the steps and the `-` to `+` diff in the **Changes** panel. The result
-   says **Not test-verified**: syntax parsing is evidence, not a passing test suite.
-5. The example stays broken until you click **Apply to workspace** and confirm.
-   The candidate lives under `<data>/artifacts/<task-id>/`; history lives in SQLite.
-
-To run real tests, start Docker Desktop's **Linux engine** and pull the images
-for your stacks yourself, after reviewing their trust and license implications:
-
-```powershell
-docker pull python:3.13-slim
-docker pull oven/bun:1
-docker pull node:22-slim
-docker pull rust:1-slim
-```
-
-Then choose **Docker tests** and tick **Run tools in Docker**. Dikdik never pulls
-images, installs dependencies or uses the network inside containers, so projects
-whose tests need packages that are not in the repository will fail to verify.
-Python runs need at least one executed, non-skipped test.
-
-If Docker is unavailable, the task is **blocked** and retains its candidate diff.
-Do not interpret that as a test pass. A passing process is still not independent
-proof that every natural-language acceptance criterion is satisfied.
-
-### Optional model mode
-
-**Set up a model in the app.** Click the model button in the composer (it reads
-*Set up a model* until one works) or open **Settings**:
-
-1. **API keys:** store your provider key under a name, e.g. `openai-key`. It is
-   encrypted on this machine and never shown again.
-2. **Models:** create a profile with the provider, model ID and that key name.
-   The first profile becomes the default; switch defaults with *Edit*.
-
-Every model and agent task uses the default profile. `openai` and `anthropic`
-profiles use the providers' public chat-completions endpoints; `local` points at
-a server on this machine (e.g. `http://127.0.0.1:11434/v1`) and needs no key;
-`azure` needs an endpoint and sends the key as an `api-key` header. Endpoints
-must be HTTPS, except plain HTTP to localhost. The key is decrypted only for the
-call, kept in memory for that task, and never written to task history.
-
-**Or use environment variables.** When no profile exists, the server falls back
-to these. Set them on the server, **not** in source files or committed config:
-
-| Variable | Meaning |
-|---|---|
-| `DIKDIK_MODEL_URL` | Exact HTTPS chat-completions endpoint, e.g. `https://your-provider/v1/chat/completions` |
-| `DIKDIK_MODEL` | Your provider's model ID; must support instruction-following JSON responses |
-| `DIKDIK_API_KEY` | Server-side API credential; do not print or share it |
-
-Choose **Model proposal** and explicitly approve disclosure of the snapshot and
-objective. This can incur provider charges. One request proposes existing-file
-replacements, subject to the same validator and verification. No tools, streaming,
-automatic retry, routing or repair are claimed. No request to a real provider
-has been executed yet; the profile path is verified against a local stand-in
-server. Context is capped at 128KB serialized UTF-8; output requests are capped
-at 4096 tokens; network operations time out after the profile's timeout (default
-60 seconds) or 30 seconds for environment configuration. Cancelling a model call is cooperative, not an
-immediate network abort. Ambient provider proxy configuration is trusted.
-
-### The agent
-
-Choose **Agent** and tick **Share code with model**. It needs a model that supports
-chat-completions function tools. With **Docker tests** (and **Run tools in Docker**)
-it also verifies with your test suites and can use the sandboxed shell; with
-**Syntax check** it works without Docker and never claims tests passed.
-
-The agent can list/read/search files, make exact edits, create files in approved
-paths, run commands and tests, repair failures within limits, call MCP tools, and
-reply in plain text when no change is needed. Finishing a change requires net
-changes plus a verified current candidate. Edits invalidate earlier verification;
-an unchanged failing candidate cannot be blindly rerun. Follow-up messages continue
-from the previous turn's files and conversation.
-The sandbox runner also requires a nonce-tagged completed-run receipt and nonzero
-executed test counts; exit code zero alone is insufficient. This is not protection
-against deliberately malicious tests forging or subverting their own harness.
-
-Default limits: 12 model calls, 40 tool calls, 3 repair edits, 32000 reported tokens,
-180-second between-step deadline. Tool-mode output requests cap at 2048 tokens.
-Usage may be absent; no exact cost cap is claimed. No OpenHands code or process
-is used underneath this agent. See [agent contract and limitations](docs/ORIGINAL_AGENT.md).
-
-Real-provider demonstration (may incur charges; **not executed here**):
-
-```powershell
-python scripts/demo_agent.py --approve-external --approve-execution
-```
-
-### Apply, Files and Git
-
-Open the right-hand panel with **Changes** or the folder button. **Apply to
-workspace** asks once more, then writes only the candidate's changed files; if any
-of them changed on disk since the agent read them, nothing is written and the
-conflicting files are listed. The **Git** tab shows the branch, changed files and
-recent commits, and commits the files you tick (repository hooks are not run).
-
-### Skills, MCP servers, agent profiles and automations
-
-All four live in **Settings**. Skills are Markdown files in `.dikdik/skills/` (this
-project) or the data folder (personal); `<name>/SKILL.md` folders with `name:` and
-`description:` front matter work too. MCP servers start disabled: install one from
-the built-in library or add it manually, test it, then enable it for agent tasks.
-A *local command* server runs on this machine with a minimal environment plus only
-the encrypted API keys you map to it. Supported remote servers use authorization-code
-OAuth with S256 PKCE and a loopback callback; access and refresh tokens stay in the
-encrypted key store and are not listed under API keys. Agent profiles appear in the
-composer in Agent mode. Automations run daily, every N minutes, on a five-field cron
-schedule in an IANA time zone, or after a local Git revision changes. Their templates,
-drafts, import/export and bounded run logs are under Automations; imported definitions
-start disabled. Older automations made without approvals wait for an edit.
-
-**Automation Git sync** writes every automation to one managed directory of a Git
-repository in this workspace (default `.dikdik/automations`). Exports are
-deterministic and can never contain secrets. **Preview** lists the pending
-changed and deleted files; **Sync now** writes them, stages only that directory
-and commits without running any Git hook. Pushing to the remote happens only
-when you separately tick the push approval for that one sync, and the tick is
-never remembered. If the directory holds files Dikdik did not export, sync
-refuses instead of overwriting them.
-
-### Python client and command line
-
-```powershell
-python -m dikdik.client --data "$HOME/.dikdik-demo" ask "Fix addition" --share-code
-python -m dikdik.client --data "$HOME/.dikdik-demo" tasks
-python -m dikdik.client --data "$HOME/.dikdik-demo" apply <task-id> --yes
-```
-
-`from dikdik.client import DikdikClient` gives `submit`, `send`, `events` (live),
-`wait`, `apply`, `git`, `commit` and more. The token comes from `--data`/`data=`,
-`--token`, or `DIKDIK_TOKEN`.
-
-### Native indexer
-
-`python scripts/build_native.py` builds `crates/dikdik-index` (Rust) and places it
-in the package; the server then reports **Indexer: Rust** in Settings → General.
-Its output is checked against the Python rules, and any disagreement falls back
-to the Python walk.
-
-## Development and evaluation
-
-```powershell
 python -m unittest discover -s tests -v
-bun install --frozen-lockfile --ignore-scripts
 bun run typecheck:web
 bun run test:web
 bun run build:web
-python scripts/evaluate.py --output docs/evaluation-results.json
-python scripts/benchmark.py --samples 20 --output docs/benchmark-results.json
 ```
 
-Current result (2026-10-27): **269 Python tests passed, 2 live-runtime checks skipped**
-(271 total); **62 Bun tests passed**; **15 Rust tests passed**; strict frontend type
-checking and build passed; deterministic syntax-only evaluation **4/4**. These are preview regression results, not proof of
-general autonomous engineering capability.
+Start Dikdik against a separate project folder with `dikdik /path/to/your-project`. The application prevents its own installed program folder from becoming a project.
 
-Bun 1.4.0 is the tested frontend development tool; TypeScript is dev-only. The
-generated browser bundle is included, so Bun is not required to run the backend.
-The Python test command
-uses no third-party test framework. Unit/contract tests use mocks for the optional
-provider and Docker, while workflow and HTTP tests exercise actual files, SQLite,
-threads and loopback requests. The live Docker security test is explicitly skipped
-unless requested:
+<details>
+<summary><strong>Optional tools and runtime components</strong></summary>
 
-```powershell
-$env:DIKDIK_RUN_DOCKER = "1"
-python -m unittest tests.test_sandbox.LiveDockerTests -v
-Remove-Item Env:DIKDIK_RUN_DOCKER
-python scripts/evaluate.py --docker
+| Tool | Needed for |
+| --- | --- |
+| **Git** | Repository cloning and Git operations. |
+| **GitHub CLI / GitLab CLI** | Their respective account and repository integrations. |
+| **Docker** | Approved container execution and Classic-mode test isolation. Images are configured separately. |
+| **Edge or Chrome** | Local browser captures when using the host browser. |
+| **Rust** | Building the optional native repository indexer. |
+
+To build the optional Rust accelerator from a source checkout:
+
+```bash
+python scripts/build_native.py
 ```
 
-The `--docker` evaluation flag explicitly authorizes test execution in restricted
-containers. A missing runtime makes this evaluation **fail**, never pass by default.
-The evaluation cases are deterministic orchestration checks, not a benchmark of
-autonomous model problem-solving. See [measured results](docs/VERIFICATION.md).
+Dikdik uses the Python indexer when the accelerator is absent or incompatible. The portable release wheel includes the Python implementation.
 
-Optional installation: `python -m pip install .` provides the `dikdik` console
-command. It may resolve setuptools as a build dependency; source startup needs
-no installation. Package discovery is restricted to `dikdik` so reference upstream
-checkouts and frontend development dependencies cannot be bundled as packages.
+</details>
 
-## Troubleshooting
+See [CHANGELOG.md](CHANGELOG.md) for release history and [GitHub Issues](https://github.com/vortemain/dikdik/issues) to report a problem or suggest an improvement.
 
-- **Sign-in page appears:** open the sign-in link printed in the terminal (needed once per browser, or after `--rotate-token`).
-- **403:** use `127.0.0.1` and the correct port. Cross-origin access is refused.
-- **Data already in use:** stop the other service. Do not delete a live lock file.
-- **Different workspace:** use a new private `--data` directory.
-- **Docker blocked:** check `docker version`, Linux-engine availability, and the
-  locally installed image. No automatic daemon startup or image pull occurs.
-- **No tests / skipped tests / missing dependencies:** runner returns non-success;
-  inspect output rather than weakening tests. Python unittest discovery also
-  follows its normal package-directory discovery conventions.
-- **Replacement rejected:** `before` must match exactly once. No new files,
-  test-file modifications, ignored paths, or path traversal are allowed.
-- **Process interruption:** restart with the same workspace/data. Stale tasks are
-  marked interrupted; approved stale Docker containers get a bounded cleanup
-  attempt. Re-run as a new task. Exact resume is not implemented.
-- **Cleanup warning:** inspect/remove the named `dikdik-<task-id>` container
-  manually after restoring Docker. State cannot roll back filesystem artifacts.
+## License
 
-## Engineering records
+Original Dikdik code is available under the **[MIT License](LICENSE)**.
 
-[Project status](PROJECT_STATUS.md) · [Initial audit](docs/AUDIT.md) ·
-[Architecture/contracts](docs/ARCHITECTURE.md) · [Decisions](docs/DECISIONS.md) ·
-[Security](SECURITY.md) · [Verification](docs/VERIFICATION.md) ·
-[License status](LICENSE-STATUS.md)
+Bundled dependencies, fonts, and product marks retain their own terms. Their notices and provenance are recorded in [LICENSE-STATUS.md](LICENSE-STATUS.md) and [asset notices](dikdik/web/assets/NOTICES.md).
 
-Original Dikdik code is licensed under [MIT](LICENSE). Bundled dependencies, fonts
-and product marks retain their own terms; see [license status](LICENSE-STATUS.md).
+---
 
-**Production readiness gates:** real Docker boundary tests, live model
-integration, immutable image pinning/review, stronger resource/secret controls,
-broader end-to-end evaluations, and an independent security review. This preview
-must not be exposed to a network or used with hostile repositories or secrets.
+<div align="center">
+  <sub>Small name. Serious intelligence.</sub><br />
+  <a href="https://github.com/vortemain/dikdik/releases">Get Dikdik</a> · <a href="https://github.com/vortemain/dikdik/issues">Share feedback</a> · <a href="LICENSE">MIT licensed</a>
+</div>
