@@ -20,6 +20,9 @@ Issues = "https://github.com/vortemain/dikdik/issues"
 [project.scripts]
 dikdik = "dikdik.server:main"
 
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.package-data]
 dikdik = ["web/*", "web/fonts/*", "web/assets/*", "web/assets/files/*", "web/assets/providers/*", "web/assets/brands/*", "browser_runtime/*", "dikdik_index*", "skills/*/SKILL.md"]
 
@@ -28,3 +31,4 @@ dikdik = ["*.pyd", "*.so", "*.dll", "*.dylib"]
 
 [tool.setuptools.packages.find]
 include = ["dikdik", "dikdik.*"]
+namespaces = false

@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   test:
@@ -52,7 +52,7 @@ jobs:
           python-version: '3.13'
       - run: python -m pip install -r scripts/requirements-release.txt
       - run: python -m build --no-isolation
-      - run: python -m twine check --strict dist/*
+      - run: python -m twine check --strict dist/*.whl dist/*.tar.gz
       - name: Validate archives and tag
         env:
           RELEASE_REF: ${{ github.ref }}
@@ -99,7 +99,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx false; then
             echo "Release already exists; preserving its published assets."
             exit 0
           fi

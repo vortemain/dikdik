@@ -45,7 +45,7 @@ python -m venv .venv
 # Activate .venv using your shell's activation command.
 python -m pip install -r scripts/requirements-release.txt
 python -m build --no-isolation
-python -m twine check --strict dist/*
+python -m twine check --strict dist/*.whl dist/*.tar.gz
 python scripts/check_release.py dist --tag v0.1.0
 ```
 

@@ -5,6 +5,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from dikdik import __version__
@@ -74,6 +75,12 @@ class HealthTests(unittest.TestCase):
         status, body = self.call("/api/server-info")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["version"], __version__)
+
+    def test_server_info_does_not_probe_processor_details(self):
+        with patch("dikdik.server.platform.platform", side_effect=AssertionError("Blocking CPU probe")):
+            status, body = self.call("/api/server-info")
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["platform"])
 
     def test_openapi_document(self):
         for path in ("/openapi.json", "/api/openapi"):

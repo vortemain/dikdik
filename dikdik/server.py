@@ -468,7 +468,9 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
             if path == "/server_info" or path == "/api/server-info":
                 now = time.monotonic()
                 self.reply(200, {"version": DIKDIK_VERSION, "python": platform.python_version(),
-                                 "platform": platform.platform(), "workspace": engine.root.name,
+                                 # platform.platform() resolves CPU details via WMI
+                                 # on Windows and can stall this lightweight endpoint.
+                                 "platform": "-".join((platform.system(), platform.release(), platform.machine())), "workspace": engine.root.name,
                                  "rust_indexer": INDEXER, "port": self.server.server_port,
                                  "uptime": round(now - started_at, 3),
                                  "idle_time": round(now - activity["last"], 3),

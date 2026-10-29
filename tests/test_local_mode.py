@@ -59,6 +59,9 @@ class LocalModeTests(unittest.TestCase):
     def idle(self, task, timeout=60):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            # Wait behind the worker instead of repeatedly loading its SQLite
+            # history while it persists large SVG/diff/checkpoint records.
+            self.engine.pool.submit(lambda: None).result(timeout=max(.01, deadline - time.monotonic()))
             state = self.engine.store.get(task)
             if state["state"] in TERMINAL and not self.engine.busy(task):
                 return state
