@@ -285,7 +285,9 @@ class BackgroundShells:
                   "started": time.time()}
         with self._lock:
             self._shells[shell_id] = entry
-        threading.Thread(target=self._drain, args=(shell_id,), daemon=True).start()
+        drain = threading.Thread(target=self._drain, args=(shell_id,), daemon=True)
+        entry["thread"] = drain
+        drain.start()
         return {"id": shell_id, "command": command, "shell": shell_name, "pid": process.pid, "status": "running"}
 
     def _drain(self, shell_id: str):
@@ -363,3 +365,12 @@ class BackgroundShells:
                 entry["process"].wait(timeout=3)
             except subprocess.TimeoutExpired:
                 pass
+        # Join the drain threads so process.stdout is closed and process.wait()
+        # has returned before the caller cleans up the working directory. On
+        # Windows the OS releases the killed process's cwd handle slightly after
+        # wait() returns; joining the drain thread narrows that race with
+        # directory cleanup (test temp dirs, project snapshots).
+        for entry in shells:
+            thread = entry.get("thread")
+            if thread and thread.is_alive():
+                thread.join(timeout=3)
