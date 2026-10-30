@@ -221,6 +221,12 @@ class BashHTTPTests(unittest.TestCase):
         event_id = self.call("GET", prefix + "/events?limit=20")[1]["items"][0]["id"]
         self.assertEqual(self.call("GET", prefix + "/events/" + event_id)[0], 200)
         self.assertEqual(self.call("POST", prefix + f"/commands/{started['id']}/stop", {})[0], 200)
+        # stop() sets the cancel event but returns before the worker pops the
+        # command from _active; wait for it to wind down before clearing.
+        for _ in range(100):
+            if not self.engine.bash.busy(self.task):
+                break
+            time.sleep(.01)
         self.assertEqual(self.call("DELETE", prefix + "/events")[0], 200)
         self.assertEqual(self.call("GET", prefix + "/events")[1]["items"], [])
 

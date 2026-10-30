@@ -274,10 +274,12 @@ class BrowserServiceTests(unittest.TestCase):
                 model = Model()
                 with patch('dikdik.engine.CompatibleAgentModel', return_value=model), patch('dikdik.browser_service.capture', side_effect=captured):
                     task = self.engine.submit({'objective': 'Browse', 'mode': 'agent', 'verification': 'syntax', 'approve_external': True, 'approve_execution': consent, 'approve_browser': consent, 'agent_profile': profile['id']})
-                    for _ in range(300):
+                    for _ in range(600):
                         if not self.engine.busy(task):
                             break
                         time.sleep(.01)
+                if not model.tools:
+                    self.fail("the model was never called before the task ended")
                 self.assertEqual('browse_url' in model.tools[0], allow and consent)
 
 
