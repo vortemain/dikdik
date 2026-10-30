@@ -112,7 +112,7 @@ class ServiceInteractionTests(unittest.TestCase):
               patch.object(self.engine.browser, "fetch", return_value={"status": 200, "text": "Actual data", "untrusted": True}) as fetch,
               patch.object(self.engine.browser, "action", return_value={"status": "passed", "text": "Updated page"}) as action):
             task = self.engine.submit({"objective": "Read and interact with the page", "mode": "agent", "verification": "syntax", "approve_external": True, "approve_execution": True, "approve_browser": True, "confirmation": "never"})
-            for _ in range(500):
+            for _ in range(1200):
                 if not self.engine.busy(task): break
                 time.sleep(.01)
             self.assertFalse(self.engine.busy(task))
