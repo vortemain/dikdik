@@ -235,4 +235,4 @@ Bundled dependencies, fonts, and product marks retain their own terms. Their not
 
 Connect **Nebius Token Factory** under Settings → Models, load the live model directory, and choose an available tool-capable NVIDIA Nemotron model. Connect **Tavily web research** on the same screen and enable web browsing for the task. The agent can then use `web_search` for public documentation and retain source URLs. Keys entered in these forms are not persisted.
 
-See [competition setup, demo and sponsored access](docs/NEBIUS_TAVILY.md).
+See [Nebius and Tavily setup, demo and sponsored access](docs/NEBIUS_TAVILY.md).

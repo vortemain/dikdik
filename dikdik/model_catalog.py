@@ -25,7 +25,7 @@ NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 PROVIDERS = {
     "nebius": {"name": "Nebius Token Factory", "kind": "openai", "base": "https://api.tokenfactory.nebius.com/v1",
                "key_help": "https://tokenfactory.nebius.com/", "blurb": "Open models on Nebius · session-only API key",
-               "models": [], "free_notice": "Choose an NVIDIA Nemotron model from the live catalog for the hackathon. Provider credits and limits apply; hosted inference is not unlimited or automatically free."},
+               "models": [], "free_notice": "Choose an NVIDIA Nemotron model from the live catalog. Provider credits and limits apply; hosted inference is not unlimited or automatically free."},
     "nvidia": {"name": "NVIDIA", "kind": "openai", "base": "https://integrate.api.nvidia.com/v1", "key_help": "https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b",
                "blurb": "Free developer endpoints · NVIDIA API key required", "default_model": NVIDIA_DEFAULT_MODEL, "public_models": True,
                "free_notice": "Nemotron 3.5 Lightning is available as a free prototyping endpoint. NVIDIA account limits and model availability apply.",
