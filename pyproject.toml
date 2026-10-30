@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dikdik"
-version = "0.3.2"
+version = "0.3.3"
 description = "Small name. Serious intelligence. Evidence-first engineering workspace."
 readme = "README.md"
 license = "MIT"
