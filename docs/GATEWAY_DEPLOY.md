@@ -76,3 +76,46 @@ Dokploy's server-side service environment.
   degrees of freedom are finite. Do not describe it as unlimited free access; the keyless
   always-available option remains Ollama or LM Studio. Any future public onboarding
   (account issuance, invitations, multi-replica quota) is out of scope for this pilot.
+
+## Troubleshooting: variables are set but the gateway says they are missing
+
+The process only reads its own environment. If Dokploy knows the variables but the
+container does not, Dokploy's *Container Environment* was not applied to the stack:
+
+1. **Dokploy Application (Docker build type):** set the variables in the
+   application's **Environment** tab and **Redeploy** — variables are injected when
+   the container is created, and redeploys are required after edits.
+2. **Dokploy Docker Compose:** a compose stack does **not** automatically receive
+   the resource environment; declare and interpolate it on the service:
+
+   ```yaml
+   services:
+     gateway:
+       build: { context: ., dockerfile: Dockerfile }   # repository Dockerfile
+       command: python -m dikdik.sponsored_gateway
+       environment:
+         # Values come from Dokploy's resource environment; keep them out of the file.
+         - NEBIUS_API_KEY=${NEBIUS_API_KEY}
+         - NEBIUS_MODEL=${NEBIUS_MODEL}
+         - DIKDIK_GATEWAY_INVITATIONS=${DIKDIK_GATEWAY_INVITATIONS}
+         - DIKDIK_GATEWAY_JUDGE_INVITATIONS=${DIKDIK_GATEWAY_JUDGE_INVITATIONS}
+         - DIKDIK_GATEWAY_USAGE_DB=/data/gateway-usage.sqlite3
+         - DIKDIK_GATEWAY_HOST=0.0.0.0
+         - DIKDIK_GATEWAY_PORT=8788
+       volumes:
+         - gateway-data:/data
+       restart: unless-stopped
+   volumes:
+     gateway-data:
+   ```
+
+3. **Verify inside the container** (names only, never secret contents):
+   ```
+   docker exec -it <gateway-container> python -m dikdik.sponsored_gateway --check-env
+   ```
+   It lists each variable as `set (n chars)` or `MISSING` and exits 1 while the
+   required three are absent. `docker logs` shows the startup traceback with the
+   specific missing variable names.
+4. Check for quoting mistakes: values with spaces must be quoted in the Dokploy
+   form, and a typo such as `dikdik_gateway_invitations` (wrong case) silently
+   reads as missing because every variable name is case-sensitive.

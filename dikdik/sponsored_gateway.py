@@ -57,8 +57,13 @@ class Allowances:
 
 def handler(model, provider_key, invitations, allowances, judge_invitations=(), judge_allowances=None):
     token_hashes = [hashlib.sha256(token.encode()).hexdigest() for token in invitations]
-    if not model or not provider_key or not token_hashes:
-        raise ValueError("Set NEBIUS_MODEL, NEBIUS_API_KEY and DIKDIK_GATEWAY_INVITATIONS")
+    missing = [name for name, value in (("NEBIUS_MODEL", model), ("NEBIUS_API_KEY", provider_key),
+                                        ("DIKDIK_GATEWAY_INVITATIONS", invitations)) if not value]
+    if missing:
+        # Name the actual gaps so a container that did not receive Dokploy's
+        # service environment is diagnosed instead of blamed on one variable.
+        raise ValueError("This gateway process does not see: " + ", ".join(missing)
+                         + ". The variables live in the hosting platform's service/stack environment.")
     judge_hashes = [hashlib.sha256(token.encode()).hexdigest() for token in judge_invitations]
     if judge_hashes and judge_allowances is None:
         raise ValueError("Set DIKDIK_GATEWAY_JUDGE_DAILY and DIKDIK_GATEWAY_JUDGE_GLOBAL_DAILY for judge invitations")
@@ -160,7 +165,41 @@ def parse_invitations(raw, variable):
     return tokens
 
 
-def main():
+ENVIRONMENT_VARIABLES = (
+    "NEBIUS_API_KEY", "NEBIUS_MODEL", "DIKDIK_GATEWAY_INVITATIONS",
+    "DIKDIK_GATEWAY_HOST", "DIKDIK_GATEWAY_PORT", "DIKDIK_GATEWAY_USAGE_DB",
+    "DIKDIK_GATEWAY_USER_DAILY", "DIKDIK_GATEWAY_GLOBAL_DAILY",
+    "DIKDIK_GATEWAY_JUDGE_INVITATIONS", "DIKDIK_GATEWAY_JUDGE_DAILY", "DIKDIK_GATEWAY_JUDGE_GLOBAL_DAILY",
+)
+
+
+def check_environment(emit=None) -> bool:
+    """Report which gateway variables reached this process, without values.
+
+    Run inside the container: python -m dikdik.sponsored_gateway --check-env
+    Never prints secret contents, only whether each variable was received.
+    """
+    emit = emit if emit is not None else print
+    required = set(ENVIRONMENT_VARIABLES[:3])
+    missing = []
+    for name in ENVIRONMENT_VARIABLES:
+        value = os.environ.get(name)
+        if not value:
+            missing.append(name)
+        emit(f"{name}: {'set (' + str(len(value)) + ' chars)' if value else 'MISSING'}")
+    if missing:
+        emit("The gateway cannot start until it receives: " + ", ".join(missing))
+        emit("If they are set in Dokploy but seen missing here, the container did not"
+             " get the service/stack environment (see docs/GATEWAY_DEPLOY.md).")
+    else:
+        emit("The gateway process received every configuration variable.")
+    return not required.intersection(missing)
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "--check-env":
+        raise SystemExit(0 if check_environment() else 1)
     invitations = parse_invitations(os.environ.get("DIKDIK_GATEWAY_INVITATIONS", ""), "DIKDIK_GATEWAY_INVITATIONS")
     judge_invitations = parse_invitations(os.environ.get("DIKDIK_GATEWAY_JUDGE_INVITATIONS", ""), "DIKDIK_GATEWAY_JUDGE_INVITATIONS")
     if judge_invitations and not set(invitations).isdisjoint(judge_invitations):

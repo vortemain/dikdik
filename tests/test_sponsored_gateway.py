@@ -114,6 +114,29 @@ class SponsoredTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "both"):
             handler("nvidia/test-model", "key", [token], users, judge_invitations=[token], judge_allowances=judges)
 
+    def test_missing_configuration_names_which_variables_are_absent(self):
+        path = Path(self.temp.name) / "missing.sqlite3"
+        usage = Allowances(path, "user", per_user=1, global_daily=1)
+        with self.assertRaisesRegex(ValueError, "NEBIUS_MODEL, NEBIUS_API_KEY, DIKDIK_GATEWAY_INVITATIONS"):
+            handler("", "", [], usage)
+        with self.assertRaisesRegex(ValueError, r"^This gateway process does not see: NEBIUS_MODEL\b"):
+            handler("", "provider-key", ["invitation-" + "y" * 32], usage)
+
+    def test_check_env_reports_variables_without_values(self):
+        report: list[str] = []
+        with patch.dict(os.environ, {}, clear=True):
+            received = sponsored_gateway.check_environment(report.append)
+        self.assertFalse(received)
+        text = "\n".join(report)
+        for name in sponsored_gateway.ENVIRONMENT_VARIABLES[:3]:
+            self.assertIn(name + ": MISSING", text)
+        self.assertNotIn("invitation-", text)  # never prints secret contents
+        with patch.dict(os.environ, {"NEBIUS_API_KEY": "provider-key", "NEBIUS_MODEL": "nvidia/test-model",
+                                     "DIKDIK_GATEWAY_INVITATIONS": "invitation-" + "x" * 32}, clear=True):
+            report.clear()
+            self.assertTrue(sponsored_gateway.check_environment(report.append))
+            self.assertIn("NEBIUS_API_KEY: set (12 chars)", "\n".join(report))
+
     def test_bind_host_is_configurable_for_container_deployment(self):
         token = "invitation-" + "x" * 32
         usage = Path(self.temp.name) / "bind.sqlite3"
