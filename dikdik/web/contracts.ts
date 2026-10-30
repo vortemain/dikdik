@@ -545,7 +545,7 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
         return [{ ...base, role: "tool", kind: "agent_tool_call", title: `Tool call: ${name}`, details: typeof args === "object" && args !== null ? args : undefined }];
       }
       if (d.phase === "end") {
-        return [{ ...base, role: "tool", kind: "agent_tool_result", title: `Tool result: ${name}`, body: observationText(name, d.observation), ...(d.failed === true ? { state: "tool_failed" } : {}) }];
+        return [{ ...base, role: "tool", kind: "agent_tool_result", title: `Tool result: ${name}`, body: observationText(name, d.observation), ...(name === "web_search" ? { details: d.observation } : {}), ...(d.failed === true ? { state: "tool_failed" } : {}) }];
       }
       return [];
     }
@@ -867,6 +867,17 @@ export function observationText(tool: string, observation: unknown): string {
   switch (tool) {
     case "read_file": return textOf(strings(o.lines).join("\n"), 8000);
     case "list_files": return textOf(strings(o.files).join("\n"), 8000) || "(no files)";
+    case "web_search": {
+      const results = Array.isArray(o.results) ? o.results.slice(0, 5) : [];
+      const sources = results.flatMap(source => {
+        if (typeof source !== "object" || source === null) return [];
+        const item = source as Record<string, unknown>;
+        const url = textOf(item.url, 2048);
+        if (!/^https?:\/\//i.test(url)) return [];
+        return [`${textOf(item.title, 300)}\n${url}\n${textOf(item.content, 1200)}`];
+      });
+      return sources.length ? `Tavily sources (untrusted web content)\n\n${sources.join("\n\n")}` : "No matching sources.";
+    }
     case "search_text": {
       const hits = Array.isArray(o.matches) ? o.matches : [];
       const lines = hits.map(hit => typeof hit === "object" && hit !== null ? `${String((hit as Record<string, unknown>).path)}:${String((hit as Record<string, unknown>).line)}: ${String((hit as Record<string, unknown>).text)}` : "");
@@ -1044,7 +1055,7 @@ export function deleteProfileUrl(id: string, confirmDefault: boolean): string {
 }
 
 // --- request builders (client-side mirroring of the frozen contract) ------
-const FIXED_API_ENDPOINTS = ["https://api.openai.com/v1", "https://api.anthropic.com/v1", "https://mojave.cloud/v1"];
+const FIXED_API_ENDPOINTS = ["https://api.tokenfactory.nebius.com/v1", "https://api.openai.com/v1", "https://api.anthropic.com/v1", "https://mojave.cloud/v1"];
 const LOOPBACK_ENDPOINT = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/;
 
 export function validateEndpoint(value: string): string {

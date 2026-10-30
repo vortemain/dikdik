@@ -217,6 +217,7 @@ const TOOL_LABELS: Record<string, [string, string, string]> = {
   write_plan: ["pencil", "Wrote the plan", ""],
   read_plan: ["book", "Read the plan", ""],
   browse_url: ["globe", "Opened", "url"],
+  web_search: ["search", "Researched with Tavily", "query"],
 };
 function detailField(details: unknown, key: string): string {
   if (typeof details !== "object" || details === null || !(key in details)) return "";
@@ -571,6 +572,21 @@ function evidenceBlocks(msg: ChatMessage, path = ""): HTMLElement[] {
   if (msg.kind === "agent_tool_call" && toolName(msg) === "browse_url" && detailField(details, "url")) {
     const link = safePageLink(detailField(details, "url"));
     if (link) blocks.push(link);
+    return blocks;
+  }
+  if (msg.kind === "agent_tool_result" && toolName(msg) === "web_search" && typeof details === "object" && details !== null && "results" in details && Array.isArray((details as Record<string, unknown>).results)) {
+    const sources = (details as { results: unknown[] }).results.slice(0, 5);
+    blocks.push(make("p", "muted", "Tavily sources · untrusted web content"));
+    for (const source of sources) {
+      if (typeof source !== "object" || source === null) continue;
+      const item = source as Record<string, unknown>, link = safePageLink(item.url);
+      if (!link) continue;
+      const card = make("article", "provider-detail");
+      card.append(make("strong", "", typeof item.title === "string" ? item.title.slice(0, 300) : "Source"), link,
+        make("p", "", typeof item.content === "string" ? item.content.slice(0, 800) : ""));
+      blocks.push(card);
+    }
+    if (!sources.length) blocks.push(make("p", "muted", "No matching sources."));
     return blocks;
   }
   if (msg.body) {

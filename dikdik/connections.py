@@ -1,7 +1,8 @@
 """Provider connections: one provider + API key that several model profiles share.
 
-The key lives in the encrypted secrets store under `conn.<id>`; this table only
-holds the name, provider and optional endpoint. Keys are never returned.
+New keys live only in process memory under `conn.<id>` for up to eight hours.
+This table holds only connection metadata. Existing encrypted credentials remain
+until replaced or disconnected. Keys are never returned.
 """
 
 import time
@@ -79,7 +80,7 @@ class ConnectionStore:
             if db.execute("SELECT COUNT(*) FROM connections").fetchone()[0] >= MAX_CONNECTIONS:
                 raise ApiError(409, f"Provider connection limit reached ({MAX_CONNECTIONS}). Delete one before adding another")
         if key:
-            self.secrets.set(secret_ref(connection_id), key)  # sealed first: no row ever points at a missing key
+            self.secrets.set_session(secret_ref(connection_id), key)
         with self.store.connect() as db:
             db.execute("INSERT INTO connections(id,name,provider,endpoint,created) VALUES(?,?,?,?,?)",
                        (connection_id, name, body["provider"], endpoint, time.time()))
@@ -101,7 +102,7 @@ class ConnectionStore:
                 raise ApiError(400, "Endpoint must be an http(s) loopback URL or an approved public provider URL")
             changes["endpoint"] = endpoint
         if body.get("api_key"):  # blank keeps the current key
-            self.secrets.set(secret_ref(connection_id), self._key(body["api_key"]))
+            self.secrets.set_session(secret_ref(connection_id), self._key(body["api_key"]))
         with self.store.connect() as db:
             for column, value in changes.items():
                 db.execute(f"UPDATE connections SET {column}=? WHERE id=?", (value, connection_id))

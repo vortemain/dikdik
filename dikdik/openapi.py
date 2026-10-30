@@ -144,6 +144,13 @@ OPENAPI = {
                       "responses": {"200": {"description": "Updated"}}},
             "delete": {"summary": "Delete a webhook", "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
                       "responses": {"200": {"description": "Deleted"}}}},
+        "/api/research": {
+            "get": {"summary": "Tavily connection status (no credentials)", "responses": {"200": {"description": "Session status"}}},
+            "post": {"summary": "Connect Tavily for this process only",
+                     "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                         "type": "object", "required": ["api_key"], "properties": {"api_key": {"type": "string", "writeOnly": True}}}}}},
+                     "responses": {"200": {"description": "Connected"}, "400": {"description": "Invalid key"}}},
+            "delete": {"summary": "Disconnect Tavily", "responses": {"200": {"description": "Disconnected"}}}},
         "/api/agent-info": {"get": {"summary": "Agent tools, skills and hooks", "responses": {"200": {"description": "Agent info"}}}},
         "/api/settings/app": {"get": {"summary": "App settings", "responses": {"200": {"description": "Settings"}}},
                               "patch": {"summary": "Update app settings", "requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}},

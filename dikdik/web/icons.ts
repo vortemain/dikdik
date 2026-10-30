@@ -38,6 +38,7 @@ const PROVIDERS: Record<string, string> = {
 };
 const HOSTS: Record<string, string> = {
   "integrate.api.nvidia.com": "nvidia",
+  "api.tokenfactory.nebius.com": "nebius",
   "openrouter.ai": "openrouter", "api.openai.com": "openai", "api.anthropic.com": "anthropic",
   "generativelanguage.googleapis.com": "google", "api.deepseek.com": "deepseek", "api.x.ai": "xai",
   "api.mistral.ai": "mistral", "api.groq.com": "groq", "api.cerebras.ai": "cerebras",

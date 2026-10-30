@@ -34,14 +34,16 @@ class AssetTests(unittest.TestCase):
 
 
 class CheckTests(unittest.TestCase):
-    def _release(self, tag):
-        return {"tag_name": tag, "name": f"Dikdik {tag}", "body": "release notes",
-                "html_url": "https://example/dikdik/" + tag, "assets": [
-                    {"name": updater.platform_asset_name(tag), "browser_download_url": "https://asset", "size": 2},
-                    {"name": "SHA256SUMS.txt", "browser_download_url": "https://checksums"}]}
+    def _release(self, tag, **fields):
+        release = {"tag_name": tag, "name": f"Dikdik {tag}", "body": "release notes",
+                   "html_url": "https://example/dikdik/" + tag, "assets": [
+                        {"name": updater.platform_asset_name(tag), "browser_download_url": "https://asset", "size": 2},
+                        {"name": "SHA256SUMS.txt", "browser_download_url": "https://checksums"}]}
+        release.update(fields)
+        return release
 
     def test_check_reports_available_when_newer_with_asset(self):
-        with patch.object(updater, "__version__", "0.2.0"), patch.object(updater, "fetch_release", return_value=self._release("v0.9.9")):
+        with patch.object(updater, "__version__", "0.2.0"), patch.object(updater, "fetch_releases", return_value=[self._release("v0.9.9")]):
             info = updater.check()
         self.assertTrue(info["available"])
         self.assertEqual(info["latest"], "v0.9.9")
@@ -51,8 +53,22 @@ class CheckTests(unittest.TestCase):
 
     def test_check_not_available_for_same_version(self):
         tag = "v" + updater.__version__
-        with patch.object(updater, "fetch_release", return_value=self._release(tag)):
+        with patch.object(updater, "fetch_releases", return_value=[self._release(tag)]):
             self.assertFalse(updater.check()["available"])
+
+    def test_latest_release_selects_newest_published_prerelease_for_platform(self):
+        # GitHub hides flagged prereleases from /releases/latest; 0.x publishes
+        # every build that way, so the updater must pick from the release list.
+        newest = self._release("v0.3.1", prerelease=True, published_at="2026-10-30T23:10:00Z")
+        drafts = [self._release("v0.4.0", draft=True), self._release("v0.3.2", draft=True, prerelease=True)]
+        missing_installer = self._release("v0.3.2"); missing_installer["assets"] = [{"name": "SHA256SUMS.txt"}]
+        ordered = [newest, missing_installer, *drafts, self._release("v0.2.0", prerelease=True, published_at="2026-10-29T16:28:05Z")]
+        self.assertIs(updater.latest_release(ordered), newest)
+        # A draft with a higher number is invisible: selection falls to v0.2.0.
+        older = self._release("v0.2.0", prerelease=True)
+        self.assertIs(updater.latest_release([drafts[0], older]), older)
+        with self.assertRaisesRegex(RuntimeError, "No published Dikdik release"):
+            updater.latest_release([missing_installer, *drafts])
 
 
 class ApplyTests(unittest.TestCase):
@@ -65,7 +81,7 @@ class ApplyTests(unittest.TestCase):
             dest.write_bytes(b"installer-bytes")
 
         with patch.object(updater, "__version__", "0.2.0"), \
-                patch.object(updater, "fetch_release", return_value=release), \
+                patch.object(updater, "fetch_releases", return_value=[release]), \
                 patch.object(updater, "_download", side_effect=fake_download), \
                 patch.object(updater, "install") as install, \
                 patch.object(updater, "_schedule_relaunch") as relaunch:

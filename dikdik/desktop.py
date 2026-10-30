@@ -5,6 +5,7 @@ functions are exposed to page JavaScript, and pywebview is imported only when
 desktop mode is explicitly requested.
 """
 
+import functools
 import importlib
 import io
 from pathlib import Path
@@ -26,6 +27,41 @@ def load_webview():
         ) from exc
 
 
+def _enable_native_context_menus(edgechromium=None) -> None:
+    """Keep the browser right-click menu available in non-debug desktop mode.
+
+    pywebview 6 enables WebView2's default context menus (copy, paste, select)
+    only when debug=True, so copy/paste by right-click is silently unavailable
+    in release builds. Wrap the EdgeChromium hook so the menus are normally
+    available while debug-only extras (devtools, F12, status bar) stay off.
+    A missing or renamed upstream hook is harmless; newer releases may fix it.
+    """
+    if edgechromium is None:
+        if sys.platform != "win32":
+            return
+        try:
+            from webview.platforms import edgechromium
+        except Exception:
+            return
+    try:
+        original = edgechromium.BrowserView.on_webview_ready
+        if getattr(original, "_dikdik_context_menus", False):
+            return
+    except Exception:
+        return
+
+    @functools.wraps(original)
+    def on_webview_ready(view, sender, args):
+        original(view, sender, args)
+        try:
+            sender.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
+        except Exception:
+            pass  # The menu is an improvement; a newer pywebview owns its own behavior.
+
+    on_webview_ready._dikdik_context_menus = True
+    edgechromium.BrowserView.on_webview_ready = on_webview_ready
+
+
 def run(server, link: str, data: Path, webview=None) -> None:
     """Run the native GUI on the main thread; stop its server when it exits.
 
@@ -36,6 +72,7 @@ def run(server, link: str, data: Path, webview=None) -> None:
     if target.scheme != "http" or target.hostname != "127.0.0.1" or target.port != server.server_port:
         raise ValueError("The desktop window requires its own local Dikdik server")
     webview = webview or load_webview()
+    _enable_native_context_menus()
     # All outbound links in the application use target=_blank. Keep them in the
     # system browser, including provider sign-in, without enabling a Python API.
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True

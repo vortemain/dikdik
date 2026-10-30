@@ -1,0 +1,78 @@
+# Sponsored gateway deployment (Dokploy)
+
+Operator runbook for `dikdik.sponsored_gateway` — the invite-only sponsored inference
+service described in [NEBIUS_TAVILY.md](NEBIUS_TAVILY.md). This deploys **one gateway
+instance** as a second service on the same Dokploy server that hosts the
+[dikdik release hub](https://dikdik.vorte.dev). The website itself stays
+secret-free: it links only to the public gateway URL. All credentials live in
+Dokploy's server-side service environment.
+
+## Deployment steps
+
+1. **Nebius account.** Create a funded Token Factory service account key, note the
+   exact model ID of a Nemotron function-tools model from *your* account's catalog,
+   and set a spending cap on the account.
+2. **Invitations.** Generate one token per user, and one per judge, in an
+   administrator terminal:
+   ```
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+   Keep them out of chat, tickets and screenshots; deliver each user theirs privately
+   and judges theirs through the hackathon's private judging channels.
+3. **Storage directory** (on the Dokploy host) for the usage counters:
+   ```
+   mkdir -p /srv/dikdik-gateway-data && sudo chown 10001:10001 /srv/dikdik-gateway-data
+   ```
+4. **Dokploy service.** Type **Docker**, repository `vortemain/dikdik`, build from the
+   committed `Dockerfile`, **command**:
+   ```
+   python -m dikdik.sponsored_gateway
+   ```
+   Expose port **8788**. Bind-mount the storage directory from step 3 to `/data`.
+5. **Environment variables** (service env, never committed):
+
+   | Variable | Value for the container |
+   | --- | --- |
+   | `NEBIUS_API_KEY` | Your funded service key |
+   | `NEBIUS_MODEL` | Exact model ID from your account's catalog |
+   | `DIKDIK_GATEWAY_INVITATIONS` | Comma-separated public invitation tokens |
+   | `DIKDIK_GATEWAY_JUDGE_INVITATIONS` | Comma-separated judge invitation tokens |
+   | `DIKDIK_GATEWAY_JUDGE_DAILY` | Requests per judge per UTC day (default 150) |
+   | `DIKDIK_GATEWAY_JUDGE_GLOBAL_DAILY` | Judge requests per UTC day (default 600) |
+   | `DIKDIK_GATEWAY_USAGE_DB` | `/data/gateway-usage.sqlite3` (persists counters across restarts) |
+   | `DIKDIK_GATEWAY_HOST` | `0.0.0.0` inside the container — HTTPS terminates at Dokploy's reverse proxy; leave unset for a plain 127.0.0.1 host deployment |
+   | `DIKDIK_GATEWAY_PORT` | `8788` |
+
+   `NEBIUS_API_KEY` never enters the image, the repository, or any client bundle.
+6. **Domain.** Attach a subdomain (for example `gw.vorte.dev`) to the service so
+   Dokploy terminates HTTPS in front of it. Public users get only
+   `https://gw.vorte.dev/v1`; they authenticate with their own invitation as the
+   session key (Custom provider, per
+   [NEBIUS_TAVILY.md](NEBIUS_TAVILY.md)).
+   Judge accesses are free of charge through the judging period and never consume the
+   public allowance.
+7. **Verify** from outside (positive and negative paths):
+   ```
+   curl -sS https://gw.vorte.dev/healthz
+   curl -sS -H "Authorization: Bearer <a-user-invitation>" https://gw.vorte.dev/v1/models
+   curl -sS https://gw.vorte.dev/v1/models      # expect 401
+   ```
+   Do not paste a real invitation into any shared log or ticket.
+
+## Operating notes
+
+- Invocation tokens: judge tokens use a separate allowance pool in the same SQLite
+  file; judge usage never consumes the public 300/day budget. Judge-only demo days
+  that exceed the defaults can be covered by raising the two judge variables in the
+  service environment — that costs money, so it should be deliberate and small.
+- Nebius failures also consume an allowance (requests, not dollars). Keep a second
+  funded connection documented for users whose allowance is exhausted; there is no
+  automatic switch to any user's billable personal key.
+- Apply connection/rate limits at the reverse proxy and a spending cap at Nebius;
+  both are the real budget controls. Restarting the service preserves counters via
+  the mounted SQLite file; deleting it resets everyone's day counters.
+- The service logs no prompts and persists only invitation hashes and daily counts.
+- The gateway is **not** deployed or funded by installing Dikdik, and allowance
+  degrees of freedom are finite. Do not describe it as unlimited free access; the keyless
+  always-available option remains Ollama or LM Studio. Any future public onboarding
+  (account issuance, invitations, multi-replica quota) is out of scope for this pilot.

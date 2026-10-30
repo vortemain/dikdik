@@ -75,7 +75,7 @@ ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
 REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 MAX_ENV = 10
 OAUTH_PREFIX = "mcpauth."  # sealed OAuth tokens, one per server; never listed under API keys
-MANAGED = ("conn.", OAUTH_PREFIX)  # keys other settings own; a server cannot borrow them
+MANAGED = ("conn.", "research.", OAUTH_PREFIX)  # keys other settings own; a server cannot borrow them
 EDITABLE = {"name", "transport", "url", "command", "secret_ref", "env_var", "env", "auth", "enabled"}
 
 

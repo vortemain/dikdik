@@ -90,6 +90,36 @@ class DesktopTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r"\.\[desktop\]"):
                 desktop.load_webview()
 
+    def test_right_click_context_menu_enabled_outside_debug_mode(self):
+        class Settings:
+            AreDefaultContextMenusEnabled = False
+
+        settings = Settings()
+        core = SimpleNamespace(Settings=settings)
+        native = SimpleNamespace(CoreWebView2=core)
+        ready = []
+        class BrowserView:
+            def on_webview_ready(self, sender, args):
+                ready.append(sender)
+
+        stub = SimpleNamespace(BrowserView=BrowserView)
+        desktop._enable_native_context_menus(stub)
+        BrowserView().on_webview_ready(native, None)
+        self.assertEqual(ready, [native])
+        self.assertTrue(settings.AreDefaultContextMenusEnabled)
+        # A broken native attribute does not break window readiness.
+        settings.AreDefaultContextMenusEnabled = False
+        native.CoreWebView2 = SimpleNamespace(Settings=SimpleNamespace())
+        BrowserView().on_webview_ready(native, None)
+        self.assertEqual(ready.count(native), 2)
+        # Idempotent: wrapping twice does not stack calls.
+        desktop._enable_native_context_menus(stub)
+        self.assertEqual(len(ready), 2)
+
+    def test_context_menus_hook_absent_renderer_is_harmless(self):
+        renderer = SimpleNamespace(settings={}, create_window=MagicMock())
+        self.assertIsNone(desktop._enable_native_context_menus(renderer))
+
     def test_conflicting_launch_modes_are_refused_before_engine_init(self):
         with patch("sys.argv", ["dikdik", "--desktop", "--no-browser"]), patch("sys.stderr", io.StringIO()), patch("dikdik.server.Engine") as engine:
             with self.assertRaises(SystemExit) as exit:

@@ -28,6 +28,7 @@ from .profiles import ApiError, ProfileStore
 from .providers import chat_completion
 from .routing import STRATEGIES, RouterStore
 from .secrets_store import SecretsError, SecretsStore
+from . import research
 from .skills import SkillIndex
 from .plugins import fill_prompt
 from .skills_market import InstallConflict, SkillStore
@@ -35,9 +36,9 @@ from .webhooks import WebhookStore
 from .backends import BackendStore as _BackendStore
 from .acp_agents import AcpAgentStore as _AcpAgentStore
 
-ROUTE_PREFIXES = ("/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts",
+ROUTE_PREFIXES = ("/api/research", "/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts",
                   "/api/connections", "/api/routers", "/api/model-catalog", "/api/plugins", "/api/webhooks", "/api/backends", "/api/acp-agents")
-MANAGED_PREFIX = ("conn.", OAUTH_PREFIX)  # provider connection keys and MCP sign-ins; managed there, hidden from API keys
+MANAGED_PREFIX = ("conn.", "research.", OAUTH_PREFIX)  # provider connection keys and MCP sign-ins; managed there, hidden from API keys
 
 
 def build_routes(engine_or_stores):
@@ -97,6 +98,22 @@ def build_routes(engine_or_stores):
         except (KeyError, IndexError, TypeError, AttributeError):
             raise ValueError("The provider answered, but not in the chat-completions format") from None
         return {"ok": True, "model": config.model, "seconds": round(time.monotonic() - started, 2), "reply": reply}
+
+    def research_routes(method, parts, body, query):
+        if len(parts) != 2:
+            return None
+        if method == "GET":
+            return 200, {"configured": research.configured(secrets), "session_only": True}
+        if method == "POST":
+            secrets.set_session(research.KEY_REF, ConnectionStore._key(body.get("api_key")))
+            return 200, {"configured": True, "session_only": True}
+        if method == "DELETE":
+            try:
+                secrets.delete(research.KEY_REF)
+            except KeyError:
+                pass
+            return 200, {"configured": False}
+        return None
 
     def connection_routes(method, parts, body, query):
         if method == "GET" and len(parts) == 2:
@@ -187,6 +204,13 @@ def build_routes(engine_or_stores):
         except KeyError:
             return 404, {"error": "Unknown provider"}
         current = catalog(stores.store, connections.list())["providers"][info["id"]]
+        if method == "POST" and parts[3] == "disconnect":
+            if current["connection"]:
+                try:
+                    secrets.delete(connection_ref(current["connection"]))
+                except KeyError:
+                    pass
+            return 200, {"disconnected": True}
         if method == "POST" and parts[3] == "connect":
             connect(info["id"], body)
             return 200, catalog(stores.store, connections.list())["providers"][info["id"]]
@@ -506,6 +530,7 @@ def build_routes(engine_or_stores):
                         db.execute("UPDATE agent_profiles SET secret_refs=? WHERE id=?", (json.dumps([new if r == old else r for r in refs]), row["id"]))
 
     TABLE = {
+        "/api/research": research_routes,
         "/api/connections": connection_routes,
         "/api/routers": router_routes,
         "/api/model-catalog": catalog_routes,

@@ -13,3 +13,6 @@ upstream/
 .env
 .env.*
 !.env.example
+
+.codex-test-tmp/
+gateway-usage.sqlite3*

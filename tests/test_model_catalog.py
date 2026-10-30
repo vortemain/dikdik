@@ -59,8 +59,8 @@ class CatalogTests(unittest.TestCase):
     def test_nvidia_default_setup_requires_key_then_selects_connected_profile(self):
         from dikdik.model_catalog import NVIDIA_DEFAULT_MODEL
         catalog = self.call("GET", "/api/model-catalog")[1]
-        self.assertEqual((catalog["default_provider"], catalog["default_model"]), ("nvidia", NVIDIA_DEFAULT_MODEL))
-        self.assertEqual(catalog["order"][0], "nvidia")
+        self.assertEqual((catalog["default_provider"], catalog["default_model"]), ("nebius", None))
+        self.assertEqual(catalog["order"][0], "nebius")
         self.assertTrue(catalog["providers"]["nvidia"]["public_models"])
         with patch("dikdik.server_routes.discover_models", return_value={"models": [], "complete": True}) as directory:
             self.assertEqual(self.call("GET", "/api/model-catalog/nvidia/models")[0], 200)

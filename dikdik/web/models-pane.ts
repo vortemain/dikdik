@@ -129,7 +129,7 @@ export function modelsPane(root: HTMLElement, deps: PaneDeps): () => Promise<voi
     const form = make("form", "skill-form");
     const grid = make("div", "skill-fields");
     const name = labelled(grid, "Name", input(current?.name ?? "", "Work Anthropic account"), "conn-name") as HTMLInputElement;
-    const provider = labelled(grid, "Provider", choice(PROVIDERS.map(p => [p, catalog.providers[p]?.name ?? p]), current?.provider ?? catalog.default_provider), "conn-provider") as HTMLSelectElement;
+    const provider = labelled(grid, "Provider", choice(PROVIDERS.map(p => [p, catalog.providers[p]?.name ?? p]), current?.provider ?? "openai"), "conn-provider") as HTMLSelectElement;
     provider.disabled = current !== null;
     const key = labelled(grid, "API key", input("", current ? "Leave blank to keep the current key" : "Paste the key", "password"), "conn-key") as HTMLInputElement;
     const endpoint = labelled(grid, "Endpoint", input(current?.endpoint ?? "", "Optional: a local server, e.g. http://127.0.0.1:8080/v1"), "conn-endpoint") as HTMLInputElement;
@@ -149,8 +149,9 @@ export function modelsPane(root: HTMLElement, deps: PaneDeps): () => Promise<voi
       const body = current
         ? { name: name.value, endpoint: endpoint.value.trim() || null, ...(key.value ? { api_key: key.value } : {}) }
         : { name: name.value, provider: provider.value, api_key: key.value, endpoint: endpoint.value.trim() || null };
+      const rotated = !!key.value; key.value = "";
       void act(async () => { await request(current ? `/api/connections/${current.id}` : "/api/connections", current ? "PATCH" : "POST", body); editingConnection = null; },
-        current ? (key.value ? "Connection saved and key rotated." : "Connection saved.") : `Connection “${name.value.trim()}” created.`);
+        current ? (rotated ? "Connection saved and key rotated." : "Connection saved.") : `Connection “${name.value.trim()}” created.`);
     };
     setTimeout(() => name.focus(), 0);
     return form;
@@ -184,7 +185,7 @@ export function modelsPane(root: HTMLElement, deps: PaneDeps): () => Promise<voi
     return form;
   }
   function connectionsBlock(): HTMLElement {
-    const box = section("Provider connections", "Share one API key across several model profiles. Keys are encrypted on this machine and never shown again.",
+    const box = section("Provider connections", "Share one API key across several model profiles. New keys stay in memory for up to 8 hours. Reconnect after restarting; keys are never shown again.",
       button("Add connection", "small", () => { editingConnection = "new"; render(); }));
     if (editingConnection === "new") box.append(connectionForm(null));
     const list = make("ul", "m4-list");
@@ -215,7 +216,7 @@ export function modelsPane(root: HTMLElement, deps: PaneDeps): () => Promise<voi
   function profileForm(current: ModelProfile | null): HTMLElement {
     const form = make("form", "skill-form");
     const grid = make("div", "skill-fields");
-    const provider = choice(PROVIDERS.map(p => [p, catalog.providers[p]?.name ?? p]), current?.provider ?? catalog.default_provider);
+    const provider = choice(PROVIDERS.map(p => [p, catalog.providers[p]?.name ?? p]), current?.provider ?? "openai");
     const firstModel = () => catalog.providers[provider.value]?.models[0] ?? "";
     const name = labelled(grid, "Name", input(current?.name ?? "", "Letters, digits, . _ - (up to 64)"), "prof-name") as HTMLInputElement;
     labelled(grid, "Provider", provider, "prof-provider");

@@ -23,6 +23,9 @@ from .model_discovery import discover_models
 # kind: the stored profile/connection provider type (how requests authenticate).
 NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 PROVIDERS = {
+    "nebius": {"name": "Nebius Token Factory", "kind": "openai", "base": "https://api.tokenfactory.nebius.com/v1",
+               "key_help": "https://tokenfactory.nebius.com/", "blurb": "Open models on Nebius · session-only API key",
+               "models": [], "free_notice": "Choose an NVIDIA Nemotron model from the live catalog for the hackathon. Provider credits and limits apply; hosted inference is not unlimited or automatically free."},
     "nvidia": {"name": "NVIDIA", "kind": "openai", "base": "https://integrate.api.nvidia.com/v1", "key_help": "https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b",
                "blurb": "Free developer endpoints · NVIDIA API key required", "default_model": NVIDIA_DEFAULT_MODEL, "public_models": True,
                "free_notice": "Nemotron 3.5 Lightning is available as a free prototyping endpoint. NVIDIA account limits and model availability apply.",
@@ -70,7 +73,7 @@ PROVIDERS = {
     "azure": {"name": "Azure OpenAI", "kind": "azure", "base": "", "key_help": "https://portal.azure.com",
               "blurb": "Your Azure OpenAI deployment (needs its endpoint)", "models": []},
 }
-DEFAULT_PROVIDER = "nvidia"
+DEFAULT_PROVIDER = "nebius"
 CUSTOM_SCHEMA = "CREATE TABLE IF NOT EXISTS custom_providers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, base TEXT NOT NULL, created REAL NOT NULL)"
 LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
@@ -149,7 +152,7 @@ def catalog(store=None, connections: list[dict] | None = None) -> dict:
             match = next((c for c in connections or [] if c["provider"] == "azure"), None)
         providers.append({**entry, "connection": match and match["id"],
                           "connection_name": match and match["name"], "key_set": bool(match and match.get("key_set"))})
-    return {"default_provider": DEFAULT_PROVIDER, "default_model": NVIDIA_DEFAULT_MODEL, "providers": {p["id"]: p for p in providers}, "order": [p["id"] for p in providers]}
+    return {"default_provider": DEFAULT_PROVIDER, "default_model": PROVIDERS[DEFAULT_PROVIDER].get("default_model"), "providers": {p["id"]: p for p in providers}, "order": [p["id"] for p in providers]}
 
 
 def live_models(info: dict, key: str | None, timeout: float = 15) -> list[dict]:

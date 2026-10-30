@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 from dikdik.agent import ModelResponse, ToolCall, run_agent
 from dikdik.engine import Engine, TERMINAL
-from dikdik.mcp import McpError, McpSession, McpStore, StdioClient, HttpClient, test_server, tool_name
+from dikdik.mcp import McpError, McpSession, McpStore, StdioClient, HttpClient, tool_name
+from dikdik import mcp
 
 SERVER = Path(__file__).parent / "fixtures" / "mcp_echo_server.py"
 COMMAND = f'"{sys.executable}" "{SERVER}"'
@@ -99,7 +100,7 @@ class ClientTests(unittest.TestCase):
             session.close()
 
     def test_test_button_reports_server_and_tools(self):
-        info = test_server({"name": "echo", "transport": "stdio", "command": COMMAND}, lambda ref: b"")
+        info = mcp.test_server({"name": "echo", "transport": "stdio", "command": COMMAND}, lambda ref: b"")
         self.assertEqual((info["server"], [t["name"] for t in info["tools"]]), ("echo", ["echo", "add", "whoami"]))
 
     def test_unreachable_servers_are_reported_not_fatal(self):

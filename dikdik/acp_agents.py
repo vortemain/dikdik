@@ -61,6 +61,8 @@ def credential_pairs(entries) -> list[tuple[str, str]]:
         env, ref = env.strip(), (ref or env).strip()
         if not ENV_NAME.fullmatch(env) or not SECRET_REF.fullmatch(ref):
             raise ValueError("Each credential must be ENV_NAME or ENV_NAME=saved-key-name")
+        if ref.startswith(("conn.", "research.")):
+            raise ValueError("Provider and research credentials cannot be exported to external agents")
         pairs.append((env, ref))
     return pairs
 

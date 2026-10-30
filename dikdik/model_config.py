@@ -58,6 +58,11 @@ def from_environment() -> ModelConfig:
     endpoint = os.environ.get("DIKDIK_MODEL_URL", "")
     model = os.environ.get("DIKDIK_MODEL", "")
     key = os.environ.get("DIKDIK_API_KEY", "")
+    nebius_key = os.environ.get("NEBIUS_API_KEY")
+    nebius_model = os.environ.get("NEBIUS_MODEL")
+    if not any((endpoint, model, key)) and nebius_key and nebius_model:
+        return ModelConfig("https://api.tokenfactory.nebius.com/v1/chat/completions", nebius_model, nebius_key, "bearer", PROFILE_TIMEOUT,
+                           {"source": "environment", "model": nebius_model, "host": "api.tokenfactory.nebius.com", "provider_name": "Nebius Token Factory"})
     nvidia_key = os.environ.get("NVIDIA_API_KEY") or os.environ.get("NVIDIA_NIM_API_KEY")
     if not any((endpoint, model, key)) and nvidia_key:
         return ModelConfig("https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_DEFAULT_MODEL, nvidia_key, "bearer", PROFILE_TIMEOUT,
@@ -131,7 +136,7 @@ class ModelResolver:
             info = self._public(profile, self._base(profile))
             ref = profile["credential_secret_ref"]
             if ref and ref not in {item["ref"] for item in self.secrets.list()} and not profile.get("_key_optional"):
-                return {"configured": False, **info, "problem": f"API key “{ref}” is not stored. Add it under Settings → API keys"}
+                return {"configured": False, **info, "problem": f"API key “{ref}” is not stored or its session expired. " + ("Reconnect the provider in Settings → Models" if profile.get("connection_id") else "Add it under Settings → API keys")}
             if not ref and profile["provider"] != "local":
                 return {"configured": False, **info, "problem": f"Model profile “{profile['name']}” has no API key. Add one under Settings → API keys and select it on the profile"}
             return {"configured": True, **info}
@@ -152,7 +157,7 @@ class ModelResolver:
                 if profile.get("_key_optional"):
                     key, auth = "", "none"
                 else:
-                    raise ValueError(f"API key “{ref}” for model profile “{profile['name']}” is not stored. Add it under Settings → API keys") from None
+                    raise ValueError(f"API key “{ref}” for model profile “{profile['name']}” is not stored or its session expired. " + ("Reconnect the provider in Settings → Models" if profile.get("connection_id") else "Add it under Settings → API keys")) from None
             except UnicodeDecodeError:
                 raise ValueError(f"API key “{ref}” is not valid text") from None
         elif profile["provider"] == "local":

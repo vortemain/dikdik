@@ -137,7 +137,7 @@ Plugins can bundle skills, hook rules, agent definitions, and MCP configuration.
 
 ## Models and connections
 
-Connections hold credentials; profiles select a model and its settings. You can reuse a connection across profiles and select a different profile for each conversation.
+New provider connection keys stay in process memory for up to eight hours and are cleared on shutdown; reconnect after restarting. Profiles save model settings only. Existing encrypted credentials are removed when replaced or disconnected. You can reuse a connection across profiles and select a different profile for each conversation.
 
 - **Hosted providers:** configure a supported provider or a custom OpenAI-compatible endpoint.
 - **Local models:** connect a local compatible server and choose a tool-capable model for agent work.
@@ -156,7 +156,7 @@ When no saved profile is configured, these server-side variables provide a fallb
 | `DIKDIK_MODEL` | Provider model ID. Agent work requires function-tool support. |
 | `DIKDIK_API_KEY` | Provider credential, when required by the endpoint. |
 
-Set credentials in your environment or the application's encrypted key store. Keep them out of source files and committed configuration.
+Use the session-only provider connection form, or supply server credentials through the environment. Keep them out of source files and committed configuration.
 
 </details>
 
@@ -230,3 +230,9 @@ Bundled dependencies, fonts, and product marks retain their own terms. Their not
   <sub>Small name. Serious intelligence.</sub><br />
   <a href="https://github.com/vortemain/dikdik/releases">Get Dikdik</a> · <a href="https://github.com/vortemain/dikdik/issues">Share feedback</a> · <a href="LICENSE">MIT licensed</a>
 </div>
+
+### Nebius and Tavily
+
+Connect **Nebius Token Factory** under Settings → Models, load the live model directory, and choose an available tool-capable NVIDIA Nemotron model. Connect **Tavily web research** on the same screen and enable web browsing for the task. The agent can then use `web_search` for public documentation and retain source URLs. Keys entered in these forms are not persisted.
+
+See [competition setup, demo and sponsored access](docs/NEBIUS_TAVILY.md).

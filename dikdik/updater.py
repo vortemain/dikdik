@@ -1,6 +1,8 @@
 """Best-effort desktop self-updater against published GitHub releases.
 
-Checks the latest non-prerelease GitHub release for the running platform,
+Checks the newest published GitHub release for the running platform, preferring
+the highest version among non-draft releases (the project publishes 0.x preview
+tags with the GitHub prerelease flag, which the /releases/latest lookup hides),
 downloads the matching installer, verifies it against the release SHA256SUMS.txt,
 runs it, and relaunches Dikdik from its installed location. Network access is
 read-only HTTPS to api.github.com and the release asset host. No repository
@@ -28,7 +30,7 @@ from typing import Callable
 from . import __version__
 
 REPO = "vortemain/dikdik"
-API = f"https://api.github.com/repos/{REPO}/releases/latest"
+API = f"https://api.github.com/repos/{REPO}/releases?per_page=20"
 TIMEOUT = 20
 
 
@@ -75,16 +77,40 @@ def pick_asset(assets: list[dict], tag: str) -> dict | None:
     return None
 
 
-def fetch_release(timeout: int = TIMEOUT) -> dict:
+def fetch_releases(timeout: int = TIMEOUT) -> list[dict]:
     req = urllib.request.Request(API, headers={"User-Agent": "dikdik-updater", "Accept": "application/vnd.github+json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         if getattr(resp, "status", 200) != 200:
             raise RuntimeError(f"GitHub returned status {resp.status}")
-        return json.loads(resp.read().decode("utf-8"))
+        releases = json.loads(resp.read().decode("utf-8"))
+    if not isinstance(releases, list):
+        raise RuntimeError("GitHub returned an unexpected release list")
+    return releases
+
+
+def latest_release(releases: list[dict]) -> dict:
+    """The newest non-draft release that carries this platform's installer.
+
+    Published means visible and not a draft; a GitHub prerelease flag is fine,
+    because this project marks its 0.x preview builds as prereleases. Ordering
+    is by version number, then publication time.
+    """
+    candidates: list[tuple[tuple[int, ...], str, dict]] = []
+    for release in releases:
+        if release.get("draft"):
+            continue
+        tag = release.get("tag_name") or ""
+        if not tag or not pick_asset(release.get("assets") or [], tag):
+            continue
+        candidates.append((parse_version(tag), release.get("published_at") or "", release))
+    if not candidates:
+        raise RuntimeError("No published Dikdik release carries an installer for this platform")
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[-1][2]
 
 
 def check() -> dict:
-    release = fetch_release()
+    release = latest_release(fetch_releases())
     tag = release.get("tag_name") or ""
     assets = release.get("assets") or []
     asset = pick_asset(assets, tag)

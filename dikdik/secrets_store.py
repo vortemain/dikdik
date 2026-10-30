@@ -30,6 +30,7 @@ import os
 import re
 import time
 from pathlib import Path
+from . import session_credentials
 
 MAGIC = "dikdik-secrets"
 ALG = "dikdik-enc-mac-v1"
@@ -216,6 +217,7 @@ class SecretsStore:
                 record["env"] = old["env"]
         records[ref] = record
         self._save(document)  # atomic replace
+        session_credentials.remove(self.path, ref)
         return record["set_at"]
 
     def restore_previous(self, ref: str):
@@ -287,23 +289,43 @@ class SecretsStore:
 
     def delete(self, ref: str):
         self._validate_ref(ref)
+        removed = session_credentials.remove(self.path, ref)
         document = self._document() if self.path.exists() else None
         if document is None or ref not in document["records"]:
+            if removed:
+                return
             raise KeyError(ref)
         del document["records"][ref]
         self._save(document)
 
     def list(self):
+        transient = [dict(ref=ref, set_at=None, env="", previous_set_at=None, session_only=True)
+                     for ref in session_credentials.entries(self.path)]
         if not self.path.exists():
-            return []
+            return transient
         document = self._document()
         self._key(document)  # availability check only; values stay sealed
         return [dict(ref=r["ref"], set_at=r["set_at"], env=r.get("env") or "", previous_set_at=(r.get("previous") or {}).get("set_at"))
-                for r in sorted(document["records"].values(), key=lambda r: r["ref"])]
+                for r in sorted(document["records"].values(), key=lambda r: r["ref"])
+                if r["ref"] not in {item["ref"] for item in transient}] + transient
+
+    def set_session(self, ref: str, plaintext: bytes):
+        """Replace any saved credential with a process-only credential."""
+        self._validate_ref(ref)
+        if not isinstance(plaintext, bytes) or not plaintext or len(plaintext) > MAX_VALUE:
+            raise ValueError("Secret value must be non-empty bytes, at most 64KB")
+        try:
+            self.delete(ref)
+        except KeyError:
+            pass
+        session_credentials.put(self.path, ref, plaintext)
 
     def reveal(self, ref: str) -> bytes:
         """Decrypt one value for an in-process provider call. Never route this."""
         self._validate_ref(ref)
+        transient = session_credentials.entries(self.path)
+        if ref in transient:
+            return transient[ref]
         if not self.path.exists():
             raise KeyError(ref)
         document = self._document()
