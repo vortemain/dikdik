@@ -63,6 +63,19 @@ class PlanningTests(unittest.TestCase):
         self.assertFalse(data['result']['tests_verified'])
         self.assertEqual(self.engine.store.get(plan['task_id'])['state'], 'draft')
 
+    def test_project_plan_list_maps_each_plan_to_its_conversation(self):
+        child, _, _ = self.plan()
+        plan = self.engine.planning.get(child)
+        status, body = self.engine.planning.route('GET', '/api/plans', {})
+        self.assertEqual(status, 200)
+        [row] = body['plans']
+        self.assertEqual((row['task_id'], row['planner_id'], row['content'], row['revision'], row['built_revision']),
+                         (plan['task_id'], child, PLAN, 1, 0))
+        self.assertEqual(row['objective'], REQUEST['objective'])
+        self.assertEqual((row['task_state'], row['planner_state']), ('draft', 'completed'))
+        self.engine.store.update_meta(plan['task_id'], {'archived': True})
+        self.assertEqual(self.engine.planning.route('GET', '/api/plans', {})[1], {'plans': []})
+
     def test_planner_rejects_write_execution_and_permission_escalation(self):
         for delta in [{'approve_external': False}, {'verification': 'docker', 'approve_execution': True}, {'approve_execution': True}, {'approve_browser': True}]:
             with self.subTest(delta=delta), self.assertRaises(ValueError):

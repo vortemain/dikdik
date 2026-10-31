@@ -241,7 +241,7 @@ class ResumeCheckTests(unittest.TestCase):
         execute.assert_not_called()
         self.assertEqual((self.root / "app.ts").read_text(), "// external user edit\n")
         self.assertFalse(done["result"]["tests_verified"])
-        self.assertIn("app.ts", done["result"]["conflicts"])
+        self.assertIn("app.ts", done["result"]["outside_changes"])  # adopted for the agent, never overwritten
 
 
 if __name__ == "__main__":

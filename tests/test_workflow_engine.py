@@ -29,6 +29,7 @@ class WorkflowEngineTests(unittest.TestCase):
                 with patch.dict('os.environ', {'DIKDIK_MODEL_URL': 'https://provider.example/v1/chat/completions', 'DIKDIK_MODEL': 'fixture', 'DIKDIK_API_KEY': 'fixture'}), \
                         patch('dikdik.engine.CompatibleAgentModel', return_value=Script(responses)), \
                         patch('dikdik.local_preview.preview', side_effect=preview), \
+                        patch('dikdik.local_preview.available', return_value=True), \
                         patch('dikdik.local_exec.run_tests', return_value={'kind': 'tests', 'status': 'passed'}), \
                         patch.object(engine, '_ask_question', side_effect=AssertionError('Auto asked for redundant permission')):
                     task = engine.submit({'objective': 'Fix the website design', 'mode': 'agent', 'verification': 'local',
@@ -43,6 +44,40 @@ class WorkflowEngineTests(unittest.TestCase):
                 self.assertFalse(any(event['kind'] in {'confirmation_requested', 'question_requested'} for event in data['events']))
                 self.assertEqual(len(screenshots), 1)
                 self.assertTrue(engine.browser.screenshot(task, screenshots[0].rsplit('/', 1)[-1]).startswith(b'\x89PNG'))
+            finally:
+                engine.close()
+
+    def test_a_dev_server_regenerating_a_file_does_not_fail_the_preview(self):
+        # TanStack Router's dev server rewrites the committed src/routeTree.gen.ts on start;
+        # every preview of such a project used to fail with "changed source files".
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / 'repo'; (root / 'src').mkdir(parents=True)
+            root.joinpath('index.html').write_text('<h1>Old design</h1>')
+            root.joinpath('src', 'routeTree.gen.ts').write_text('// generated v1\n')
+            engine = Engine(root, Path(temp) / 'data')
+            try:
+                responses = [call(1, 'edit_file', path='index.html', before='Old design', after='New design'),
+                             call(2, 'preview_app', command='npm run dev -- --port {port}'),
+                             call(3, 'run_tests'), call(4, 'finish')]
+                def preview(project, command, cancel, **kwargs):
+                    project.joinpath('src', 'routeTree.gen.ts').write_text('// generated v2\n')
+                    return {'status': 'passed', 'views': []}
+                with patch.dict('os.environ', {'DIKDIK_MODEL_URL': 'https://provider.example/v1/chat/completions', 'DIKDIK_MODEL': 'fixture', 'DIKDIK_API_KEY': 'fixture'}), \
+                        patch('dikdik.engine.CompatibleAgentModel', return_value=Script(responses)), \
+                        patch('dikdik.local_preview.preview', side_effect=preview), \
+                        patch('dikdik.local_preview.available', return_value=True), \
+                        patch('dikdik.local_exec.run_tests', return_value={'kind': 'tests', 'status': 'passed'}):
+                    task = engine.submit({'objective': 'Fix the website design', 'mode': 'agent', 'verification': 'local',
+                        'approve_external': True, 'approve_execution': True, 'confirmation': 'never'})
+                    deadline = time.monotonic() + 10
+                    while engine.busy(task) and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                data = engine.store.get(task)
+                self.assertEqual(data['state'], 'completed', data['result'])
+                ended = [e['data'] for e in data['events'] if e['kind'] == 'agent_tool' and e['data'].get('phase') == 'end' and e['data']['id'] == '2']
+                self.assertFalse(ended[0]['failed'], ended[0])
+                self.assertEqual(ended[0]['observation']['changed_files'], ['src/routeTree.gen.ts'])
+                self.assertEqual(root.joinpath('src', 'routeTree.gen.ts').read_text(), '// generated v2\n')
             finally:
                 engine.close()
 

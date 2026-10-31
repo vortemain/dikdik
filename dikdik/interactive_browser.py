@@ -41,6 +41,31 @@ ELEMENTS = """() => Array.from(document.querySelectorAll('a[href],button,input,t
 })"""
 
 
+# Exact rendered facts for design checks: what a screenshot shows, as numbers. A "no line
+# between the navbar and the page" request is verified by these borders, shadows,
+# backgrounds and gaps, not by looking alone.
+STYLE_PROPERTIES = ["display", "position", "top", "z-index", "width", "height", "margin-top", "margin-bottom",
+                    "padding-top", "padding-bottom", "padding-left", "padding-right", "border-top", "border-bottom",
+                    "border-left", "border-right", "border-radius", "box-shadow", "outline", "background-color",
+                    "background-image", "backdrop-filter", "opacity", "color", "font-family", "font-size",
+                    "font-weight", "line-height", "letter-spacing", "text-align", "gap", "grid-template-columns",
+                    "flex-direction", "justify-content", "align-items", "overflow"]
+INSPECT = """([selectors, properties]) => selectors.map(selector => {
+ let nodes; try { nodes = document.querySelectorAll(selector); } catch (e) { return {selector, error: 'invalid selector'}; }
+ if (!nodes.length) return {selector, found: 0};
+ const e = nodes[0], r = e.getBoundingClientRect(), s = getComputedStyle(e), styles = {};
+ for (const p of properties) { const v = s.getPropertyValue(p); if (v && v !== 'none' && v !== 'normal' && v !== 'auto' && v !== '0px' && v !== 'rgba(0, 0, 0, 0)' && !v.startsWith('0px none')) styles[p] = v; }
+ const next = e.nextElementSibling, n = next && next.getBoundingClientRect();
+ // The colour a person sees: the first non-transparent background up the tree.
+ const seen = el => { for (let x = el; x; x = x.parentElement) { const c = getComputedStyle(x).backgroundColor; if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') return c; } return 'rgb(255, 255, 255)'; };
+ return {selector, found: nodes.length, tag: e.tagName.toLowerCase(),
+  box: {x: Math.round(r.x), y: Math.round(r.y + scrollY), width: Math.round(r.width), height: Math.round(r.height)},
+  styles, text: (e.innerText || '').trim().slice(0, 200), visible_background: seen(e),
+  ...(n ? {gap_to_next_sibling: Math.round(n.top - r.bottom), next_sibling: next.tagName.toLowerCase() + (next.className && typeof next.className === 'string' ? '.' + next.className.trim().split(/\\s+/).join('.') : ''),
+           next_sibling_background: seen(next), next_sibling_border_top: getComputedStyle(next).borderTop} : {})};
+})"""
+
+
 class BrowserSessions:
     def __init__(self, *, preview_port=None):
         self._preview_port = preview_port
@@ -63,15 +88,17 @@ class BrowserSessions:
                 self._queue.put_nowait((future, task, action, arguments, cancel))
             except queue.Full:
                 raise ValueError("Browser is busy; wait for the current action") from None
-        return future.result(timeout=75)
+        # Dev servers compile a page on its first request after an edit (Vite SSR, Next),
+        # which can take well over a minute on a busy machine.
+        return future.result(timeout=150)
 
     def close(self):
         with self._lock:
             self._closed = True
             thread = self._thread
         if thread:
-            self._queue.put(None, timeout=75)
-            thread.join(timeout=80)
+            self._queue.put(None, timeout=150)
+            thread.join(timeout=160)
             if thread.is_alive():
                 raise RuntimeError("Interactive browser did not stop")
 
@@ -159,6 +186,7 @@ class BrowserSessions:
                     page = state["page"]
                     if action in {"click", "fill", "type", "press", "select"}:
                         state["writes"] = True
+                    inspection = None
                     selector = args.get("selector")
                     if selector is not None and (not isinstance(selector, str) or not 0 < len(selector) <= 2048):
                         raise ValueError("Provide a CSS selector of at most 2048 characters")
@@ -166,7 +194,7 @@ class BrowserSessions:
                         state["errors"].clear(); state["http_errors"].clear()
                         if args.get("viewport"):
                             page.set_viewport_size(self._viewport(args["viewport"]))
-                        page.goto(public_url(args.get("url")), wait_until="domcontentloaded", timeout=45000)
+                        page.goto(public_url(args.get("url")), wait_until="domcontentloaded", timeout=90000)
                     elif action == "resize":
                         page.set_viewport_size(self._viewport(args))
                     elif action == "click":
@@ -198,6 +226,11 @@ class BrowserSessions:
                         page.go_forward(wait_until="domcontentloaded", timeout=30000)
                     elif action == "reload":
                         page.reload(wait_until="domcontentloaded", timeout=30000)
+                    elif action == "inspect":
+                        selectors = args.get("selectors")
+                        if not isinstance(selectors, list) or not 1 <= len(selectors) <= 8 or not all(isinstance(s, str) and 0 < len(s) <= 300 for s in selectors):
+                            raise ValueError("Inspect 1-8 CSS selectors of at most 300 characters")
+                        inspection = page.evaluate(INSPECT, [selectors, STYLE_PROPERTIES])
                     elif action != "screenshot":
                         raise ValueError("Unsupported browser action")
                     if cancel is not None and cancel.is_set():
@@ -215,7 +248,8 @@ class BrowserSessions:
                         "elements": page.evaluate(ELEMENTS), "png": png,
                         "runtime_errors": list(state["errors"]), "http_errors": list(state["http_errors"]),
                         "layout": page.evaluate("() => ({width: innerWidth, height: innerHeight, scroll_width: document.documentElement.scrollWidth, visible_elements: document.body.querySelectorAll('*').length})"),
-                        "interactive": not (action == "screenshot" and selector), "untrusted": True})
+                        "interactive": not (action == "screenshot" and selector), "untrusted": True,
+                        **({"inspection": inspection} if inspection is not None else {})})
                 except Exception as exc:
                     if browser and not browser.is_connected():
                         browser = None; pages.clear()

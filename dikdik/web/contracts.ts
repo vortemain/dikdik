@@ -89,6 +89,7 @@ export interface TerminalCommandView {
   outputRuns: TerminalRun[];
   running: boolean;
   source?: "manual" | "agent";
+  cwd?: string;          // folder relative to the project, when the command named one
   exitCode?: number | null;
   status?: string;
 }
@@ -197,6 +198,8 @@ export interface TaskSummary {
   objective?: string; title?: string; created?: number; updated?: number;
   pinned?: boolean; archived?: boolean; mode?: string;
   folder?: string; tags?: string[];
+  /** A terminal or browser session opened from a panel; not a conversation. */
+  session?: string;
 }
 export interface Task extends TaskSummary {
   request: TaskRequest;
@@ -716,7 +719,8 @@ export function terminalTranscript(events: TaskEvent[]): TerminalView {
     if (event.kind === "terminal_command") {
       const command = textOf(data.command, 4000);
       if (!command || commands.has(id)) continue;
-      commands.set(id, { id, command, output: "", outputRuns: [], running: true, source: data.kind === "command" ? "manual" : "agent" });
+      const cwd = textOf(data.cwd, 400);
+      commands.set(id, { id, command, output: "", outputRuns: [], running: true, source: data.kind === "command" ? "manual" : "agent", ...(cwd ? { cwd } : {}) });
       order.push(id);
       continue;
     }
@@ -806,6 +810,38 @@ export function parsePlan(value: unknown): PlanView | null {
       typeof row.built_revision !== 'number' || !Number.isSafeInteger(row.built_revision) || row.built_revision < 0 || row.built_revision > row.revision) return null;
   return { task_id: row.task_id, planner_id: row.planner_id, content: row.content, revision: row.revision, built_revision: row.built_revision };
 }
+/** One plan in the project's Planner list. */
+export interface PlanSummary extends PlanView {
+  planner_id: string; objective: string; title: string; task_state: string; planner_state: string; updated: number;
+}
+export function parsePlans(value: unknown): PlanSummary[] {
+  const rows = typeof value === 'object' && value !== null ? (value as { plans?: unknown }).plans : undefined;
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap(row => {
+    const plan = parsePlan(row), extra = row as Record<string, unknown>;
+    if (!plan?.planner_id) return [];
+    const text = (key: string) => typeof extra[key] === 'string' ? extra[key] as string : '';
+    return [{ ...plan, planner_id: plan.planner_id, objective: text('objective'), title: text('title'), task_state: text('task_state'),
+              planner_state: text('planner_state'), updated: typeof extra.updated === 'number' ? extra.updated : 0 }];
+  });
+}
+/** Where a plan stands, in the words the Planner list shows. */
+export function planStatus(plan: PlanSummary): { label: string; kind: 'running' | 'ready' | 'done' | 'failed' | 'idle' } {
+  const working = (state: string) => state === 'queued' || state === 'running';
+  if (working(plan.planner_state)) return { label: plan.content ? 'Revising' : 'Planning', kind: 'running' };
+  if (plan.content && plan.built_revision === plan.revision) {
+    if (working(plan.task_state)) return { label: 'Building', kind: 'running' };
+    if (plan.task_state === 'failed' || plan.task_state === 'blocked') return { label: 'Build stopped', kind: 'failed' };
+    return { label: 'Built', kind: 'done' };
+  }
+  if (plan.content) return { label: plan.built_revision ? 'Changed since build' : 'Ready to build', kind: 'ready' };
+  if (plan.planner_state === 'failed' || plan.planner_state === 'blocked') return { label: 'Planning failed', kind: 'failed' };
+  return { label: 'No plan written', kind: 'idle' };
+}
+/** The plan's name: the request it plans, without the "Plan:" prefix planner conversations use. */
+export function planTitle(plan: PlanSummary): string {
+  return (plan.title || plan.objective).replace(/^Plan:\s*/i, '').trim() || 'Untitled plan';
+}
 export interface ChecklistItem { id: string; title: string; status: 'todo' | 'in_progress' | 'done' }
 export function taskChecklist(events: TaskEvent[]): { used: boolean; tasks: ChecklistItem[] } {
   let tasks: ChecklistItem[] = [], used = false;
@@ -823,16 +859,32 @@ export function taskChecklist(events: TaskEvent[]): { used: boolean; tasks: Chec
   }
   return { used, tasks };
 }
-export interface BrowserPage { url: string; title: string; screenshot: string; text: string }
+export interface BrowserPage {
+  url: string; title: string; screenshot: string; text: string;
+  label: string;  // a preview capture's view: "desktop", "mobile", "desktop focus", …; "" for ordinary pages
+  run: number;    // the browser_started event this page belongs to, grouping one preview's captures
+}
 /** Every page captured in this conversation, oldest first, for Back and Forward. */
 export function browserHistory(events: TaskEvent[]): BrowserPage[] {
   const pages: BrowserPage[] = [];
+  let run = 0;
   for (const event of events) {
+    if (event.kind === "browser_started") { run = event.seq; continue; }
     if (event.kind !== "browser_result") continue;
     const one = browserView([event]);
-    if (one.screenshot) pages.push({ url: one.url, title: one.title, screenshot: one.screenshot, text: one.text });
+    if (one.screenshot) pages.push({ url: one.url, title: one.title, screenshot: one.screenshot, text: one.text,
+                                     label: textOf(event.data?.label, 40), run });
   }
   return pages;
+}
+/** Local previews are served through an internal host name; show what the user would type. */
+export const PREVIEW_HOST = "preview.dikdik.example";
+export function displayUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === PREVIEW_HOST) return `localhost${parsed.pathname === "/" ? "" : parsed.pathname}${parsed.search}`;
+    return url;
+  } catch { return url; }
 }
 export function browserView(events: TaskEvent[]): BrowserView {
   const view = { url: "", title: "", text: "", screenshot: "", status: "", error: "", interactive: false };

@@ -1,0 +1,55 @@
+:root {
+  --ink: #0f172a;
+  --muted: #475569;
+  --surface: #ffffff;
+  --tint: #f1f5f9;
+  --accent: #ea580c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 48px;
+  background: var(--surface);
+  border-bottom: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.brand { font-weight: 700; color: var(--ink); text-decoration: none; }
+
+.nav { display: flex; gap: 24px; }
+.nav a { color: var(--muted); text-decoration: none; }
+
+.hero {
+  margin-top: 12px;
+  padding: 96px 48px;
+  background: var(--tint);
+}
+
+.hero h1 { font-size: 48px; margin: 0 0 16px; }
+.hero p { color: var(--muted); font-size: 18px; margin: 0 0 32px; }
+
+.button {
+  display: inline-block;
+  padding: 12px 20px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+}
+
+@media (max-width: 640px) {
+  .site-header { padding: 16px 20px; }
+  .hero { padding: 64px 20px; }
+  .hero h1 { font-size: 34px; }
+}

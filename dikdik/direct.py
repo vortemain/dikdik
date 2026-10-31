@@ -17,13 +17,16 @@ import uuid
 from pathlib import Path
 
 
+UNREADABLE = "\0unreadable"  # never equal to any text, so it counts as changed by someone else
+
+
 def _read(target: Path) -> str | None:
     try:
         return target.read_bytes().decode("utf-8")
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError):
-        return "\0unreadable"  # never equal to any text, so it counts as changed by someone else
+        return UNREADABLE
 
 
 def _write(target: Path, text: str | None) -> None:
@@ -122,6 +125,53 @@ class DirectWrites:
                 self._guarded.add(path)
                 self.known[path] = text
         self.save()
+
+    def refresh(self, paths: list[str]) -> dict[str, str]:
+        """Accept the folder's version of files someone else changed, so the agent works on
+        what is really there instead of failing every later write. Returns the readable
+        texts for the agent to adopt; a deleted or non-UTF-8 file is put back from the
+        agent's copy by the next write. Undo no longer touches a file the user took over."""
+        refreshed = {}
+        for path in paths:
+            current = _read(self._target(path))
+            if current is None or current == UNREADABLE:
+                self._expect_restore(path, current)
+                continue
+            self.known[path] = current
+            self.before.pop(path, None)
+            self._guarded.discard(path)
+            refreshed[path] = current
+        self.save()
+        return refreshed
+
+    def _expect_restore(self, path: str, current: str | None) -> None:
+        # Undo must put back the last real text, never the deleted/unreadable state.
+        self._begin_new_writes()
+        self.before.setdefault(path, self.known.get(path))
+        self.known[path] = current
+
+    def settle(self, paths) -> tuple[dict[str, str], list[str]]:
+        """After the agent's own command: catch up with tracked files the folder snapshot
+        missed. Changed text is observed as the command's work; a file the command deleted
+        or left as non-UTF-8 is recorded so the next write restores the agent's copy.
+        Returns (changed texts, paths to restore)."""
+        changed, restore = {}, []
+        for path in paths:
+            try:
+                target = self._target(path)
+            except ValueError:
+                continue
+            current = _read(target)
+            if current == self.known.get(path):
+                continue
+            if current is None or current == UNREADABLE:
+                restore.append(path)
+                self._expect_restore(path, current)
+            else:
+                changed[path] = current
+        if changed:
+            self.observe(changed)
+        return changed, sorted(restore)
 
     def changed(self) -> list[str]:
         return sorted(path for path, old in self.before.items() if old != self.known.get(path))

@@ -5,6 +5,7 @@ import codecs
 import fnmatch
 import hashlib
 import os
+import re
 import unicodedata
 from pathlib import Path, PurePosixPath
 
@@ -297,17 +298,13 @@ def is_test_path(path: str) -> bool:
 
 def _edit_match_hint(content: str, before: str) -> str:
     """Diagnose why an edit's 'before' text didn't match, so the model can fix it
-    without re-reading the whole file."""
-    if "\r\n" in content and "\n" in before and "\r\n" not in before:
-        return "The file uses CRLF line endings; your 'before' uses LF. Read the file to see exact line endings."
-    if "\n" in content and "\r\n" not in content and "\r\n" in before:
-        return "The file uses LF line endings; your 'before' uses CRLF. Read the file to see exact line endings."
+    without re-reading the whole file. Line endings are matched either way, so they
+    are never the reason."""
     if "\t" in content and "    " in before and "\t" not in before:
         return "The file uses tabs for indentation; your 'before' uses spaces. Read the file to see exact whitespace."
     if "    " in content and "\t" in before and "    " not in before:
         return "The file uses spaces for indentation; your 'before' uses tabs. Read the file to see exact whitespace."
     # Check if the text exists with whitespace normalized
-    import re
     before_compact = re.sub(r"\s+", " ", before).strip()
     content_compact = re.sub(r"\s+", " ", content)
     if before_compact and len(before_compact) > 10 and before_compact in content_compact:
@@ -329,33 +326,61 @@ def apply_edits(files: dict[str, str], edits: list, *, protected_paths: set[str]
             raise ValueError("Existing tests are protected in this milestone")
         if not before or before == after:
             raise ValueError(f"Replacement must change content: {path}")
-        occurrences = result[path].count(before)
+        content = result[path]
+        after = match_line_endings(content, after)
+        occurrences = content.count(before)
+        span = None
+        if occurrences == 0 and "\n" in before:
+            # read_file shows lines without "\r", so an LF 'before' must still match a
+            # CRLF (or mixed) file; the replacement keeps the file's own line endings.
+            pattern = re.compile(r"\r?\n".join(re.escape(part) for part in before.replace("\r\n", "\n").split("\n")))
+            found = [match.span() for match in pattern.finditer(content)]
+            occurrences = len(found)
+            span = found[0] if found else None
         if occurrences != 1:
             # Give the model a specific reason so it can fix the edit without guessing.
             if occurrences == 0:
-                hint = _edit_match_hint(result[path], before)
+                hint = _edit_match_hint(content, before)
                 raise ValueError(f"Replacement text not found in {path}. {hint}")
             raise ValueError(f"Replacement text found {occurrences} times in {path}; make it more specific (include surrounding context) so it matches exactly once")
-        result[path] = result[path].replace(before, after, 1)
+        result[path] = content[:span[0]] + after + content[span[1]:] if span else content.replace(before, after, 1)
         _snapshot_limits(result, **(limits or {}))
     return result
 
 
-def syntax_check(files: dict[str, str]) -> dict:
+def match_line_endings(content: str, text: str) -> str:
+    """Write ``text`` with the line endings ``content`` mostly uses, so edits never mix them."""
+    crlf, lines = content.count("\r\n"), content.count("\n")
+    if crlf * 2 > lines:
+        return text.replace("\r\n", "\n").replace("\n", "\r\n")
+    return text.replace("\r\n", "\n") if lines and not crlf else text
+
+
+def _syntax_error(path: str, text: str) -> str | None:
+    if path.endswith(".py"):
+        try:
+            ast.parse(text.encode("utf-8"), filename=path)
+        except (SyntaxError, ValueError, RecursionError) as exc:
+            return str(exc)
+        return None
+    return _check_braces(text)
+
+
+def syntax_check(files: dict[str, str], baseline: dict[str, str] | None = None) -> dict:
+    """Parse Python and brace-check JS/TS. With ``baseline``, only files that differ from it
+    are judged, and a problem the baseline version already had is not blamed on the change:
+    a pre-existing quirk elsewhere in the project must never block an unrelated edit."""
     errors = []
     count = 0
     for path, text in files.items():
-        if path.endswith(".py"):
-            count += 1
-            try:
-                ast.parse(text.encode("utf-8"), filename=path)
-            except (SyntaxError, ValueError, RecursionError) as exc:
-                errors.append(f"{path}: {exc}")
-        elif path.endswith((".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")):
-            count += 1
-            brace_error = _check_braces(text)
-            if brace_error:
-                errors.append(f"{path}: {brace_error}")
+        if not path.endswith((".py", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")):
+            continue
+        if baseline is not None and baseline.get(path) == text:
+            continue
+        count += 1
+        error = _syntax_error(path, text)
+        if error and not (baseline is not None and path in baseline and _syntax_error(path, baseline[path])):
+            errors.append(f"{path}: {error}")
     return {"kind": "python_syntax", "status": "failed" if errors else "passed" if count else "not_run", "files_checked": count, "errors": errors, "note": "Parsing only; no repository code executed. Not a test-suite result."}
 
 
@@ -385,6 +410,8 @@ def _check_braces(text: str) -> str | None:
             elif char == in_string:
                 in_string = None
             continue
+        if char in ('"', "'") and i and (text[i - 1].isalnum() or text[i - 1] == "_"):
+            continue  # JSX/prose text such as Kenya's: code never puts a string right after a word
         if char in ('"', "'", "`"):
             in_string = char
         elif char == "/" and i + 1 < len(text) and text[i + 1] == "/":

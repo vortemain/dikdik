@@ -1,0 +1,3 @@
+# Kept CRLF on purpose: the benchmark checks Windows line-ending handling.
+*.ts text eol=crlf
+*.tsx text eol=crlf

@@ -151,6 +151,31 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(syntax_check({"app.ts": "const x = 1"})["status"], "passed")
         self.assertEqual(syntax_check({"app.ts": "function f() {"})["status"], "failed")
 
+    def test_lf_edit_matches_crlf_file_and_keeps_its_line_endings(self):
+        # read_file shows lines without "\r", so models always send LF text.
+        files = {"Footer.tsx": "export function Footer() {\r\n  return (\r\n    <footer>old</footer>\r\n  );\r\n}\r\n"}
+        edited = apply_edits(files, [{"path": "Footer.tsx", "before": "  return (\n    <footer>old</footer>\n",
+                                      "after": "  return (\n    <footer>\n      new\n    </footer>\n"}])
+        self.assertEqual(edited["Footer.tsx"], "export function Footer() {\r\n  return (\r\n    <footer>\r\n      new\r\n    </footer>\r\n  );\r\n}\r\n")
+        # A file already mixing endings still matches, and LF files are untouched by the conversion.
+        mixed = {"a.ts": "one\ntwo\r\nthree\n"}
+        self.assertEqual(apply_edits(mixed, [{"path": "a.ts", "before": "one\ntwo\nthree", "after": "1\n2"}])["a.ts"], "1\n2\n")
+        self.assertEqual(apply_edits({"b.ts": "x\ny\n"}, [{"path": "b.ts", "before": "x\ny", "after": "z\r\nw"}])["b.ts"], "z\nw\n")
+        with self.assertRaisesRegex(ValueError, "2 times"):
+            apply_edits({"c.ts": "a\r\nb\r\na\r\nb\r\n"}, [{"path": "c.ts", "before": "a\nb", "after": "c"}])
+
+    def test_syntax_check_judges_only_what_the_change_touched(self):
+        prose = "export const Page = () => <p>Kenya's groundwater, the company's rigs</p>;\n"
+        self.assertEqual(syntax_check({"page.tsx": prose})["status"], "passed")  # apostrophes in JSX text
+        baseline = {"old.tsx": "const s = /'/;\n", "app.py": "x = 1\n", "lib.ts": "export const a = 1;\n"}
+        changed = {**baseline, "lib.ts": "export const a = 2;\n"}
+        result = syntax_check(changed, baseline)
+        self.assertEqual((result["status"], result["files_checked"]), ("passed", 1))  # old.tsx's quirk is not blamed
+        broken = syntax_check({**baseline, "lib.ts": "export function f() {\n"}, baseline)
+        self.assertEqual(broken["status"], "failed")
+        self.assertIn("lib.ts", broken["errors"][0])
+        self.assertEqual(syntax_check(baseline, baseline)["status"], "not_run")
+
     def test_non_utf8_is_not_indexed(self):
         (self.root / "binary.py").write_bytes(b"\xff\xfe")
         self.assertEqual(inventory(self.root), {})

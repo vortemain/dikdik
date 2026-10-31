@@ -1,0 +1,98 @@
+{
+  "description": "Portable tasks on small fixture projects; runs on any machine with Python. navbar-flow-design needs Playwright (desktop install) and is judged in a real browser.",
+  "tasks": [
+    {
+      "name": "footer-copy-crlf",
+      "project": "fixtures/shop",
+      "ref": null,
+      "objective": "In the footer, change the copyright line to say \"© 2026 Example Drilling Ltd. Built in Nairobi.\"",
+      "checks": [
+        {
+          "file": "src/components/Footer.tsx",
+          "contains": "Built in Nairobi"
+        }
+      ],
+      "targets": {
+        "model_calls": 5,
+        "seconds": 120
+      },
+      "max_model_calls": 20
+    },
+    {
+      "name": "explain-format-price",
+      "project": "fixtures/shop",
+      "ref": null,
+      "objective": "What does formatPrice return for 1234.5? Answer briefly.",
+      "checks": [
+        {
+          "changed": []
+        }
+      ],
+      "targets": {
+        "model_calls": 3,
+        "seconds": 60
+      },
+      "max_model_calls": 10
+    },
+    {
+      "name": "fix-discount",
+      "project": "fixtures/shop",
+      "ref": null,
+      "objective": "discount() returns the wrong value. Fix it so the tests pass.",
+      "checks": [
+        {
+          "command": "python -m unittest discover -q",
+          "timeout": 120
+        }
+      ],
+      "targets": {
+        "model_calls": 6,
+        "seconds": 180
+      },
+      "max_model_calls": 20
+    },
+    {
+      "name": "footer-redesign-crlf",
+      "project": "fixtures/shop",
+      "ref": null,
+      "objective": "Redesign the footer to look modern and premium. Keep every link and the price line.",
+      "checks": [
+        {
+          "file": "src/components/Footer.tsx",
+          "contains": "/shop"
+        },
+        {
+          "file": "src/components/Footer.tsx",
+          "contains": "/contact"
+        },
+        {
+          "file": "src/components/Footer.tsx",
+          "contains": "formatPrice"
+        }
+      ],
+      "targets": {
+        "model_calls": 10,
+        "seconds": 300
+      },
+      "max_model_calls": 30
+    },
+    {
+      "name": "navbar-flow-design",
+      "project": "fixtures/landing",
+      "ref": null,
+      "objective": "There is a visible separation between the navbar and the rest of the page. Make the navbar flow continuously into the page, with no visible line or gap.",
+      "checks": [
+        {
+          "command": "{python} {suite}/check_landing.py",
+          "timeout": 180
+        }
+      ],
+      "targets": {
+        "model_calls": 12,
+        "seconds": 300
+      },
+      "max_model_calls": 30,
+      "needs": "playwright"
+    }
+  ]
+}

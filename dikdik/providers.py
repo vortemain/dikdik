@@ -183,6 +183,26 @@ def _merge_reasoning(details: list[dict], pieces: list) -> None:
         raise ProviderError("response_limit")
 
 
+CACHE_MARK = {"type": "ephemeral"}
+
+
+def cache_marks(config: ModelConfig, messages: list[dict]) -> list[dict]:
+    """Anthropic models through OpenRouter cache only where a request marks it: the system
+    prompt (the tool list comes before it) and the newest user message. Most other providers
+    cache repeated prefixes on their own, so their requests are left as they are."""
+    if "openrouter.ai" not in config.url or not ("claude" in config.model.lower() or config.model.startswith("anthropic/")):
+        return messages
+    marked = list(messages)
+    users = [index for index, message in enumerate(marked) if message.get("role") == "user"]
+    for index in {*([0] if marked and marked[0].get("role") == "system" else []), *users[-1:]}:
+        message, content = marked[index], marked[index].get("content")
+        if isinstance(content, str) and content:
+            marked[index] = {**message, "content": [{"type": "text", "text": content, "cache_control": CACHE_MARK}]}
+        elif isinstance(content, list) and content and isinstance(content[-1], dict) and content[-1].get("type") == "text":
+            marked[index] = {**message, "content": [*content[:-1], {**content[-1], "cache_control": CACHE_MARK}]}
+    return marked
+
+
 def chat_completion(messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 4096, config: ModelConfig | None = None,
                     on_text: Callable[[str], None] | None = None, cancel=None) -> dict:
     """A cancellable model request. Stop releases the task even while a provider is
@@ -276,7 +296,7 @@ def _chat_completion(messages, tools=None, max_tokens=4096, config=None, on_text
     options = config.options or {}
     if context_size(messages) > (options.get("context_limit_bytes") or 128000):  # attached images count as a fixed weight
         raise ProviderError("context_length", "Model context exceeds the configured limit; use a smaller approved workspace or increase the profile's context limit")
-    body = {"model": config.model, "max_tokens": min(max_tokens, options.get("max_output_tokens") or max_tokens), "messages": messages,
+    body = {"model": config.model, "max_tokens": min(max_tokens, options.get("max_output_tokens") or max_tokens), "messages": cache_marks(config, messages),
             **{k: options[k] for k in ("temperature", "top_p") if options.get(k) is not None}}
     if options.get("reasoning_effort"):
         body["reasoning_effort"] = options["reasoning_effort"]

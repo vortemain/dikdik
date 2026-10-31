@@ -33,6 +33,8 @@ class LocalTerminalTests(unittest.TestCase):
                 self.engine.bash.session(body)
         task = self.session()
         self.assertEqual(self.engine.store.get(task)["state"], "completed")
+        # A terminal is a panel of its own, so the conversation list can leave it out.
+        self.assertEqual({row["id"]: row.get("session") for row in self.engine.store.list()}[task], "terminal")
 
     def test_real_command_runs_in_chosen_folder_and_preserves_unicode(self):
         task = self.session()

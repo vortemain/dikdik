@@ -96,12 +96,30 @@ class Planning:
             row = db.execute('SELECT * FROM task_progress WHERE task_id=?', (task,)).fetchone()
         return {'tasks': json.loads(row['items']), 'revision': row['revision'], 'reported_only': True} if row else {'tasks': [], 'revision': 0, 'reported_only': True}
 
+    def plans(self):
+        """Every plan in this project, newest first, with the conversation it belongs to."""
+        where, params = self.store._mine('t.')
+        with self.store.connect() as db:
+            rows = db.execute(
+                'SELECT p.task_id, p.planner_id, p.content, p.revision, p.built_revision, t.request, t.title, t.state AS task_state,'
+                ' c.state AS planner_state, t.archived AS archived,'
+                ' (SELECT MAX(time) FROM events WHERE task_id IN (p.task_id, p.planner_id)) AS updated'
+                f' FROM plans p JOIN tasks t ON t.id = p.task_id JOIN tasks c ON c.id = p.planner_id WHERE {where}'
+                ' ORDER BY updated DESC LIMIT 200', params).fetchall()
+        return [{'task_id': row['task_id'], 'planner_id': row['planner_id'], 'content': row['content'],
+                 'revision': row['revision'], 'built_revision': row['built_revision'],
+                 'objective': str(json.loads(row['request']).get('objective', ''))[:200], 'title': row['title'] or '',
+                 'task_state': row['task_state'], 'planner_state': row['planner_state'], 'updated': row['updated'] or 0}
+                for row in rows if not row['archived']]
+
     def related(self, task):
         with self.store.connect() as db:
             return [task, *[row[0] for row in db.execute('SELECT planner_id FROM plans WHERE task_id=?', (task,))]]
 
     def route(self, method, raw_path, body):
         parts = urlsplit(raw_path).path.split('/')
+        if parts == ['', 'api', 'plans'] and method == 'GET':
+            return 200, {'plans': self.plans()}
         if len(parts) < 5 or parts[:3] != ['', 'api', 'tasks']:
             return None
         task, resource = parts[3], parts[4:]

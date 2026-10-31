@@ -378,7 +378,7 @@ class BrowserService:
                     raise PermissionError("Approve browser tools to start a browser session")
                 if not self.enabled():
                     raise PermissionError("Browser tools are disabled in Settings")
-                task = self.store.create({"objective": "Browse the web", "mode": "agent", "verification": "syntax", "edits": [], "approve_execution": True, "approve_browser": True, "approve_external": False})
+                task = self.store.create({"objective": "Browse the web", "mode": "agent", "verification": "syntax", "edits": [], "approve_execution": True, "approve_browser": True, "approve_external": False, "session": "browser"})
                 self.store.state(task, "completed", {"browser_session": True, "summary": "Workspace browser session"})
                 return 201, {"id": task}
             parts = path.split("/")

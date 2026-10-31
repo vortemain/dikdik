@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 from .repository import EXCLUDED, SECRET, _ignore_rules, _ignored, is_text_file, workspace_metadata
 
 WORKING_LIMITS = {"max_file_bytes": 64_000_000, "max_total_bytes": 64_000_000, "max_files": 10000}
+PATHS_TTL = 15  # seconds a listing is reused, so files someone else adds still appear soon
 
 
 def _stat(target):
@@ -77,6 +78,8 @@ class WorkspaceFiles:
         self.cancel, self.on_adopt = cancel, on_adopt
         self.observed = {}
         self.originals = {}
+        self.refreshed = {}  # folder versions the agent must adopt; drained after each tool call
+        self._paths, self._paths_at = None, 0.0
 
     def target(self, path):
         if not isinstance(path, str) or not path or len(path) > 1024:
@@ -103,8 +106,18 @@ class WorkspaceFiles:
         return current
 
     def paths(self):
-        data = workspace_metadata(self.root)
-        return sorted({row["path"] for row in [*data["files"], *data["large_files"]]})
+        """Every workspace file path. Walking the tree took up to seconds per list_files or
+        search_text call, so the list is reused briefly; commands, checks and previews,
+        which can create files, call forget_paths()."""
+        now = time.monotonic()
+        if self._paths is None or now - self._paths_at > PATHS_TTL:
+            data = workspace_metadata(self.root)
+            self._paths = sorted({row["path"] for row in [*data["files"], *data["large_files"]]})
+            self._paths_at = now
+        return list(self._paths)
+
+    def forget_paths(self):
+        self._paths = None
 
     def read(self, path, candidate, **options):
         if path in candidate:
@@ -144,8 +157,20 @@ class WorkspaceFiles:
         if self.on_adopt:
             self.on_adopt(path, original, expected)
 
+    def take_refreshed(self) -> dict[str, str]:
+        refreshed, self.refreshed = self.refreshed, {}
+        return refreshed
+
     def tracked_snapshot(self):
-        return {path: self.load_for_edit(path, check_observed=False) for path in self.originals}
+        """Current text of the files adopted for editing. One that is gone or no longer
+        UTF-8 is left out (the caller settles it) rather than failing every command."""
+        snapshot = {}
+        for path in self.originals:
+            try:
+                snapshot[path] = self.load_for_edit(path, check_observed=False)
+            except ValueError:
+                continue
+        return snapshot
 
     def search(self, candidate, query, path="", offset=0, max_results=40):
         if not query or len(query) > 4096 or "\n" in query:

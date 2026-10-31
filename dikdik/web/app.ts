@@ -1,9 +1,9 @@
-import { browserHistory, browserView, buildTaskRequest, commandActivity, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parseVerification, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
+import { browserHistory, browserView, displayUrl, buildTaskRequest, commandActivity, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parsePlans, parseVerification, planStatus, planTitle, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
 import { attachmentList, confirmationForRunMode, contextUsage, costProjection, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
-import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, ChatMessage, ChecklistItem, SlashCommand, TaskRequest, DiffReview, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
+import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, BrowserPage, ChatMessage, ChecklistItem, Mode, SlashCommand, TaskRequest, DiffReview, PlanSummary, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
-import { keysPane, modelsPane, type ModelProfile } from "./models-pane";
+import { keysPane, modelsPane, when, type ModelProfile } from "./models-pane";
 import { modelPicker } from "./model-picker";
 import { folderPicker } from "./folder-picker";
 import { confirmDialog, inputDialog, formDialog, showSecret } from "./dialogs";
@@ -18,6 +18,7 @@ import { renderRichText } from './rich-text';
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
 import { TerminalRenderer } from './terminal-render';
+import { ToolSession } from './tool-session';
 import { runningTerminalCommands } from './contracts';
 import { frameBatch } from './render-scheduler';
 
@@ -1141,14 +1142,13 @@ function openCanvas(tab: string): void {
   if (tab === "git") void loadGit();
   if (tab === "terminal") renderTerminal();
   if (tab === "browser") renderBrowser();
-  if (tab === 'planner') { renderPlanner(); if (selected) void loadPlan(selected); }
+  if (tab === 'planner') { renderPlanner(); void loadPlans().catch(error => message(error instanceof Error ? error.message : 'Could not load plans', true)); if (selected) void loadPlan(selected); }
   if (tab === 'tasklist') renderChecklist();
   if (tab === "usage") renderUsage();
 }
 function changedPaths(): Set<string> { return new Set(review.files.map(file => file.path)); }
 
-let terminalClearedTask = "", terminalClearedSeq = 0, terminalHistoryIndex = -1, terminalDraft = "", terminalSubmitting = false;
-let terminalContinuing = new Set<string>();
+let terminalHistoryIndex = -1, terminalDraft = "", terminalSubmitting = false, terminalsRestored = false;
 let terminalRenderer: TerminalRenderer | null = null, terminalCopyText = "", terminalRenderedTask: string | null = null;
 let showingCommandProgress = false;
 function renderCommandProgress(): void {
@@ -1170,42 +1170,180 @@ function renderCommandProgress(): void {
 function renderTerminal(): void {
   // Hidden panes need no transcript parsing or DOM work; opening the tab catches up.
   if (canvasTab !== "terminal" || el("canvas").hidden) return;
-  const view = terminalTranscript(liveEvents.filter(event => selected !== terminalClearedTask || event.seq > terminalClearedSeq
-    || event.kind === "terminal_command" && terminalContinuing.has(String(event.data.command_id))));
+  const shown = shownTerminal(), key = terminalKey(shown), cleared = terminalCleared.get(key);
+  const view = terminalTranscript(cleared ? shown.events.filter(event => event.seq > cleared.seq
+    || event.kind === "terminal_command" && cleared.continuing.has(String(event.data.command_id))) : shown.events);
+  renderTerminalTabs(shown);
   const terminal = el("terminal-view");
   const empty = el("terminal-empty");
   const screen = el("terminal-screen"), stick = nearBottom(screen);
-  if (!terminalRenderer || terminalRenderedTask !== selected) {
-    terminal.replaceChildren(); terminalRenderer = new TerminalRenderer(terminal); terminalRenderedTask = selected;
+  if (!terminalRenderer || terminalRenderedTask !== key) {
+    terminal.replaceChildren(); terminalRenderer = new TerminalRenderer(terminal, command => `${terminalPath(command.cwd ?? "")} $ `); terminalRenderedTask = key;
   }
   terminalRenderer.render(view.commands);
   terminalCopyText = view.text;
   terminal.hidden = !view.commands.length;
   empty.hidden = !!view.commands.length;
-  const running = runningTerminalCommands(liveEvents).length > 0;
-  el("terminal-project").textContent = projectName || "your project";
-  el("terminal-prompt-path").textContent = [projectName, input("terminal-cwd").value.trim()].filter(Boolean).join("/") || "project";
-  el("terminal-runtime").textContent = taskRequest?.verification === "local" || !selected ? "Local terminal" : "Docker terminal";
-  el("terminal-state").textContent = running ? "Running…" : "Ready";
+  const running = runningTerminalCommands(shown.events).length > 0;
+  const docker = !shown.user && !!selected && !!taskRequest && taskRequest.verification !== "local";
+  el("terminal-project").textContent = `${projectName || "Project"}${docker ? " (Docker sandbox)" : ""}`;
+  input("terminal-cwd").value = terminalCwd(shown);
+  el("terminal-prompt-path").textContent = terminalPath(terminalCwd(shown));
+  el("terminal-runtime").textContent = docker ? "Docker" : "Local";
+  const runtime = el("terminal-runtime").parentElement;  // named only when it is not this computer
+  if (runtime) runtime.hidden = !docker;
+  el("terminal-state").textContent = running ? "Running" : "Ready";
+  el("terminal-form").setAttribute("aria-busy", String(running || terminalSubmitting));
   button("terminal-stop").disabled = !running;
   button("terminal-run").disabled = running || terminalSubmitting;
   if (stick) screen.scrollTop = screen.scrollHeight;
 }
+/** The prompt's folder: the project name, then the working folder inside it. */
+function terminalPath(cwd: string): string {
+  return [projectName || "project", cwd].filter(Boolean).join("/");
+}
 
-async function workspaceSession(): Promise<string> {
+/** Terminals the user opened. Each runs in its own session, kept beside the conversation:
+ *  opening one never changes which conversation is shown. */
+interface UserTerminal { session: ToolSession; number: number; cwd: string }
+let userTerminals: UserTerminal[] = [];
+/** "agent" is the open conversation's own commands; otherwise a user terminal's session id. */
+let terminalActive = "agent", agentTerminalCwd = "";
+/** Clearing hides what was printed so far; a command still running keeps printing. */
+const terminalCleared = new Map<string, { seq: number; continuing: Set<string> }>();
+interface ShownTerminal { user: UserTerminal | null; events: TaskEvent[] }
+function agentHasTerminal(): boolean {
+  return !!selected && liveEvents.some(event => event.kind === "terminal_command");
+}
+/** The chosen terminal while it exists; otherwise the conversation's commands, or the newest terminal. */
+function shownTerminal(): ShownTerminal {
+  const chosen = userTerminals.find(terminal => terminal.session.id === terminalActive);
+  if (chosen) return { user: chosen, events: chosen.session.events };
+  const newest = userTerminals[userTerminals.length - 1];
+  if (newest && !(terminalActive === "agent" && agentHasTerminal())) return { user: newest, events: newest.session.events };
+  return { user: null, events: selected ? liveEvents : [] };
+}
+function terminalKey(shown: ShownTerminal): string {
+  return shown.user ? shown.user.session.id : `agent:${selected ?? ""}`;
+}
+function terminalCwd(shown: ShownTerminal): string {
+  return shown.user ? shown.user.cwd : agentTerminalCwd;
+}
+function terminalsKey(): string { return `dikdik.terminals.${projectName || "project"}`; }
+function saveTerminals(): void {
+  storageSet(terminalsKey(), JSON.stringify(userTerminals.map(terminal => ({ id: terminal.session.id, number: terminal.number, cwd: terminal.cwd }))));
+}
+function toolSession(id: string, changed: (session: ToolSession) => void): ToolSession {
+  return new ToolSession(id, async task => (await api<Task>(`/api/tasks/${encodeURIComponent(task)}`)).events as TaskEvent[], changed,
+    () => !token, events => runningTerminalCommands(events).length > 0 || browserView(events).status === "running");
+}
+function addTerminal(id: string, number: number, cwd: string): UserTerminal {
+  const terminal = { session: toolSession(id, () => terminalPaint.schedule()), number, cwd };
+  userTerminals.push(terminal);
+  return terminal;
+}
+/** Terminals opened earlier in this project come back with their output. */
+async function restoreTerminals(): Promise<void> {
+  let saved: { id?: unknown; number?: unknown; cwd?: unknown }[] = [];
+  try { saved = JSON.parse(storageGet(terminalsKey()) ?? "[]"); } catch { saved = []; }
+  if (!Array.isArray(saved) || userTerminals.length) return;
+  for (const entry of saved) {
+    if (typeof entry?.id === "string" && /^[0-9a-f]{32}$/.test(entry.id)) addTerminal(entry.id, typeof entry.number === "number" ? entry.number : userTerminals.length + 1, typeof entry.cwd === "string" ? entry.cwd : "");
+  }
+  const loaded = await Promise.all(userTerminals.map(terminal => terminal.session.load().then(() => true, () => false)));
+  const gone = userTerminals.filter((_, index) => !loaded[index]);
+  if (gone.length) { for (const terminal of gone) terminal.session.close(); userTerminals = userTerminals.filter(terminal => !gone.includes(terminal)); saveTerminals(); }
+  for (const terminal of userTerminals) if (runningTerminalCommands(terminal.session.events).length) terminal.session.follow();
+  renderTerminal();
+}
+async function newTerminal(cwd = ""): Promise<UserTerminal> {
   await ensureTrusted(true);
   const session = await api<{ id: string }>("/api/terminal/sessions", { approve_execution: true });
-  selectTask(session.id); await loadHistory();
-  return session.id;
+  const terminal = addTerminal(session.id, Math.max(0, ...userTerminals.map(item => item.number)) + 1, cwd);
+  terminalActive = session.id; terminalHistoryIndex = -1;
+  saveTerminals(); renderTerminal();
+  return terminal;
 }
-button("terminal-new").onclick = () => { void workspaceSession().then(() => input("terminal-command").focus()).catch(error => message(String(error), true)); };
+async function closeTerminal(terminal: UserTerminal): Promise<void> {
+  const running = runningTerminalCommands(terminal.session.events).filter(command => command.source === "manual");
+  await Promise.all(running.map(command => api(`/api/tasks/${terminal.session.id}/bash/commands/${command.id}/stop`, {}).catch(() => undefined)));
+  terminal.session.close();
+  const index = userTerminals.indexOf(terminal);
+  userTerminals = userTerminals.filter(item => item !== terminal);
+  terminalCleared.delete(terminal.session.id);
+  if (terminalActive === terminal.session.id) terminalActive = userTerminals[Math.max(0, index - 1)]?.session.id ?? "agent";
+  saveTerminals(); renderTerminal();
+}
+function showTerminal(key: string): void {
+  terminalActive = key; terminalHistoryIndex = -1;
+  renderTerminal();
+  input("terminal-command").focus();
+}
+/** One tab per terminal, as in VS Code's terminal list; "Agent" holds the conversation's commands. */
+function renderTerminalTabs(shown: ShownTerminal): void {
+  const agent = agentHasTerminal();
+  const entries: { key: string; label: string; terminal: UserTerminal | null }[] = [];
+  if (agent || !userTerminals.length) entries.push({ key: "agent", label: agent ? "Agent" : "Terminal", terminal: null });
+  for (const terminal of userTerminals) entries.push({ key: terminal.session.id, label: userTerminals.length === 1 && !agent ? "Terminal" : `Terminal ${terminal.number}`, terminal });
+  const active = shown.user ? shown.user.session.id : "agent";
+  const signature = entries.map(entry => `${entry.key}:${entry.label}`).join("|") + `#${active}`;
+  const tabs = el("terminal-tabs");
+  if (tabs.dataset.signature === signature) return;
+  tabs.dataset.signature = signature;
+  tabs.replaceChildren(...entries.map(entry => {
+    const item = make("div", "terminal-tab"); item.setAttribute("role", "presentation");
+    item.dataset.active = String(entry.key === active);
+    const name = make("button", "terminal-tab-name"); name.type = "button";
+    name.setAttribute("role", "tab"); name.setAttribute("aria-selected", String(entry.key === active));
+    name.append(icon("terminal"), make("span", "", entry.label));
+    name.title = entry.terminal ? entry.label : agent ? "Commands run in this conversation" : "Terminal";
+    name.onclick = () => showTerminal(entry.key);
+    item.append(name);
+    if (entry.terminal) {
+      const close = make("button", "terminal-tab-close"); close.type = "button";
+      close.setAttribute("aria-label", `Close ${entry.label}`); close.title = `Close ${entry.label}`;
+      close.append(icon("x"));
+      const terminal = entry.terminal;
+      close.onclick = () => { void closeTerminal(terminal); };
+      item.append(close);
+    }
+    return item;
+  }));
+}
+/** A shell's own cd: each command starts a fresh shell, so the folder is kept here. */
+function changeTerminalFolder(target: string): void {
+  const shown = shownTerminal();
+  const parts = target.startsWith("/") || target === "~" || !target ? [] : terminalCwd(shown).split("/").filter(Boolean);
+  for (const part of target.replace(/\\/g, "/").split("/")) {
+    if (!part || part === "." || part === "~") continue;
+    if (part === "..") parts.pop(); else parts.push(part);
+  }
+  if (shown.user) { shown.user.cwd = parts.join("/"); saveTerminals(); } else agentTerminalCwd = parts.join("/");
+  renderTerminal();
+}
+
+button("terminal-new").onclick = () => {
+  void newTerminal().then(() => { if (el("canvas").hidden || canvasTab !== "terminal") openCanvas("terminal"); input("terminal-command").focus(); })
+    .catch(error => message(error instanceof Error ? error.message : String(error), true));
+};
 button("terminal-copy").onclick = () => { terminalPaint.flush(); void copyText(terminalCopyText, button("terminal-copy")); };
 button("terminal-clear").onclick = () => {
-  terminalClearedTask = selected ?? ""; terminalClearedSeq = liveSeq;
-  terminalContinuing = new Set(runningTerminalCommands(liveEvents).map(command => command.id));
+  const shown = shownTerminal();
+  terminalCleared.set(terminalKey(shown), { seq: shown.events.reduce((max, event) => Math.max(max, event.seq ?? 0), 0),
+    continuing: new Set(runningTerminalCommands(shown.events).map(command => command.id)) });
   renderTerminal();
 };
 async function stopTerminal(): Promise<void> {
+  const shown = shownTerminal();
+  if (shown.user) {
+    const terminal = shown.user;
+    try {
+      await Promise.all(runningTerminalCommands(terminal.session.events).filter(command => command.source === "manual")
+        .map(command => api(`/api/tasks/${terminal.session.id}/bash/commands/${command.id}/stop`, {})));
+      terminal.session.follow();
+    } catch (error) { message(error instanceof Error ? error.message : "Could not stop command", true); }
+    return;
+  }
   if (!selected) return;
   const task = selected;
   try {
@@ -1221,11 +1359,24 @@ el("terminal-form").addEventListener("submit", async event => {
   event.preventDefault();
   const command = input("terminal-command").value.trim();
   if (!command || terminalSubmitting) return;
+  const builtin = /^(cd|clear|cls)(?:\s+(.*))?$/i.exec(command);
+  if (builtin) {
+    input("terminal-command").value = ""; terminalHistoryIndex = -1;
+    if (builtin[1]!.toLowerCase() === "cd") changeTerminalFolder((builtin[2] ?? "").trim().replace(/^["']|["']$/g, ""));
+    else button("terminal-clear").click();
+    return;
+  }
   terminalSubmitting = true; renderTerminal();
   try {
-    const task = selected && taskRequest?.approve_execution === true ? selected : await workspaceSession();
-    await api(`/api/tasks/${task}/bash/start`, { command, cwd: input("terminal-cwd").value.trim(), timeout: 300 });
-    if (selected === task) { input("terminal-command").value = ""; terminalHistoryIndex = -1; watching = true; await observe(true); }
+    // A command typed in the Agent tab runs in the conversation when it may run commands;
+    // everything else runs in the user's own terminal, opened on first use.
+    const shown = shownTerminal(), cwd = terminalCwd(shown);
+    const terminal = shown.user ?? (agentHasTerminal() && taskRequest?.approve_execution === true ? null : await newTerminal(cwd));
+    const task = terminal ? terminal.session.id : selected!;
+    await api(`/api/tasks/${task}/bash/start`, { command, cwd, timeout: 300 });
+    input("terminal-command").value = ""; terminalHistoryIndex = -1;
+    if (terminal) terminal.session.follow();
+    else if (selected === task) { watching = true; await observe(true); }
   } catch (error) { message(error instanceof Error ? error.message : "Could not run command", true); }
   finally { terminalSubmitting = false; renderTerminal(); input("terminal-command").focus(); }
 });
@@ -1233,14 +1384,17 @@ input("terminal-command").addEventListener("keydown", (event: KeyboardEvent) => 
   if (event.ctrlKey && event.key.toLowerCase() === "c" && !input("terminal-command").value) { event.preventDefault(); void stopTerminal(); }
   if (event.ctrlKey && event.key.toLowerCase() === "l") { event.preventDefault(); button("terminal-clear").click(); }
   if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-  const history = terminalTranscript(liveEvents).commands.map(command => command.command).reverse();
+  const history = terminalTranscript(shownTerminal().events).commands.map(command => command.command).reverse();
   if (!history.length) return;
   event.preventDefault();
   if (terminalHistoryIndex === -1) terminalDraft = input("terminal-command").value;
   terminalHistoryIndex = Math.max(-1, Math.min(history.length - 1, terminalHistoryIndex + (event.key === "ArrowUp" ? 1 : -1)));
   input("terminal-command").value = terminalHistoryIndex < 0 ? terminalDraft : history[terminalHistoryIndex] ?? "";
 });
-input("terminal-cwd").addEventListener("input", () => renderTerminal());
+// Like a terminal: clicking anywhere in it types at the prompt, unless text is being selected.
+el("terminal-screen").addEventListener("click", () => {
+  if (!globalThis.getSelection?.()?.toString()) input("terminal-command").focus();
+});
 
 function usageValue(value: number | undefined): string {
   return value === undefined ? "Not reported" : value.toLocaleString();
@@ -1309,10 +1463,11 @@ function browserViewport(): { width: number; height: number } | undefined {
   return box && box.width > 0 && box.height > 0 ? { width: Math.max(320, Math.min(1920, Math.floor(box.width))), height: Math.max(240, Math.min(1200, Math.floor(box.height))) } : undefined;
 }
 function syncBrowserViewport(): void {
-  if (!selected || browserIndex !== null || el("canvas").hidden || canvasTab !== "browser" || !browserView(liveEvents).interactive) return;
+  const task = browserTask();
+  if (!task || browserIndex !== null || el("canvas").hidden || canvasTab !== "browser" || !browserView(browserEvents()).interactive) return;
   const size = browserViewport();
   if (!size) return;
-  const key = `${selected}:${size.width}:${size.height}`;
+  const key = `${task}:${size.width}:${size.height}`;
   if (key === browserViewportKey) return;
   browserViewportKey = key;
   void browserAction("resize", size);
@@ -1339,38 +1494,86 @@ function typeInBrowser(text: string): void {
 }
 function browserAction(action: string, arguments_: Record<string, unknown>): Promise<void> {
   if (action !== "type") flushBrowserTyping();
-  const task = selected, browserEpoch = browserScope;
+  const task = browserTask(), browserEpoch = browserScope;
   if (!task) return Promise.resolve();
   browserActionQueue = browserActionQueue.then(async () => {
-    if (selected !== task || browserEpoch !== browserScope) return;
+    if (browserTask() !== task || browserEpoch !== browserScope) return;
     try {
       el("browser-status").textContent = "Updating page…";
       const result = await api<{ status: string; error?: string }>(`/api/tasks/${task}/browser/actions`, { action, arguments: arguments_, approve_browser: true, approve_execution: true });
       if (result.status !== "passed") throw new Error(result.error || "Browser action failed");
-      if (selected === task) { browserIndex = null; watching = true; await observe(); }
+      browserIndex = null; await refreshBrowser(task);
     } catch (error) { message(error instanceof Error ? error.message : "Browser action failed", true); }
   });
   return browserActionQueue;
 }
+/** A browser opened without a conversation keeps its own session, so browsing never
+ *  switches the chat. With a conversation open, the page belongs to that conversation. */
+let browserSession: ToolSession | null = null;
+function browserTask(): string | null { return selected ?? browserSession?.id ?? null; }
+function browserEvents(): TaskEvent[] { return selected ? liveEvents : browserSession?.events ?? []; }
+async function followBrowser(task: string, work: Promise<unknown>): Promise<void> {
+  if (task === selected) { watching = true; startStream(task); }
+  else if (browserSession?.id === task) browserSession.follow();
+  await work;
+}
+async function refreshBrowser(task: string): Promise<void> {
+  if (task === selected) { watching = true; await observe(); }
+  else if (browserSession?.id === task) await browserSession.load();
+}
+let browserDevice: "desktop" | "mobile" = "desktop";
+/** The full-page capture for one size in one preview run, or -1. */
+function previewCapture(pages: BrowserPage[], run: number, device: string): number {
+  for (let i = pages.length - 1; i >= 0; i--) if (pages[i]!.run === run && pages[i]!.label === device) return i;
+  return -1;
+}
+const browserAutoOpened = new Set<number>();
+/** Like Claude Code's preview pane: when the agent starts showing a page, the Browser panel
+ *  opens by itself. Only for something happening now, never when reopening an old conversation. */
+function autoOpenBrowser(events: TaskEvent[]): void {
+  const now = Date.now() / 1000;
+  for (const event of events) {
+    if (event.kind !== "browser_started" || browserAutoOpened.has(event.seq)) continue;
+    browserAutoOpened.add(event.seq);
+    if (now - event.time > 30) continue;
+    browserIndex = null;
+    if (el("canvas").hidden || canvasTab !== "browser") openCanvas("browser");
+  }
+}
 function renderBrowser(): void {
-  const latest = browserView(liveEvents), pages = browserHistory(liveEvents);
-  const index = browserIndex !== null && browserIndex < pages.length ? browserIndex : pages.length - 1;
+  const latest = browserView(browserEvents()), pages = browserHistory(browserEvents());
+  let index = browserIndex !== null && browserIndex < pages.length ? browserIndex : pages.length - 1;
+  // Following the newest page: a preview shows its full-page capture at the chosen size.
+  if (browserIndex === null && index >= 0 && pages[index]!.label) {
+    const chosen = previewCapture(pages, pages[index]!.run, browserDevice);
+    if (chosen >= 0) index = chosen;
+  }
   const page = pages[index];
-  const view = { ...latest, ...(page && browserIndex !== null ? { url: page.url, title: page.title, screenshot: page.screenshot, text: page.text } : {}) };
-  const busy = latest.status === "running" || browserOpening?.task === selected;
-  el("browser-current-url").textContent = view.url || "No URL loaded";
-  el("browser-title").textContent = busy ? "Loading…" : view.title || (view.url ? new URL(view.url).hostname : "New tab");
+  const preview = !!page?.label;  // the preview's server has stopped: the capture is a picture, not a live page
+  const view = { ...latest, ...(page && (browserIndex !== null || preview) ? { url: page.url, title: page.title, screenshot: page.screenshot, text: page.text } : {}),
+                 ...(preview ? { interactive: false } : {}) };
+  const busy = latest.status === "running" || browserOpening?.task === browserTask();
+  const shown = view.url ? displayUrl(view.url) : "";
+  el("browser-current-url").textContent = shown || "No page loaded";
+  el("browser-title").textContent = busy ? "Loading…" : view.title || (preview ? "localhost" : view.url ? new URL(view.url).hostname : "New tab");
   const address = input("browser-url");
-  if (document.activeElement !== address) address.value = browserOpening?.task === selected ? browserOpening.url : view.url;
-  setClass(el("browser-lock"), "secure", view.url.startsWith("https:"));
-  el("browser-lock").title = view.url.startsWith("https:") ? "Captured over HTTPS" : "Public web preview";
+  if (document.activeElement !== address) address.value = browserOpening?.task === browserTask() ? browserOpening.url : shown;
+  el("browser-lock").hidden = !view.url.startsWith("https:");
+  el("browser-lock").title = "Secure connection";
   el("browser-progress").hidden = !busy;
   button("browser-back").disabled = busy || !view.screenshot || !view.interactive && !(index > 0);
   button("browser-forward").disabled = busy || !view.screenshot || !view.interactive && !(index >= 0 && index < pages.length - 1);
-  button("browser-reload").disabled = !view.url || busy;
+  button("browser-reload").disabled = !view.url || busy || preview;
+  button("browser-reload").hidden = busy;
+  button("browser-stop").hidden = !busy;
   const link = el("browser-external") as HTMLAnchorElement;
-  link.hidden = !view.url; link.href = view.url || "#";
+  link.hidden = !view.url || preview; link.href = view.url && !preview ? view.url : "#";
   button("browser-external-empty").hidden = !!view.url;
+  const sizes = page?.label ? [previewCapture(pages, page.run, "desktop"), previewCapture(pages, page.run, "mobile")] : [-1, -1];
+  el("browser-device").hidden = !(preview && sizes[0]! >= 0 && sizes[1]! >= 0);
+  for (const option of el("browser-device").querySelectorAll<HTMLButtonElement>("button")) {
+    option.setAttribute("aria-pressed", String(!!page?.label && page.label.startsWith(option.dataset.device ?? "")));
+  }
   el("browser-empty").hidden = !!view.screenshot;
   const mount = el("browser-snapshot"); mount.hidden = !view.screenshot || browserText;
   if (mount.dataset.screenshot !== view.screenshot) {
@@ -1378,11 +1581,11 @@ function renderBrowser(): void {
     mount.dataset.screenshot = view.screenshot;
     mount.replaceChildren();
     if (view.screenshot) {
-      const image = make("img", "browser-image"); image.src = view.screenshot; image.alt = view.title || `Screenshot of ${view.url}`;
+      const image = make("img", "browser-image"); image.src = view.screenshot; image.alt = view.title || `Page at ${shown}`;
       image.draggable = false;
       image.tabIndex = view.interactive ? 0 : -1;
-      image.setAttribute("aria-label", "Browser page. Click a control, then type. Use Page text for readable content.");
       if (view.interactive) {
+        image.setAttribute("aria-label", "Web page. Click to interact, then type.");
         image.addEventListener("click", event => {
           if (browserIndex !== null) return;
           const box = image.getBoundingClientRect(); image.focus();
@@ -1401,26 +1604,29 @@ function renderBrowser(): void {
         image.addEventListener("paste", event => { event.preventDefault(); typeInBrowser(event.clipboardData?.getData("text/plain") ?? ""); });
         image.addEventListener("wheel", event => { event.preventDefault(); void browserAction("scroll", { x: Math.max(-3000, Math.min(3000, event.deltaX)), y: Math.max(-3000, Math.min(3000, event.deltaY)) }); }, { passive: false });
       }
-      image.addEventListener("error", () => { el("browser-status").textContent = "This screenshot is no longer available. Open the URL again to capture it."; });
+      image.addEventListener("error", () => { el("browser-status").textContent = "This page image is no longer available. Open the address again."; setClass(el("browser-footer"), "is-quiet", false); });
       mount.append(image);
       if (restoreFocus) image.focus();
     }
   }
-  el("browser-status").textContent = busy ? "Loading page…" : latest.error ? latest.error
-    : view.screenshot ? view.interactive ? "Interactive page · Click, type, paste or scroll here · Agent and workspace share this page" : `Captured page · ${index + 1} of ${pages.length}` : "Public web · Open a page alongside your project";
-  setClass(el("browser-status"), "browser-error", !!latest.error && !busy);
+  const failed = !!latest.error && !busy;
+  el("browser-status").textContent = busy ? "Loading…" : failed ? latest.error : view.screenshot ? view.title || shown : "";
+  setClass(el("browser-status"), "browser-error", failed);
+  setClass(el("browser-footer"), "is-quiet", !failed);
   button("browser-open").disabled = busy;
   button("browser-stop").disabled = !busy;
   const history = select("browser-history"), signature = pages.map(p => p.screenshot).join(",");
   if (history.dataset.pages !== signature) {
     history.dataset.pages = signature;
     history.replaceChildren(...(pages.length ? pages.map((p, i) => {
-      const option = make("option", "", p.title || new URL(p.url).hostname); option.value = String(i); return option;
-    }) : [make("option", "", "No captured pages")]));
+      const name = p.title || (p.label ? "localhost" : new URL(p.url).hostname);
+      const option = make("option", "", p.label ? `${name} · ${p.label}` : name); option.value = String(i); return option;
+    }) : [make("option", "", "No pages yet")]));
   }
   history.value = String(index); history.disabled = !pages.length;
   button("browser-text-toggle").disabled = !view.screenshot;
   button("browser-text-toggle").setAttribute("aria-pressed", String(browserText));
+  button("browser-text-toggle").textContent = browserText ? "Show page" : "Show page text";
   el("browser-page-text").hidden = !browserText || !view.screenshot;
   el("browser-page-text").textContent = view.text || "No readable text was captured from this page.";
 }
@@ -1431,6 +1637,21 @@ select("browser-zoom").addEventListener("change", () => {
   mount.style.flexShrink = "0";
 });
 button("browser-text-toggle").onclick = () => { browserText = !browserText; renderBrowser(); };
+// The More menu closes like any menu: on a click elsewhere or Escape.
+document.addEventListener?.("click", event => {
+  const menu = document.querySelector?.<HTMLDetailsElement>(".browser-menu");
+  if (menu?.open && !menu.contains(event.target as Node)) menu.open = false;
+});
+document.addEventListener?.("keydown", event => {
+  const menu = document.querySelector?.<HTMLDetailsElement>(".browser-menu");
+  if (event.key === "Escape" && menu?.open) { menu.open = false; menu.querySelector("summary")?.focus(); }
+});
+for (const option of el("browser-device").querySelectorAll<HTMLButtonElement>("button")) option.addEventListener("click", () => {
+  browserDevice = option.dataset.device === "mobile" ? "mobile" : "desktop";
+  const pages = browserHistory(browserEvents()), current = browserIndex !== null ? pages[browserIndex] : undefined;
+  if (current?.label) { const match = previewCapture(pages, current.run, browserDevice); if (match >= 0) browserIndex = match; }
+  renderBrowser();
+});
 button("browser-example").onclick = () => { void openPage("https://example.com/"); };
 el("browser-viewport").addEventListener("keydown", (event: KeyboardEvent) => {
   if (event.ctrlKey && event.key.toLowerCase() === "l") { event.preventDefault(); input("browser-url").focus(); input("browser-url").select(); }
@@ -1442,28 +1663,125 @@ async function loadPlan(task: string): Promise<void> {
   if (task !== selected || epoch !== viewEpoch) return;
   currentPlan = plan; renderPlanner();
 }
-function renderPlanner(): void {
-  const content = currentPlan?.content ?? '';
-  el('planner-empty').hidden = !!content;
-  const mount = el('planner-content'); mount.hidden = !content;
-  if (mount.dataset.content !== content) { mount.dataset.content = content; mount.replaceChildren(...(content ? [richText(content)] : [])); }
-  button('planner-create').disabled = !selected || !!currentPlan?.planner_id || !isTerminal(selectedState);
-  button('planner-build').disabled = !content || !isTerminal(selectedState) || currentPlan?.built_revision === currentPlan?.revision;
-  el('planner-note').textContent = content ? `PLAN.md · revision ${currentPlan?.revision}. Review before Build. Files change only through Apply.` : 'Plans are reviewed before building. Workspace files change only through Apply.';
-}
-function renderChecklist(): void {
-  const view = taskChecklist(liveEvents);
-  el('tasklist-tab').hidden = !view.used;
-  const list = el('task-checklist'); list.replaceChildren();
-  const labels = { todo: 'To do', in_progress: 'In progress', done: 'Done' };
-  const symbols = { todo: '○', in_progress: '●', done: '✓' };
-  for (const task of view.tasks) {
-    const row = make('li', 'checklist-step'); row.dataset.active = String(task.status === 'in_progress');
-    const marker = make('span', 'checklist-icon', symbols[task.status]); marker.setAttribute('aria-hidden', 'true');
-    row.append(marker, make('span', 'checklist-status', labels[task.status]), make('span', '', task.title));
-    list.append(row);
+/** Every plan in the project, opened and built here without leaving the conversation on screen. */
+let plans: PlanSummary[] = [], plansLoaded = false, plansTimer: ReturnType<typeof setTimeout> | undefined;
+const plansOpen = new Set<string>();
+let planBusy = "";
+async function loadPlans(): Promise<void> {
+  if (plansTimer !== undefined) { clearTimeout(plansTimer); plansTimer = undefined; }
+  plans = parsePlans(await api('/api/plans'));
+  plansLoaded = true;
+  renderPlanner();
+  // While a plan is being written or built, keep the list current.
+  if (plans.some(plan => planStatus(plan).kind === 'running') && canvasTab === 'planner' && !el('canvas').hidden) {
+    plansTimer = setTimeout(() => { void loadPlans().catch(() => undefined); }, 2000);
   }
-  if (view.used && !view.tasks.length) list.append(make('li', '', 'No checklist steps.'));
+}
+function renderPlanner(): void {
+  if (canvasTab !== 'planner' || el('canvas').hidden) return;
+  const list = el('planner-list');
+  el('planner-empty').hidden = plans.length > 0 || !plansLoaded || !el('planner-form').hidden;
+  list.hidden = !plans.length;
+  el('planner-count').textContent = plans.length ? String(plans.length) : '';
+  // The plan of the conversation on screen opens by itself.
+  const own = plans.find(plan => plan.task_id === selected || plan.planner_id === selected);
+  if (own && !list.dataset.opened?.split(',').includes(own.task_id)) { plansOpen.add(own.task_id); list.dataset.opened = [list.dataset.opened ?? '', own.task_id].join(','); }
+  list.replaceChildren(...plans.map(plan => {
+    const status = planStatus(plan), open = plansOpen.has(plan.task_id), title = planTitle(plan);
+    const item = make('li', 'plan-item');
+    const row = make('button', 'plan-row'); row.type = 'button';
+    row.setAttribute('aria-expanded', String(open));
+    const badge = make('span', 'plan-status', status.label); badge.dataset.kind = status.kind;
+    const meta = [plan.revision ? `Revision ${plan.revision}` : '', plan.updated ? when(plan.updated) : '', plan === own ? 'This conversation' : ''].filter(Boolean).join(' · ');
+    row.append(icon('chevron'), make('span', 'plan-title', title), badge, make('span', 'plan-meta', meta));
+    row.title = title;
+    row.onclick = () => { if (plansOpen.has(plan.task_id)) plansOpen.delete(plan.task_id); else plansOpen.add(plan.task_id); renderPlanner(); };
+    item.append(row);
+    if (!open) return item;
+    const body = make('div', 'plan-body');
+    if (plan.content) { const content = richText(plan.content); content.classList.add('plan-content'); body.append(content); }
+    else body.append(make('p', 'plan-waiting', status.kind === 'running' ? 'The planner is reading the project. The plan appears here when it is written.'
+      : status.kind === 'failed' ? 'The planner stopped before writing a plan. Open its conversation to see why.' : 'No plan has been written yet.'));
+    const actions = make('div', 'plan-actions');
+    const action = (label: string, className: string, run: () => void | Promise<void>, disabled = false) => {
+      const control = make('button', `small ${className}`, label); control.type = 'button'; control.disabled = disabled || !!planBusy;
+      control.onclick = () => { void run(); };
+      actions.append(control);
+    };
+    if (status.kind === 'ready') action(planBusy === plan.task_id ? 'Starting build…' : 'Build', 'primary', () => buildPlan(plan));
+    action('Discuss plan', 'ghost', () => openConversation(plan.planner_id));
+    if (plan.built_revision) action('Open build', 'ghost', () => openConversation(plan.task_id));
+    body.append(actions);
+    item.append(body);
+    return item;
+  }));
+}
+async function openConversation(task: string): Promise<void> {
+  if (task === selected) return;
+  selectTask(task); await loadHistory();
+}
+async function createPlan(objective: string): Promise<void> {
+  const request = buildTaskRequest({ objective, mode: 'plan', verification: 'syntax', approveExecution: false, approveExternal: input('external').checked,
+    edits: '[]', modelProfile: modelOverride?.id, agentProfile: (el('agent-profile') as HTMLSelectElement).value ?? '' });
+  const created = await api<{ id: string }>('/api/tasks', request);
+  await loadPlans();
+  const plan = plans.find(item => item.planner_id === created.id);
+  if (plan) { plansOpen.add(plan.task_id); renderPlanner(); }
+  el('planner-note').textContent = 'Planning started.';
+  void loadHistory().catch(() => undefined);
+}
+/** Build hands the reviewed revision to the code agent in the plan's own conversation. */
+async function buildPlan(plan: PlanSummary): Promise<void> {
+  if (planBusy) return;
+  planBusy = plan.task_id; renderPlanner();
+  try {
+    const request = composerRequest('Execute the plan based on the PLAN.md file.', undefined, 'agent');
+    await api(`/api/tasks/${plan.task_id}/planner/build`, { ...request, confirm: true, revision: plan.revision, planner_id: plan.planner_id });
+    // From the plan's own chat, the build is the next step there; elsewhere the chat stays put.
+    if (selected === plan.planner_id) await openConversation(plan.task_id);
+    el('planner-note').textContent = `Building “${planTitle(plan)}”.`;
+    message(`Building “${planTitle(plan)}”. Open build to follow it.`);
+  } catch (error) { message(error instanceof Error ? error.message : 'Could not build this plan', true); }
+  finally { planBusy = ''; await loadPlans().catch(() => renderPlanner()); }
+}
+function showPlanForm(show: boolean): void {
+  el('planner-form').hidden = !show;
+  button('planner-create').hidden = show;
+  renderPlanner();
+  if (show) textarea('planner-objective').focus();
+}
+el('planner-create').addEventListener('click', () => showPlanForm(true));
+el('planner-cancel').addEventListener('click', () => { textarea('planner-objective').value = ''; showPlanForm(false); });
+el('planner-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const objective = textarea('planner-objective').value.trim();
+  if (!objective || button('planner-submit').disabled) return;
+  button('planner-submit').disabled = true;
+  try { await createPlan(objective); textarea('planner-objective').value = ''; showPlanForm(false); }
+  catch (error) { message(error instanceof Error ? error.message : 'Could not start planning', true); }
+  finally { button('planner-submit').disabled = false; }
+});
+textarea('planner-objective').addEventListener('keydown', (event: KeyboardEvent) => {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); el('planner-form').dispatchEvent(new Event('submit', { cancelable: true })); }
+  if (event.key === 'Escape') button('planner-cancel').click();
+});
+function renderChecklist(): void {
+  const view = taskChecklist(liveEvents), list = el('task-checklist');
+  const done = view.tasks.filter(task => task.status === 'done').length;
+  el('checklist-count').textContent = view.tasks.length ? `${done} of ${view.tasks.length} done` : '';
+  el('checklist-progress').hidden = !view.tasks.length;
+  el('checklist-bar').setAttribute('style', `width: ${view.tasks.length ? Math.round(done / view.tasks.length * 100) : 0}%`);
+  el('checklist-empty').hidden = view.tasks.length > 0;
+  el('checklist-empty-text').textContent = selected
+    ? 'When the agent works through a multi-step task, its steps and progress show here.'
+    : 'Open a conversation to see the steps its agent is working through.';
+  const labels = { todo: 'To do', in_progress: 'In progress', done: 'Done' };
+  list.replaceChildren(...view.tasks.map(task => {
+    const row = make('li', 'checklist-step'); row.dataset.status = task.status;
+    const marker = make('span', 'checklist-icon'); marker.setAttribute('aria-hidden', 'true');
+    row.append(marker, make('span', 'checklist-title', task.title), make('span', 'sr-only', ` (${labels[task.status]})`));
+    return row;
+  }));
 }
 
 async function enterPlanning(): Promise<void> {
@@ -1493,32 +1811,30 @@ async function buildReviewedPlan(expectedRevision?: number, expectedPlanner?: st
     selectTask(result.id); await loadHistory(); await observe();
   } catch (error) { message(error instanceof Error ? error.message : 'Could not build this plan', true); }
 }
-el('planner-create').addEventListener('click', () => { void enterPlanning().catch(error => message(String(error), true)); });
-el('planner-build').addEventListener('click', () => { void buildReviewedPlan(); });
 
 async function openPage(url: string): Promise<void> {
   browserScope++; browserTypedText = "";
   if (browserTypeTimer !== undefined) clearTimeout(browserTypeTimer);
-  if (browserOpening?.task === selected && selected) return;
+  if (browserOpening && browserOpening.task === browserTask()) return;
   let task: string | null = null;
   try {
-    if (!selected) {
+    // Without a conversation the page opens in a browser session of its own, shown here
+    // without replacing the start screen.
+    if (!selected && !browserSession) {
       const session = await api<{ id: string }>("/api/browser/sessions", { approve_browser: true, approve_execution: true });
-      selectTask(session.id);
-      void loadHistory().catch(() => undefined);
-      openCanvas("browser");
+      browserSession = toolSession(session.id, () => renderBrowser());
+      if (el("canvas").hidden || canvasTab !== "browser") openCanvas("browser");
     }
-    task = selected;
+    task = browserTask();
     if (!task) return;
     browserIndex = null; browserOpening = { task, url }; renderBrowser();
     // Typing an address and pressing Go is the user's own explicit request for this one page.
     const viewport = browserViewport();
     if (viewport) browserViewportKey = `${task}:${viewport.width}:${viewport.height}`;
     const capture = api(`/api/tasks/${task}/browser`, { url, viewport, approve_browser: true, approve_execution: true });
-    watching = true; startStream(task);
-    await capture;
+    await followBrowser(task, capture);
     browserOpening = null;
-    if (selected === task) { watching = true; await observe(); }
+    await refreshBrowser(task);
   } catch (error) { message(error instanceof Error ? error.message : "Browser capture failed", true); }
   finally {
     if (browserOpening?.task === task) browserOpening = null;
@@ -1532,19 +1848,20 @@ el("browser-form").addEventListener("submit", event => {
   if (url) void openPage(url);
 });
 el("browser-back").addEventListener("click", () => {
-  if (browserView(liveEvents).interactive) { void browserAction("back", {}); return; }
-  const count = browserHistory(liveEvents).length;
+  if (browserView(browserEvents()).interactive) { void browserAction("back", {}); return; }
+  const count = browserHistory(browserEvents()).length;
   browserIndex = Math.max(0, (browserIndex ?? count - 1) - 1); renderBrowser();
 });
 el("browser-forward").addEventListener("click", () => {
-  if (browserView(liveEvents).interactive) { void browserAction("forward", {}); return; }
-  const count = browserHistory(liveEvents).length;
+  if (browserView(browserEvents()).interactive) { void browserAction("forward", {}); return; }
+  const count = browserHistory(browserEvents()).length;
   const next = (browserIndex ?? count - 1) + 1;
   browserIndex = next >= count - 1 ? null : next; renderBrowser();
 });
-el("browser-reload").addEventListener("click", () => { if (browserView(liveEvents).interactive) { void browserAction("reload", {}); return; } const url = el("browser-current-url").textContent ?? ""; if (url.startsWith("http")) void openPage(url); });
+el("browser-reload").addEventListener("click", () => { if (browserView(browserEvents()).interactive) { void browserAction("reload", {}); return; } const url = el("browser-current-url").textContent ?? ""; if (url.startsWith("http")) void openPage(url); });
 el("browser-stop").addEventListener("click", () => {
-  if (selected) void api(`/api/tasks/${selected}/browser/stop`, {}).catch(error => message(String(error), true));
+  const task = browserTask();
+  if (task) void api(`/api/tasks/${task}/browser/stop`, {}).catch(error => message(String(error), true));
 });
 
 async function loadBrowserSettings(): Promise<void> {
@@ -1983,6 +2300,7 @@ async function project(): Promise<void> {
   projectFileSet = new Set(projectFiles);
   projectImages = Array.isArray((data as Project & { images?: unknown }).images) ? ((data as Project & { images: unknown[] }).images).filter((p): p is string => typeof p === "string") : [];
   if (!tabsRestored) { tabsRestored = true; restoreTabs(); }
+  if (!terminalsRestored) { terminalsRestored = true; void restoreTerminals().catch(() => undefined); }
   const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
   const summary = `${plural(projectFiles.length, "file")} · ${plural(data.python_tests.length, "test")}`;
   el("project-name").textContent = data.name;
@@ -2273,8 +2591,9 @@ function startStream(id: string): void {
     if (record.kind === "agent_message" || record.kind === "agent_tool") { replyPaint.cancel(); pendingReply = ""; showLiveReply(""); }
     streamPaint.schedule();
     if (record.kind === "terminal_command" || record.kind === "terminal_output" || isTerminal(record.kind)) terminalPaint.schedule();
+    if (record.kind === "browser_started") autoOpenBrowser([record]);
     if (record.kind === "browser_started" || record.kind === "browser_result") renderBrowser();
-    if (record.kind === 'plan_updated') void loadPlan(id);
+    if (record.kind === 'plan_updated') { void loadPlan(id); void loadPlans().catch(() => undefined); }
     if (record.kind === 'task_tracker') renderChecklist();
     if ((record.kind === "agent_model" || record.kind === "running") && canvasTab === "usage" && !el("canvas").hidden) renderUsage();
     if (record.kind === "running" || isTerminal(record.kind)) {
@@ -2326,6 +2645,7 @@ async function observe(force = false): Promise<void> {
       observedTaskMode = task.request.mode || 'unknown'; syncMode(); syncComposer();
     }
     renderTerminal();
+    autoOpenBrowser(liveEvents);
     renderBrowser();
     if (canvasTab === "usage") renderUsage();
     renderChecklist();
@@ -2950,12 +3270,12 @@ try {
   select("run-mode").value = ["ask", "auto", "plan", "classic"].includes(mode) ? mode : "auto";
 } catch { void 0; }
 
-function composerRequest(text: string, goalMaxTurns?: number) {
+function composerRequest(text: string, goalMaxTurns?: number, mode?: Mode) {
   const simple = runMode();
   return buildTaskRequest({
     confirmation: confirmationForRunMode(simple),
     modelProfile: modelOverride?.id, attachments: attached.map(file => file.id), goalMaxTurns,
-    objective: text, mode: parseMode(select("mode").value),
+    objective: text, mode: mode ?? parseMode(select("mode").value),
     edits: textarea("edits").value, verification: parseVerification(select("verification").value),
     approveExecution: input("execution").checked, approveExternal: input("external").checked,
     approveBrowser: input("browser-approval").checked,
@@ -3580,7 +3900,7 @@ canvasGrip.addEventListener("dblclick", () => setCanvasWidth(null));
 
 // --- command menu (Ctrl+K) ---------------------------------------------------------
 interface Command { label: string; keywords?: string; hint?: string; icon: string; run: () => void }
-const PANEL_TITLES: Record<string, string> = { changes: "Changes", files: "Files", terminal: "Terminal", browser: "Browser", planner: "Planner", usage: "Usage", git: "Git" };
+const PANEL_TITLES: Record<string, string> = { changes: "Changes", files: "Files", terminal: "Terminal", browser: "Browser", planner: "Planner", tasklist: "Task List", usage: "Usage", git: "Git" };
 let paletteItems: Command[] = [], paletteIndex = 0;
 function paletteCommands(): Command[] {
   const task = selected;
@@ -3604,7 +3924,7 @@ function paletteCommands(): Command[] {
     { label: showArchived ? "Hide archived conversations" : "Show archived conversations", icon: "archive", run: () => button("show-archived").click() },
     ...["system", "light", "dark"].map(theme => ({ label: `Appearance: ${theme[0]!.toUpperCase()}${theme.slice(1)}`, icon: "sun", keywords: "theme dark mode", run: () => { themeSelect.value = theme; themeSelect.dispatchEvent(new Event("change")); } })),
   );
-  const conversations = lastTasks.filter(item => item.id !== task).map(item => ({
+  const conversations = lastTasks.filter(item => item.id !== task && !item.session).map(item => ({
     label: conversationLabel(item), keywords: `${item.folder ?? ""} ${(item.tags ?? []).join(" ")} conversation`,
     hint: item.folder || (item.archived ? "Archived" : ""), icon: "list",
     run: () => { selectTask(item.id); },
@@ -3757,7 +4077,7 @@ function fillComposer(text: string): void {
 function renderOnboarding(): void {
   const steps = [
     { done: modelReady, label: "Set up a model", detail: "Add a model profile and its API key, or a local server.", action: "Open Models", run: () => openSettings("models") },
-    { done: lastTasks.length > 0, label: "Say hello", detail: "Ask Dikdik about this project.", action: "Try it", run: () => fillComposer("Hello! Give me a quick tour of this project: what it does and how it is organised.") },
+    { done: lastTasks.some(item => !item.session), label: "Say hello", detail: "Ask Dikdik about this project.", action: "Try it", run: () => fillComposer("Hello! Give me a quick tour of this project: what it does and how it is organised.") },
     { done: storageGet("dikdik.onboarding.applied") === "1", label: "Review and apply a change", detail: "Let Dikdik fix something, read the diff, then Apply.", action: "Try it", run: () => fillComposer("Find one small bug or rough edge in this project and fix it.") },
   ];
   const box = el("onboarding");

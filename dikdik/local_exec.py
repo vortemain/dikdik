@@ -34,6 +34,32 @@ def check_project_search(command: str) -> None:
                          "If it is not found, ask the user to open the correct project instead of scanning filesystem roots.")
 
 
+CD_TARGET = re.compile(r'''(?:^|[;&|(]\s*)(?:cd|pushd|Set-Location)\s+(['"]?)([^\s;&|'"]+)\1''', re.I)
+
+
+def check_command_scope(command: str, root: Path) -> None:
+    """Commands run in the project folder; refuse one that moves to an absolute path outside it
+    (another project of the user's, or the real project behind a copy). Not a sandbox: relative
+    paths and paths inside the project stay allowed."""
+    base = Path(root).resolve()
+    for match in CD_TARGET.finditer(command.strip()):
+        target = match.group(2)
+        posix = re.match(r"^/([A-Za-z])(/.*)?$", target)  # Git Bash /c/... spelling
+        if posix and os.name == "nt":
+            target = f"{posix.group(1)}:{posix.group(2) or '/'}"
+        if not (target.startswith(("/", "\\", "~")) or re.match(r"^[A-Za-z]:[\\/]", target)):
+            continue
+        try:
+            resolved = Path(os.path.expanduser(target)).resolve()
+        except OSError:
+            continue
+        if not resolved.exists():
+            continue  # cd fails and the command stays in the project (a /workspace habit)
+        if resolved != base and base not in resolved.parents:
+            raise ValueError(f"Commands run in the project folder ({base.as_posix()}); do not cd to {match.group(2)} outside it. "
+                             "Use paths relative to the project root.")
+
+
 class _ProcessTree:
     """Keep descendants controllable even when their original shell exits."""
     def __init__(self):
@@ -75,6 +101,15 @@ class _ProcessTree:
         if self.job is not None:
             self.api.CloseHandle(self.job)
             self.job = None
+
+
+# Commands write project files as UTF-8 unless the user's environment says otherwise:
+# Python on Windows otherwise writes in the ANSI code page and corrupts source files.
+UTF8_ENV = {"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+
+
+def command_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    return {**UTF8_ENV, **os.environ, **(env or {})}
 
 
 def shell_argv(command: str) -> tuple[list[str], str]:
@@ -124,8 +159,12 @@ def _stop(process: subprocess.Popen) -> None:
 
 def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 120,
         on_chunk: Callable[[str], None] | None = None, env: dict[str, str] | None = None,
-        output_limit: int = OUTPUT_LIMIT) -> dict:
-    """Run one command in `root`. Status: passed, failed, timed_out, cancelled or output_limit."""
+        output_limit: int = OUTPUT_LIMIT, keep_running: bool = False) -> dict:
+    """Run one command in `root`. Status: passed, failed, timed_out, cancelled or output_limit.
+
+    With ``keep_running`` (checks), a noisy command is not stopped at the output limit: it runs to
+    its exit code, keeping the start and the end of its output (failures are usually summarised last).
+    """
     if not isinstance(command, str) or not command.strip() or len(command) > 4000:
         raise ValueError("Command must contain 1-4000 characters")
     argv, shell = shell_argv(command)
@@ -137,7 +176,7 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
         return {"status": "failed", "exit_code": None, "output": "Could not create a supervised command process tree.",
                 "shell": shell, "runs_on": "this computer"}
     try:
-        process = subprocess.Popen(argv, cwd=root, env={**os.environ, **(env or {})}, stdin=subprocess.DEVNULL,
+        process = subprocess.Popen(argv, cwd=root, env=command_env(env), stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags,
                                    start_new_session=os.name != "nt")
     except OSError as exc:
@@ -153,6 +192,7 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
         return {"status": "failed", "exit_code": process.poll(), "output": "Could not supervise the command's process tree safely.",
                 "shell": shell, "runs_on": "this computer"}
     output, size, over = [], 0, threading.Event()
+    tail_text = []  # with keep_running: the newest output past the limit
     closing_output = threading.Event()
 
     def read():
@@ -172,8 +212,12 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
                 output.append(kept)
                 if on_chunk is not None:
                     on_chunk(kept)
+            elif keep_running:
+                tail_text.append(text)
+                while sum(map(len, tail_text)) > output_limit // 2 and len(tail_text) > 1:
+                    tail_text.pop(0)
             size += len(text)
-            if size >= output_limit:
+            if size >= output_limit and not keep_running:
                 over.set()
         tail = decoder.decode(b"", final=True)
         if tail and size < output_limit:
@@ -208,7 +252,10 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
     code = process.returncode
     if status is None:
         status = "passed" if code == 0 else "failed"
-    return {"status": status, "exit_code": code, "output": "".join(output), "shell": shell,
+    text = "".join(output)
+    if tail_text:
+        text = text[: output_limit // 2] + f"\n[... {size - output_limit // 2 - len(''.join(tail_text))} characters omitted ...]\n" + "".join(tail_text)[-(output_limit // 2):]
+    return {"status": status, "exit_code": code, "output": text, "shell": shell,
             "seconds": round(time.monotonic() - started, 3), "runs_on": "this computer"}
 
 
@@ -250,7 +297,7 @@ def run_tests(root: Path, runners: list[dict], cancel: threading.Event, on_chunk
         cwd = (root / runner.get("cwd", "")).resolve()
         if cwd != root.resolve() and root.resolve() not in cwd.parents:
             return {"kind": "tests", "status": "blocked", "error": "Validation directory must stay inside the workspace"}
-        result = run(cwd, command, cancel, timeout=runner.get("timeout", 300), on_chunk=on_chunk)
+        result = run(cwd, command, cancel, timeout=runner.get("timeout", 300), on_chunk=on_chunk, keep_running=True)
         runs.append({"kind": runner["kind"], "label": runner["label"], "command": command, **result})
     if len(runs) == 1:
         return runs[0]
@@ -277,7 +324,7 @@ class BackgroundShells:
         shell_id = uuid.uuid4().hex[:12]
         argv, shell_name = shell_argv(command)
         flags = _creation_flags()
-        process = subprocess.Popen(argv, cwd=root, env={**os.environ, **(env or {})}, stdin=subprocess.DEVNULL,
+        process = subprocess.Popen(argv, cwd=root, env=command_env(env), stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags,
                                    start_new_session=os.name != "nt")
         entry = {"id": shell_id, "command": command, "shell": shell_name, "pid": process.pid,
@@ -374,3 +421,144 @@ class BackgroundShells:
             thread = entry.get("thread")
             if thread and thread.is_alive():
                 thread.join(timeout=3)
+
+
+# --- pre-existing failures --------------------------------------------------------------
+# A project whose suite already fails must not block every change, nor make the agent
+# "repair" tests it never touched. When a check fails, the same checks run once on a copy
+# of the project as it was before this turn; failures present there too are pre-existing.
+
+LINKED_DIRS = {"node_modules", ".venv", "venv", "target"}  # shared, not copied: installs and build caches
+SKIPPED_DIRS = {".git", ".next", ".nuxt", ".turbo", ".svelte-kit", "dist", "build", "__pycache__", ".pytest_cache", ".mypy_cache"}
+COPY_LIMIT = 300 * 1024 * 1024
+FAILURE_PATTERNS = [
+    re.compile(r"^(?:FAIL|ERROR): (\S+ \([\w.]+\))", re.M),                       # unittest
+    re.compile(r"^(?:FAILED|ERROR) (\S+::\S+)", re.M),                            # pytest
+    re.compile(r"^\s*(?:×|✕|✗|❯ ×)\s+(.+?)(?:\s+\d+(?:\.\d+)?\s*m?s)?\s*$", re.M),   # vitest / jest
+    re.compile(r"^\s*FAIL\s+(\S+\.(?:[cm]?[jt]sx?))", re.M),                       # jest / vitest file summary
+    re.compile(r"^\(fail\) (.+?)(?: \[[\d.]+m?s\])?\s*$", re.M),                    # bun test
+    re.compile(r"^test (\S+) \.\.\. FAILED\s*$", re.M),                             # cargo test
+    re.compile(r"^(\S+?)\(\d+,\d+\): (error TS\d+: .+?)\s*$", re.M),                # tsc; position dropped below
+]
+ESLINT_ROW = re.compile(r"^\s+\d+:\d+\s+error\s+(.+?)\s{2,}(\S+)\s*$")  # message, rule; warnings never fail a run
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def failure_ids(output: str) -> set[str]:
+    """Names of failing tests or errors in runner output. Positions are dropped so an
+    edit that shifts lines does not make an old error look new."""
+    text = ANSI.sub("", output or "")
+    found = set()
+    for pattern in FAILURE_PATTERNS:
+        for match in pattern.finditer(text):
+            found.add(" ".join(group.strip() for group in match.groups() if group))
+    # ESLint's stylish format: a file line, then "  12:5  error  message  rule" rows.
+    current = None
+    for line in text.splitlines():
+        if line and not line[0].isspace() and re.search(r"\.(?:[cm]?[jt]sx?|vue|svelte|astro)$", line.strip()):
+            current = line.strip().replace("\\", "/")
+            continue
+        problem = ESLINT_ROW.match(line)
+        if problem and current:
+            found.add(f"{current} {problem.group(2)} {problem.group(1)}")
+    return found
+
+
+def link_dir(source: Path, target: Path) -> None:
+    """Share a heavy folder such as node_modules instead of copying it."""
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(str(source), str(target))
+    else:
+        target.symlink_to(source, target_is_directory=True)
+
+
+def unlink_dir(target: Path) -> None:
+    # Remove the link itself first so cleanup can never descend into the shared folder.
+    if target.is_symlink() or (os.name == "nt" and target.is_junction()):
+        os.rmdir(target) if os.name == "nt" else target.unlink()
+
+
+def project_copy(root: Path, target: Path) -> list[Path]:
+    """Copy a project for a side run, linking installs and build caches and skipping build
+    output. Returns the links, which the caller removes with unlink_dir before deleting."""
+    links, size = [], 0
+
+    def ignore(directory, names):
+        nonlocal size
+        skipped = []
+        for name in names:
+            path = Path(directory) / name
+            if name in SKIPPED_DIRS or name in LINKED_DIRS and path.is_dir():
+                skipped.append(name)
+                if name in LINKED_DIRS:
+                    links.append((path, target / path.relative_to(root)))
+            elif path.is_file():
+                size += path.stat().st_size
+                if size > COPY_LIMIT:
+                    raise ValueError("Project too large to copy for a baseline check")
+        return skipped
+
+    shutil.copytree(root, target, ignore=ignore, symlinks=True)
+    made = []
+    for source, link in links:
+        link_dir(source, link)
+        made.append(link)
+    return made
+
+
+def run_before_change(root: Path, before: dict[str, str | None], runners: list[dict], cancel: threading.Event) -> dict | None:
+    """Run ``runners`` on a temporary copy of ``root`` with ``before`` restored (None = the
+    file did not exist). The project folder itself is never changed. None if it cannot run."""
+    import tempfile
+    temp = Path(tempfile.mkdtemp(prefix="dikdik-baseline-"))
+    copy, links = temp / "project", []
+    try:
+        links = project_copy(root, copy)
+        for path, text in before.items():
+            target = (copy / path).resolve()
+            if copy.resolve() not in target.parents:
+                continue
+            if text is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(text.encode("utf-8"))
+        result = run_tests(copy, runners, cancel)
+        # Report paths as the project's own, so the same error matches before and after.
+        swap = lambda text: text.replace(str(copy), str(root)).replace(copy.as_posix(), Path(root).as_posix()) if isinstance(text, str) else text
+        result = {**result, "output": swap(result.get("output"))}
+        if isinstance(result.get("runs"), list):
+            result["runs"] = [{**run, "output": swap(run.get("output"))} for run in result["runs"]]
+        return result
+    except (OSError, ValueError, shutil.Error):
+        return None
+    finally:
+        for link in links:
+            try:
+                unlink_dir(link)
+            except OSError:
+                pass
+        if not any(link.exists() for link in links):
+            shutil.rmtree(temp, ignore_errors=True)
+
+
+def preexisting_failures(after: dict, before: dict | None) -> list[str] | None:
+    """The failures in ``after`` when every one of them also failed in ``before``; None when
+    something new fails or a failure cannot be identified (then the change stays failed)."""
+    if before is None or after.get("status") != "failed":
+        return None
+    runs = lambda result: result["runs"] if isinstance(result.get("runs"), list) else [result]
+    previous = {run.get("label"): run for run in runs(before)}
+    found = set()
+    for run in runs(after):
+        if run.get("status") == "passed":
+            continue
+        prior = previous.get(run.get("label"))
+        if run.get("status") != "failed" or prior is None or prior.get("status") != "failed":
+            return None
+        now, then = failure_ids(run.get("output", "")), failure_ids(prior.get("output", ""))
+        if not now or now - then:
+            return None
+        found |= now
+    return sorted(found) or None
