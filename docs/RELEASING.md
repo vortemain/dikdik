@@ -36,7 +36,8 @@ check prevents automatic publication. No PyPI or npm upload occurs.
    ```
 
 4. The tag workflow repeats checks and publishes the release assets and notes.
-   Tags starting with `v0.` or containing a hyphen are prereleases. Published
+   A plain version tag (v0.3.6) becomes a full release marked Latest; only a tag
+   with a suffix (v0.4.0-rc1) is a prerelease. Published
    tags/assets must not be rewritten; fix problems in a new version.
 
 ## Build and verify locally

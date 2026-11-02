@@ -123,9 +123,13 @@ jobs:
             echo "Release already exists; preserving its published assets."
             exit 0
           fi
-          flags=()
-          if [[ "$RELEASE_TAG" == v0.* || "$RELEASE_TAG" == *-* ]]; then
-            flags+=(--prerelease)
+          # Only suffixed tags (v0.4.0-rc1, v1.0.0-beta.2) are prereleases. Every plain version tag is
+          # a full release and becomes GitHub's "Latest", so the repository page and the
+          # releases/latest link point at the newest build (all 0.x tags used to be prereleases,
+          # which left "Latest" stuck on the one release that had been switched by hand).
+          flags=(--latest)
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            flags=(--prerelease --latest=false)
           fi
           gh release create "$RELEASE_TAG" dist/* --verify-tag \
             --title "Dikdik $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md" "${flags[@]}"
