@@ -1,5 +1,6 @@
 """Original DIKDIK adapter for the public chat-completions tool-call protocol."""
 
+import dataclasses
 import json
 import uuid
 from typing import Callable
@@ -33,20 +34,21 @@ def reasoning_context(message: dict) -> dict:
 class CompatibleAgentModel:
     def __init__(self, approve_external: bool, resolve: Callable[[], ModelConfig] = from_environment,
                  on_text: Callable[[str], None] | None = None, cancel=None,
-                 fallback_resolve: Callable[[], ModelConfig] | None = None):
+                 fallback_resolve: Callable[[], ModelConfig] | None = None, context_limit: int | None = None):
         if approve_external is not True:
             raise ValueError("Explicit external-code disclosure approval required")
         self._resolve, self._config, self._on_text = resolve, None, on_text
         self._cancel = cancel
         self._fallback_resolve = fallback_resolve
         self._fallback_config: ModelConfig | None = None
+        self._context_limit = context_limit
         self._output_tokens = None
         self._repair_hint = ""
         self._plain_response = False
 
     def respond(self, messages: list[dict], tools: list[dict]) -> ModelResponse:
         # Resolved once per task, on first use, so the key is decrypted only when needed.
-        self._config = self._config or self._resolve()
+        self._config = self._sized(self._config or self._resolve())
         configured = (self._config.options or {}).get("max_output_tokens")
         if self._output_tokens is None:
             self._output_tokens = configured or DEFAULT_AGENT_OUTPUT_TOKENS
@@ -58,7 +60,7 @@ class CompatibleAgentModel:
             if (exc.kind in {"authentication", "quota", "not_found", "unreachable"} and
                     self._fallback_resolve is not None and self._fallback_config is None):
                 try:
-                    self._fallback_config = self._fallback_resolve()
+                    self._fallback_config = self._sized(self._fallback_resolve())
                     self._config = self._fallback_config
                     configured = (self._config.options or {}).get("max_output_tokens")
                     self._output_tokens = configured or DEFAULT_AGENT_OUTPUT_TOKENS
@@ -66,6 +68,14 @@ class CompatibleAgentModel:
                 except ProviderError:
                     pass  # fallback also failed; raise the original error
             raise
+
+    def _sized(self, config: ModelConfig) -> ModelConfig:
+        """Carry the agent's working-context budget to the transport, unless the profile set
+        its own; a repair hint may add a little on top of the agent's bounded messages."""
+        options = config.options or {}
+        if self._context_limit is None or options.get("context_limit_bytes"):
+            return config
+        return dataclasses.replace(config, options={**options, "context_limit_bytes": self._context_limit + 16 * 1024})
 
     def _do_respond(self, messages: list[dict], tools: list[dict]) -> ModelResponse:
         configured = (self._config.options or {}).get("max_output_tokens")

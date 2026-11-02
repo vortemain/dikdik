@@ -95,7 +95,7 @@ class WorkspaceFileTests(unittest.TestCase):
         outcome = run_agent(original, 'Change cover color', Model(), None, lambda *args: None,
                             threading.Event(), workspace=self.workspace)
         self.assertEqual(outcome.state, 'completed', outcome.error)
-        self.assertIn('fill=\\"red\\"', seen[2][-1]['content'])
+        self.assertIn('	fill="red"', seen[2][-1]['content'])  # unescaped, ready to copy into edit_file
         self.assertEqual(outcome.files[self.path], self.text.replace('fill="red"', 'fill="blue"'))
         self.assertEqual(original[self.path], self.text)
         self.assertEqual((self.root / self.path).read_bytes().decode(), self.text)

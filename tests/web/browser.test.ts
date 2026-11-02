@@ -41,3 +41,20 @@ test("browser history keeps every captured page in order, skipping failures", as
   ]);
   expect(pages.map(page => page.title)).toEqual(["One", "Two"]);
 });
+
+test("preview captures are grouped by run and shown with a localhost address", async () => {
+  const { browserHistory, displayUrl } = await import("../../dikdik/web/contracts");
+  const shot = (c: string) => `/api/tasks/${task}/browser/screenshots/${c.repeat(32)}`;
+  const at = (seq: number, data: Record<string, unknown>, kind = "browser_result"): TaskEvent => ({ seq, task_id: task, time: seq, kind, data });
+  const pages = browserHistory([
+    at(1, {}, "browser_started"),
+    at(2, { status: "passed", url: "http://preview.dikdik.example/", title: "App", screenshot: shot("c"), label: "desktop" }),
+    at(3, { status: "passed", url: "http://preview.dikdik.example/", title: "App", screenshot: shot("d"), label: "mobile" }),
+    at(4, {}, "browser_started"),
+    at(5, { status: "passed", url: "https://example.org/", title: "Site", screenshot: shot("e") }),
+  ]);
+  expect(pages.map(page => [page.label, page.run])).toEqual([["desktop", 1], ["mobile", 1], ["", 4]]);
+  expect(displayUrl("http://preview.dikdik.example/")).toBe("localhost");
+  expect(displayUrl("http://preview.dikdik.example/pricing?plan=pro")).toBe("localhost/pricing?plan=pro");
+  expect(displayUrl("https://example.org/")).toBe("https://example.org/");
+});

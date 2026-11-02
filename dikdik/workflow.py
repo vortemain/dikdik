@@ -23,7 +23,9 @@ def work_request(objective):
 
 def visual_request(objective):
     return not explanatory(objective) and bool(re.search(
-        r"\b(?:design|layout|responsive|navbar|styling|css|visual|ui|ux|webpage|website|frontend|landing\s+page)\b", objective, re.I))
+        r"\b(?:(?:re)?design(?:ed|s)?|layout|responsive|nav\s?bar|header|footer|hero|sidebar|menu|modal|styling|styles?|css|"
+        r"tailwind|visual|ui|ux|webpage|website|frontend|landing\s+page|colou?rs?|fonts?|typography|spacing|padding|margins?|"
+        r"theme|dark\s+mode|animations?|skeleton|separation|seamless|look(?:s)?\s+(?:modern|premium|clean|better))\b", objective, re.I))
 
 
 def interaction_request(objective):

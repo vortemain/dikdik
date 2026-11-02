@@ -178,7 +178,7 @@ class AgentTests(unittest.TestCase):
 
     def test_strict_arguments(self):
         bad = [self.call("read_file", path="app.py", max_lines=True),
-               self.call("read_file", path="app.py", max_lines=201),
+               self.call("read_file", path="app.py", start_line="2"),
                self.call("run_tests", command="anything"),
                self.call("edit_file", path="app.py", before="1"),
                self.call("unknown"), self.call("list_files", query=3)]
@@ -186,6 +186,11 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result.files, self.original)
         self.assertEqual(self.snapshots, [])
         self.assertEqual(sum(d.get("failed", False) for k, d in self.events if k == "tool"), 6)
+
+    def test_out_of_range_budgets_are_clamped_not_failed(self):
+        result, model = self.run_script([[self.call("read_file", path="app.py", max_lines=201)]], budget=AgentBudget(max_model_calls=1))
+        ends = [d for k, d in self.events if k == "tool" and d.get("phase") == "end"]
+        self.assertFalse(ends[0]["failed"], ends[0])
 
     def test_duplicate_ids_and_batch_limit(self):
         for batch in ([ToolCall("same", "run_tests", {}), ToolCall("same", "finish", {})],
@@ -267,7 +272,7 @@ class AgentTests(unittest.TestCase):
                                          [self.edit()]], budget=AgentBudget(max_model_calls=2))
         observation = model.messages[1][-1]["content"]
         self.assertLessEqual(len(observation.encode()), 65536)
-        self.assertTrue(json.loads(observation)["truncated"])
+        self.assertIn("[Partial read. Continue with start_line=", observation)
         result = run_agent(self.original, "x" * 131073, model, self.verify,
                            lambda *args: None, self.cancel)
         self.assertEqual(result.model_calls, 0)
@@ -310,9 +315,9 @@ class AgentTests(unittest.TestCase):
     def test_literal_search_returns_bounded_hits(self):
         self.original["many.txt"] = "value here\n" * 100
         result, model = self.run_script([[self.call("search_text", query="value")], [self.edit()]], budget=AgentBudget(max_model_calls=2))
-        observation = json.loads(model.messages[1][-1]["content"])
-        self.assertEqual(len(observation["matches"]), 40)
-        self.assertTrue(observation["truncated"])
+        observation = model.messages[1][-1]["content"]  # plain path:line:column rows for the model
+        self.assertTrue(observation.startswith("40 matches (more results: offset=40)"))
+        self.assertEqual(len(observation.splitlines()) - 1, 40)
 
     def test_failed_unchanged_candidate_is_not_blindly_executed_again(self):
         checks = []

@@ -2,9 +2,9 @@
 name: ui-ux-design
 description: Produce polished interfaces, not generic AI-looking dashboards. Adapted from nextlevelbuilder/ui-ux-pro-max-skill.
 category: design
-version: "1.0"
+version: "1.1"
 license: MIT
-triggers: "website, web app, UI, component, page layout"
+triggers: "website, web app, UI, UX, component, page layout, redesign, landing page, footer, header, navbar"
 ---
 
 # UI/UX design
@@ -42,6 +42,9 @@ avoiding them.
 
 ## Before declaring a UI done
 
+- Look at the rendered result: `preview_app` with `focus` on the element you
+  changed shows it at desktop and mobile width, and `inspect` gives its exact
+  styles. A change you have not seen rendered is not verified.
 - Look at it at mobile width, not just desktop. If it breaks at 375px, it is
   not done.
 - Check the focus states (tab through it). If there is no visible focus, it is

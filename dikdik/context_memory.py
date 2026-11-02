@@ -86,16 +86,22 @@ def _memory(messages, state, files=None):
                         for item in result["tasks"][:50] if isinstance(item, dict)]
             if name not in READS or result.get("error"):
                 continue
-            selector = {key: args[key] for key in ("path", "query", "id", "resource", "start_line", "start_column", "offset") if key in args}
+            selector = {key: args[key] for key in ("path", "paths", "query", "id", "resource", "start_line", "start_column", "offset") if key in args}
             key = hashlib.sha256(encoded([name, selector]).encode()).hexdigest()[:20]
+            raw = message.get("content") if isinstance(message.get("content"), str) else ""
             text = result.get("content")
+            if not result and raw:
+                text = raw  # read_file and search_text reach the model as plain numbered text
+            elif isinstance(result.get("lines"), list):
+                text = "\n".join(str(line) for line in result["lines"])
             if not isinstance(text, str):
                 text = encoded({k: v for k, v in result.items() if k in {"matches", "files", "tasks", "path", "total_files"}})
+            digest = hashlib.sha256((encoded(result) if result else raw).encode()).hexdigest()
             earlier = observations.pop(key, None) or {}
             item = {"key": key, "tool": name, "selector": selector,
                     "excerpt": excerpt(text), "excerpt_only": True, "provenance": "tool_observation",
-                    "established": earlier.get("established") if earlier.get("observation_sha256") == hashlib.sha256(encoded(result).encode()).hexdigest() else None,
-                    "observation_sha256": hashlib.sha256(encoded(result).encode()).hexdigest()}
+                    "established": earlier.get("established") if earlier.get("observation_sha256") == digest else None,
+                    "observation_sha256": digest}
             item["established"] = item["established"] or round(time.time(), 3)
             path = selector.get("path")
             if files and isinstance(path, str) and isinstance(files.get(path), str):

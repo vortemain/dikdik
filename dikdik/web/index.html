@@ -30,6 +30,8 @@
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></symbol>
     <symbol id="i-file-plus" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M12 11v6m-3-3h6"/></symbol>
     <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16Z"/><path d="m13.5 6.5 4 4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
     <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3Z"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
     <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></symbol>
@@ -276,7 +278,7 @@
           <button class="canvas-tab" type="button" role="tab" data-tab="browser" aria-selected="false">Browser</button>
           <button class="canvas-tab" type="button" role="tab" data-tab="planner" aria-selected="false">Planner</button>
           <button class="canvas-tab" type="button" role="tab" data-tab="usage" aria-selected="false">Usage</button>
-          <button class="canvas-tab" type="button" role="tab" data-tab="tasklist" aria-selected="false" id="tasklist-tab" hidden>Task List</button>
+          <button class="canvas-tab" type="button" role="tab" data-tab="tasklist" aria-selected="false" id="tasklist-tab">Task List</button>
           <button class="canvas-tab" type="button" role="tab" data-tab="git" aria-selected="false">Git<span id="git-count" class="tab-count"></span></button>
         </div>
         <span class="grow"></span>
@@ -346,51 +348,73 @@
       </div>
       <div class="canvas-body terminal-panel" data-pane="terminal" hidden>
         <div class="terminal-toolbar">
-          <span class="terminal-heading">Terminal</span><span class="terminal-session"><svg class="i"><use href="#i-terminal"/></svg><strong id="terminal-runtime">Project terminal</strong></span>
+          <div id="terminal-tabs" class="terminal-tabs" role="tablist" aria-label="Terminals"><div class="terminal-tab" role="presentation" data-active="true"><span class="terminal-tab-name">Terminal</span></div></div>
+          <span class="terminal-session" title="Where commands run"><svg class="i"><use href="#i-terminal"/></svg><span id="terminal-runtime">Local</span></span>
           <span class="grow"></span>
-          <button id="terminal-new" class="ghost small" type="button" title="Open a new local terminal session">＋ New</button>
-          <button id="terminal-copy" class="ghost icon" type="button" aria-label="Copy terminal output" title="Copy output"><svg class="i"><use href="#i-copy"/></svg></button>
-          <button id="terminal-clear" class="ghost icon" type="button" aria-label="Clear terminal display" title="Clear display"><svg class="i"><use href="#i-trash"/></svg></button>
+          <span id="terminal-state" class="sr-only" role="status">Ready</span>
+          <button id="terminal-new" class="term-icon" type="button" aria-label="New terminal" title="New terminal"><svg class="i"><use href="#i-plus"/></svg></button>
+          <button id="terminal-stop" class="term-icon" type="button" aria-label="Stop the running command" title="Stop (Ctrl+C)" disabled><svg class="i"><use href="#i-stop"/></svg></button>
+          <button id="terminal-copy" class="term-icon" type="button" aria-label="Copy terminal output" title="Copy output"><svg class="i"><use href="#i-copy"/></svg></button>
+          <button id="terminal-clear" class="term-icon" type="button" aria-label="Clear terminal" title="Clear (Ctrl+L)"><svg class="i"><use href="#i-trash"/></svg></button>
         </div>
         <div class="terminal-screen" id="terminal-screen">
-          <div id="terminal-empty" class="terminal-welcome"><span class="terminal-welcome-mark" aria-hidden="true">❯_</span><p>Ready when you are.</p><p class="terminal-welcome-project">Run a command in <strong id="terminal-project">your project</strong></p><small>↑ ↓ history · Ctrl+C stop · Ctrl+L clear<br>Each command starts a fresh shell in the folder below.</small></div>
-          <div id="terminal-view" tabindex="0" role="region" aria-label="Terminal command history and output" hidden></div>
+          <div id="terminal-empty" class="terminal-banner"><span id="terminal-project">your project</span></div>
+          <div id="terminal-view" role="log" aria-label="Terminal output" hidden></div>
+          <form id="terminal-form" class="terminal-form">
+            <label class="terminal-prompt"><span id="terminal-prompt-path" class="terminal-prompt-path" aria-hidden="true">project</span><span class="terminal-prompt-mark" aria-hidden="true">$</span><input id="terminal-command" aria-label="Terminal command" maxlength="4000" autocomplete="off" spellcheck="false" required></label>
+            <input id="terminal-cwd" type="hidden" value="">
+            <button id="terminal-run" class="sr-only" type="submit" tabindex="-1">Run</button>
+          </form>
         </div>
-        <form id="terminal-form" class="terminal-form">
-          <div class="terminal-options"><label for="terminal-cwd">Folder</label><input id="terminal-cwd" placeholder="Project root" aria-label="Command working directory relative to project" autocomplete="off" spellcheck="false"><span id="terminal-state" role="status">Ready</span></div>
-          <div class="terminal-prompt"><span class="terminal-prompt-path" id="terminal-prompt-path" aria-hidden="true">project</span><span aria-hidden="true">❯</span><input id="terminal-command" aria-label="Terminal command" placeholder="Enter a command…" maxlength="4000" autocomplete="off" spellcheck="false" required><button id="terminal-run" class="terminal-run" type="submit">Run ↵</button><button id="terminal-stop" class="terminal-stop" type="button" disabled title="Stop running commands (Ctrl+C)">Stop</button></div>
-        </form>
       </div>
       <div class="canvas-body browser-panel" data-pane="browser" hidden>
         <div class="browser-window">
-          <div class="browser-tabbar"><span class="browser-tab"><svg class="i"><use href="#i-globe"/></svg><span id="browser-title">New tab</span></span><span class="browser-mode">Workspace browser</span><span id="browser-current-url" class="sr-only">No URL loaded</span></div>
+          <div class="browser-tabbar"><span class="browser-tab"><svg class="i"><use href="#i-globe"/></svg><span id="browser-title">New tab</span></span><span id="browser-current-url" class="sr-only">No URL loaded</span></div>
           <form id="browser-form" class="browser-toolbar">
-            <button id="browser-back" class="ghost icon" type="button" aria-label="Back" title="Back" disabled><svg class="i flip"><use href="#i-chevron"/></svg></button>
-            <button id="browser-forward" class="ghost icon" type="button" aria-label="Forward" title="Forward" disabled><svg class="i"><use href="#i-chevron"/></svg></button>
-            <button id="browser-reload" class="ghost icon" type="button" aria-label="Reload" title="Load this page again" disabled><svg class="i"><use href="#i-refresh"/></svg></button>
-            <label class="browser-address" for="browser-url"><span id="browser-lock" aria-hidden="true"><svg class="i"><use href="#i-shield"/></svg></span><span class="sr-only">Address</span><input id="browser-url" type="text" inputmode="url" placeholder="Enter a public web address" maxlength="4096" required autocomplete="off" spellcheck="false"></label>
-            <button id="browser-open" type="submit" class="primary small">Go</button>
-            <button id="browser-stop" type="button" class="ghost small" disabled>Stop</button>
-            <a id="browser-external" class="ghost icon browser-external" target="_blank" rel="noopener noreferrer" title="Open in your browser" aria-label="Open in your browser" hidden><svg class="i"><use href="#i-globe"/></svg></a>
+            <button id="browser-back" class="nav-icon" type="button" aria-label="Back" title="Back" disabled><svg class="i flip"><use href="#i-chevron"/></svg></button>
+            <button id="browser-forward" class="nav-icon" type="button" aria-label="Forward" title="Forward" disabled><svg class="i"><use href="#i-chevron"/></svg></button>
+            <button id="browser-reload" class="nav-icon" type="button" aria-label="Reload" title="Reload" disabled><svg class="i"><use href="#i-refresh"/></svg></button>
+            <button id="browser-stop" class="nav-icon" type="button" aria-label="Stop loading" title="Stop loading" hidden disabled><svg class="i"><use href="#i-x"/></svg></button>
+            <label class="browser-address" for="browser-url"><span id="browser-lock" aria-hidden="true"><svg class="i"><use href="#i-lock"/></svg></span><span class="sr-only">Address</span><input id="browser-url" type="text" inputmode="url" placeholder="Enter an address" maxlength="4096" required autocomplete="off" spellcheck="false"></label>
+            <div id="browser-device" class="browser-device" role="group" aria-label="Preview size" hidden><button type="button" data-device="desktop" aria-pressed="true">Desktop</button><button type="button" data-device="mobile" aria-pressed="false">Mobile</button></div>
+            <a id="browser-external" class="nav-icon" target="_blank" rel="noopener noreferrer" title="Open in your browser" aria-label="Open in your browser" hidden><svg class="i"><use href="#i-external"/></svg></a>
+            <details class="browser-menu"><summary class="nav-icon" aria-label="More" title="More"><svg class="i"><use href="#i-more"/></svg></summary>
+              <div class="browser-menu-body">
+                <button id="browser-text-toggle" type="button" aria-pressed="false" disabled>Show page text</button>
+                <label>Zoom <select id="browser-zoom" aria-label="Page zoom"><option value="fit">Fit to panel</option><option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option></select></label>
+                <label>History <select id="browser-history" aria-label="Pages opened in this conversation"><option value="">No pages yet</option></select></label>
+              </div>
+            </details>
+            <button id="browser-open" class="sr-only" type="submit" tabindex="-1">Go</button>
             <button id="browser-external-empty" type="button" hidden disabled></button>
           </form>
           <div id="browser-progress" class="browser-progress" hidden><span></span></div>
-          <div class="browser-tools"><label class="sr-only" for="browser-history">Captured pages</label><select id="browser-history" aria-label="Captured page history"><option value="">No captured pages</option></select><span class="grow"></span><button id="browser-text-toggle" class="ghost small" type="button" aria-pressed="false" disabled>Page text</button><label class="sr-only" for="browser-zoom">Page zoom</label><select id="browser-zoom" aria-label="Page zoom"><option value="fit">Fit</option><option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option></select></div>
           <div class="browser-viewport" id="browser-viewport">
-            <div id="browser-empty" class="browser-home"><span class="browser-home-icon"><svg class="i"><use href="#i-globe"/></svg></span><h3>A window to the web</h3><p>Browse alongside your project.</p><small>Open a public page here. Click controls, type, paste and scroll in the page. Dikdik’s agent can read and interact with the same browser session.</small><button id="browser-example" class="ghost small" type="button">Open example.com</button></div>
+            <div id="browser-empty" class="browser-blank"><p>Enter an address to open a page. When Dikdik previews your app, it opens here.</p><button id="browser-example" type="button" hidden>Open example.com</button></div>
             <div id="browser-snapshot" class="browser-snapshot" hidden></div>
-            <pre id="browser-page-text" class="browser-page-text" tabindex="0" aria-label="Captured page text" hidden></pre>
+            <pre id="browser-page-text" class="browser-page-text" tabindex="0" aria-label="Page text" hidden></pre>
           </div>
-          <div class="browser-footer"><span class="browser-capture-dot" aria-hidden="true"></span><p id="browser-status" class="browser-status" role="status">Ready to explore</p></div>
+          <div id="browser-footer" class="browser-footer is-quiet"><p id="browser-status" class="browser-status" role="status"></p></div>
         </div>
       </div>
       <div class="canvas-body planner-panel" data-pane="planner" hidden>
-        <div class="planner-actions"><button id="planner-create" type="button" class="small">Create a plan</button><button id="planner-build" type="button" class="small primary" disabled>Build plan · Ctrl/⌘↩</button></div>
-        <p id="planner-note" class="browser-status">Plans are reviewed before building. Workspace files change only through Apply.</p>
-        <p id="planner-empty" class="canvas-empty">There is currently no plan for this repo</p><div id="planner-content" class="planner-content" hidden></div>
+        <div class="panel-head"><span class="panel-heading">Plans</span><span id="planner-count" class="panel-count"></span><span class="grow"></span><button id="planner-create" type="button" class="small"><svg class="i"><use href="#i-plus"/></svg>New plan</button></div>
+        <form id="planner-form" class="planner-form" hidden>
+          <label class="sr-only" for="planner-objective">What should be planned?</label>
+          <textarea id="planner-objective" rows="3" maxlength="4000" placeholder="What should change? For example: add password reset to the sign-in page"></textarea>
+          <div class="planner-form-foot"><span class="muted">The planner reads the project and writes a plan. It does not change files.</span><span class="grow"></span><button id="planner-cancel" type="button" class="small ghost">Cancel</button><button id="planner-submit" type="submit" class="small primary">Create plan</button></div>
+        </form>
+        <p id="planner-note" class="sr-only" role="status"></p>
+        <div id="planner-empty" class="canvas-empty"><div><svg class="i"><use href="#i-list"/></svg><h3>No plans yet</h3><p class="muted">Plan a change before building it: the planner studies the project and writes the steps. You review them, then build.</p></div></div>
+        <ol id="planner-list" class="plan-list" hidden></ol>
       </div>
       <div class="canvas-body usage-panel" data-pane="usage" id="usage-panel" hidden></div>
-      <div class="canvas-body" data-pane="tasklist" hidden><p class="browser-status">Progress reported by the agent. This checklist is not verification evidence.</p><ol id="task-checklist" class="task-checklist"></ol></div>
+      <div class="canvas-body tasklist-panel" data-pane="tasklist" hidden>
+        <div class="panel-head"><span class="panel-heading">Steps</span><span id="checklist-count" class="panel-count"></span></div>
+        <div id="checklist-progress" class="checklist-progress" hidden><span id="checklist-bar"></span></div>
+        <div id="checklist-empty" class="canvas-empty"><div><svg class="i"><use href="#i-check"/></svg><h3>No steps yet</h3><p id="checklist-empty-text" class="muted">When the agent works through a multi-step task, its steps and progress show here.</p></div></div>
+        <ol id="task-checklist" class="task-checklist"></ol>
+      </div>
     </aside>
   </div>
 

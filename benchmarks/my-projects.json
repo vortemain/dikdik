@@ -1,0 +1,95 @@
+{
+  "description": "Real requests from past Dikdik runs, replayed on committed exports of these projects. Uncommitted work is never used or changed; dependencies are installed inside each copy by its setup command.",
+  "tasks": [
+    {
+      "name": "footer-redesign",
+      "project": "C:/Projects/new-website",
+      "objective": "change the design of the footer to a modern and premium design",
+      "checks": [
+        {
+          "command": "bun run check",
+          "timeout": 900
+        }
+      ],
+      "targets": {
+        "model_calls": 25,
+        "seconds": 900
+      },
+      "deadline_seconds": 1800,
+      "setup": "bun install"
+    },
+    {
+      "name": "skeleton-images",
+      "project": "C:/Projects/new-website",
+      "objective": "i was thinking can we have the images have skeleton loading as they load rather than showing the broken staff does not look great please fix.",
+      "checks": [
+        {
+          "command": "bun run check",
+          "timeout": 900
+        }
+      ],
+      "targets": {
+        "model_calls": 25,
+        "seconds": 900
+      },
+      "deadline_seconds": 1800,
+      "setup": "bun install"
+    },
+    {
+      "name": "ai-look-question",
+      "project": "C:/Projects/new-website",
+      "objective": "What makes a website look ai -generated?",
+      "checks": [
+        {
+          "changed": []
+        }
+      ],
+      "targets": {
+        "model_calls": 3,
+        "seconds": 90
+      },
+      "max_model_calls": 10
+    },
+    {
+      "name": "navbar-continuity",
+      "project": "C:/Projects/dikdik-website/dikdik-release-hub",
+      "objective": "i want you update the website design not to seem to have a seperation between the navbar and the other parts that is to have a continuation flow perfect",
+      "targets": {
+        "model_calls": 25,
+        "seconds": 900
+      },
+      "deadline_seconds": 1800,
+      "setup": "bun install"
+    },
+    {
+      "name": "api-url-question",
+      "project": "C:/Projects/boreholes-admin-app",
+      "objective": "i want us to change the api url used in the app....can you tell me which url is currently being used?",
+      "checks": [
+        {
+          "changed": []
+        }
+      ],
+      "targets": {
+        "model_calls": 6,
+        "seconds": 120
+      },
+      "max_model_calls": 20
+    },
+    {
+      "name": "greeting",
+      "project": "C:/Projects/dikdik-website/dikdik-release-hub",
+      "objective": "hi",
+      "checks": [
+        {
+          "changed": []
+        }
+      ],
+      "targets": {
+        "model_calls": 1,
+        "seconds": 15
+      },
+      "max_model_calls": 3
+    }
+  ]
+}

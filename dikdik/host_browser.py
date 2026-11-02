@@ -31,6 +31,18 @@ from .browser_network import public_url, resolve_public
 
 PREVIEW_HOST = "preview.dikdik.example"
 
+
+def connect_loopback(port: int, timeout: float):
+    """Connect to a local dev server on IPv4 or IPv6: "localhost" binds only ::1 on current
+    Node and Windows, so an IPv4-only check never saw servers such as vite dev."""
+    error = None
+    for host in ("127.0.0.1", "::1"):
+        try:
+            return socket.create_connection((host, port), timeout=timeout)
+        except OSError as exc:
+            error = exc
+    raise error
+
 PAGE_TIMEOUT = 45
 TEXT_LIMIT = 20_000
 TUNNEL_LIMIT = 64 * 1024 * 1024   # bytes through one capture's proxy, both directions
@@ -112,7 +124,7 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
         try:
             preview_port = getattr(self.server, "preview_port", None)
             if preview_port and host == PREVIEW_HOST and port == 80:
-                return socket.create_connection(("127.0.0.1", preview_port), timeout=15)
+                return connect_loopback(preview_port, 15)
             public_url(url)
             address = resolve_public(host, port)
             return socket.create_connection((address, port), timeout=15)

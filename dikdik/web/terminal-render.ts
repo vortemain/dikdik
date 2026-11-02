@@ -10,7 +10,7 @@ export function terminalStatus(command: TerminalCommandView): { label: string; k
 }
 
 function unchanged(a: TerminalCommandView, b: TerminalCommandView): boolean {
-  return a.command === b.command && a.output === b.output && a.running === b.running
+  return a.command === b.command && a.output === b.output && a.running === b.running && a.cwd === b.cwd
     && a.exitCode === b.exitCode && a.status === b.status && a.outputRuns.length === b.outputRuns.length
     && a.outputRuns.every((run, index) => {
       const other = b.outputRuns[index]!;
@@ -19,10 +19,12 @@ function unchanged(a: TerminalCommandView, b: TerminalCommandView): boolean {
     });
 }
 
-/** Update only changed command blocks, preserving completed output and text selection. */
+/** Commands as a terminal shows them: the prompt and command on one line, the output below,
+ *  and the result as a mark in the gutter (hollow when it succeeded, filled when it failed).
+ *  Only changed rows are rebuilt, preserving completed output and text selection. */
 export class TerminalRenderer {
   private rows = new Map<string, { node: HTMLElement; command: TerminalCommandView }>();
-  constructor(private root: HTMLElement) {}
+  constructor(private root: HTMLElement, private promptFor: (command: TerminalCommandView) => string = () => "$ ") {}
   render(commands: TerminalCommandView[]): void {
     const present = new Set(commands.map(command => command.id));
     for (const [id, row] of this.rows) if (!present.has(id)) { row.node.remove(); this.rows.delete(id); }
@@ -30,18 +32,21 @@ export class TerminalRenderer {
       const previous = this.rows.get(command.id);
       if (previous && unchanged(previous.command, command)) continue;
       const document = this.root.ownerDocument;
+      const state = terminalStatus(command);
       const row = document.createElement("section");
       row.className = "terminal-entry";
+      row.setAttribute("data-state", state.kind);
+      row.setAttribute("title", state.label);
       const header = document.createElement("div"); header.className = "terminal-entry-head";
-      const prompt = document.createElement("span"); prompt.className = "terminal-entry-prompt"; prompt.textContent = "$"; prompt.setAttribute("aria-hidden", "true");
+      const prompt = document.createElement("span"); prompt.className = "terminal-entry-prompt"; prompt.textContent = this.promptFor(command); prompt.setAttribute("aria-hidden", "true");
       const source = document.createElement("code"); source.className = "terminal-entry-command";
       for (const token of shellTokens(command.command)) {
         const span = document.createElement("span"); span.textContent = token.text;
         if (token.kind) span.className = `shell-${token.kind}`;
         source.append(span);
       }
-      const state = terminalStatus(command), badge = document.createElement("span");
-      badge.className = `terminal-command-state is-${state.kind}`; badge.textContent = state.label;
+      const badge = document.createElement("span");
+      badge.className = "sr-only"; badge.textContent = ` (${state.label})`;
       header.append(prompt, source, badge);
       const output = document.createElement("pre"); output.className = "terminal-entry-output";
       for (const run of command.outputRuns) {

@@ -91,6 +91,7 @@ class ServiceInteractionTests(unittest.TestCase):
         task = self.engine.store.get(result["id"])
         self.assertTrue(task["result"]["browser_session"])
         self.assertFalse(task["request"]["approve_external"])
+        self.assertEqual({row["id"]: row.get("session") for row in self.engine.store.list()}[result["id"]], "browser")
 
     def test_agent_calls_fetch_and_persistent_actions_through_real_dispatch(self):
         calls = [ToolCall("f", "web_fetch", {"url": "https://example.com/"}),

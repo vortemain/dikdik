@@ -29,6 +29,7 @@ export function organiseTasks(tasks: readonly TaskSummary[], view: TaskView): Or
   let older = 0;
   const visible = tasks.filter(task => {
     if (task.id === view.selected) return true;
+    if (task.session) return false;  // terminal and browser panels, not conversations
     if (!view.showArchived && task.archived) return false;
     if (view.tag && !(task.tags ?? []).includes(view.tag)) return false;
     if (view.scope === "running" && !RUNNING.has(task.state)) return false;
@@ -53,7 +54,7 @@ export function organiseTasks(tasks: readonly TaskSummary[], view: TaskView): Or
   const folders = [...filed].sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: "base" })).map(([name, items]) => ({ name, tasks: items }));
   const tags = [...new Set(tasks.flatMap(task => task.tags ?? []))].sort();
   const folderNames = [...new Set(tasks.map(task => task.folder ?? "").filter(Boolean))].sort();
-  return { pinned, folders, recent, tags, folderNames, older, archived: tasks.filter(task => task.archived).length };
+  return { pinned, folders, recent, tags, folderNames, older, archived: tasks.filter(task => task.archived && !task.session).length };
 }
 /** "a, B ,b" → ["a", "b"]; throws with a readable message on bad tags. */
 export function parseTags(text: string): string[] {

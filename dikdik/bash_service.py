@@ -104,7 +104,7 @@ class BashService:
         if not self.engine.trusted():
             raise PermissionError("Trust this project before opening a local terminal")
         task = self.store.create({"objective": "Workspace tools", "mode": "agent", "verification": "local",
-                                  "approve_execution": True, "approve_external": False})
+                                  "approve_execution": True, "approve_external": False, "session": "terminal"})
         self.store.state(task, "completed", {"summary": "Workspace tools ready.", "status": "answered", "turn_changed": False})
         return {"id": task}
 

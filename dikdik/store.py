@@ -3,6 +3,7 @@
 import json
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -17,6 +18,17 @@ WORKSPACE_CLAUSES = frozenset({"1=1", "workspace=?", "t.workspace=?"})  # everyt
 TASK_TABLES = ("bash_events", "browser_snapshots", "task_progress", "requirements")
 
 
+def _session_kind(request):
+    """Terminal and browser sessions are tool panels, not conversations. Older ones predate the flag."""
+    if request.get("session") in ("terminal", "browser"):
+        return request["session"]
+    if request.get("objective") == "Workspace tools" and request.get("approve_execution") is True:
+        return "terminal"
+    if request.get("objective") == "Browse the web" and request.get("approve_browser") is True and request.get("edits") == []:
+        return "browser"
+    return None
+
+
 class Store:
     """One database for every project. Each conversation records the project folder it
     belongs to, and a store bound to a folder only ever sees that folder's conversations,
@@ -25,22 +37,77 @@ class Store:
     def __init__(self, path: Path):
         self.path = path
         self.workspace: str | None = None
+        self._local = threading.local()
+        self._connections: set[sqlite3.Connection] = set()
+        self._connections_lock = threading.Lock()
+        self._closed = False
         # Versioned, atomic migrations with a backup before any upgrade (dikdik/migrations.py).
         self.schema = migrate(path)
 
-    @contextmanager
-    def connect(self):
-        db = sqlite3.connect(self.path, timeout=30)
+    def _open(self):
+        db = sqlite3.connect(self.path, timeout=30, check_same_thread=False)
         db.row_factory = sqlite3.Row
         # With up to 3 concurrent workers, a second writer may wait. A longer
         # busy_timeout lets SQLite retry internally instead of raising "database
         # is locked" when another thread's commit briefly holds the write lock.
         db.execute("PRAGMA busy_timeout=30000")
+        return db
+
+    @contextmanager
+    def connect(self):
+        """One transaction. Inside session() a thread reuses one connection; elsewhere each
+        use opens and closes its own, so nothing holds the database files open."""
+        local = self._local
+        reuse = getattr(local, "session", False) and not getattr(local, "busy", False) and not self._closed
+        db = getattr(local, "db", None) if reuse else None
+        if db is None:
+            db = self._open()
+            if reuse:
+                local.db = db
+                with self._connections_lock:
+                    self._connections.add(db)
+        if reuse:
+            local.busy = True
         try:
             with db:
                 yield db
         finally:
-            db.close()
+            if reuse:
+                local.busy = False
+            else:
+                db.close()
+
+    @contextmanager
+    def session(self):
+        """Reuse one connection on this thread for a burst of writes, such as an agent run:
+        opening a connection costs ~25 ms on Windows, several times per agent step. A nested
+        connect() still gets a fresh connection, so transactions never interleave. The
+        connection closes when the session ends, so the files are never held afterwards."""
+        local = self._local
+        if getattr(local, "session", False):
+            yield
+            return
+        local.session = True
+        try:
+            yield
+        finally:
+            local.session = False
+            db, local.db = getattr(local, "db", None), None
+            if db is not None:
+                with self._connections_lock:
+                    self._connections.discard(db)
+                db.close()
+
+    def close(self):
+        """Close connections still held by running sessions (at shutdown)."""
+        self._closed = True
+        with self._connections_lock:
+            connections, self._connections = list(self._connections), set()
+        for db in connections:
+            try:
+                db.close()
+            except sqlite3.Error:
+                pass
 
     def bind_workspace(self, root: Path):
         """Serve one project folder from now on; earlier folders' conversations stay stored."""
@@ -132,7 +199,8 @@ class Store:
                               "state": row["state"], "objective": str(request.get("objective", ""))[:200],
                               "title": row["title"] or "", "mode": request.get("mode"),
                               "pinned": bool(row["pinned"]), "archived": bool(row["archived"]),
-                              "folder": row["folder"] or "", "tags": json.loads(row["tags"]) if row["tags"] else []})
+                              "folder": row["folder"] or "", "tags": json.loads(row["tags"]) if row["tags"] else [],
+                              **({"session": session} if (session := _session_kind(request)) else {})})
             return tasks
 
     def events_after(self, task, seq: int, limit: int = 200):

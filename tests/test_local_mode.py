@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dikdik.agent import ModelResponse, ToolCall
+from dikdik import local_exec
 from dikdik.engine import Engine, TERMINAL
 
 ENV = {"DIKDIK_MODEL_URL": "https://provider.example/v1/chat/completions", "DIKDIK_MODEL": "m", "DIKDIK_API_KEY": "k"}
@@ -151,7 +152,50 @@ class LocalModeTests(unittest.TestCase):
         with patch.dict(os.environ, {}):
             task, state = self.run_task(script, confirmation="never")
         self.assertIn("# mine", self.calc())
-        self.assertIn("changed outside the agent", state["result"]["error"])
+        self.assertEqual(state["result"]["outside_changes"], ["calc.py"])
+        told = [e["data"]["observation"] for e in state["events"] if e["kind"] == "agent_tool" and e["data"].get("phase") == "end" and e["data"]["id"] == "c2"]
+        self.assertIn("Changed outside the agent", told[0]["error"])
+        self.assertEqual(told[0]["refreshed_files"], ["calc.py"])  # the agent now works on the user's version
+        self.engine.undo(task) if state["result"].get("checkpoint") else None
+        self.assertIn("# mine", self.calc())  # Undo never reverts the user's edit
+
+    def test_a_command_that_corrupts_a_file_does_not_jam_later_commands(self):
+        # A Windows python without UTF-8 mode used to write source in the ANSI code page;
+        # the file vanished from the snapshot and every later command failed as an outside change.
+        command = f'"{PY}" -c "open(\'calc.py\', \'wb\').write(bytes([0xff, 0xfe]))"'
+        script = Script([call(1, "run_command", command=command), call(2, "run_command", command="echo next"),
+                         ModelResponse("Done.", [])])
+        task, state = self.run_task(script, confirmation="never")
+        ends = {e["data"]["id"]: e["data"] for e in state["events"] if e["kind"] == "agent_tool" and e["data"].get("phase") == "end"}
+        self.assertEqual(ends["c1"]["observation"]["restored"], ["calc.py"])
+        self.assertFalse(ends["c2"]["failed"], ends["c2"])
+        self.assertEqual(self.calc(), "def add(a, b):\n    return a - b\n")
+
+    def test_a_failure_that_existed_before_the_change_does_not_block_it(self):
+        broken = "import unittest\n\nclass Old(unittest.TestCase):\n    def test_legacy(self):\n        self.assertEqual(1, 2)\n"
+        (self.root / "test_legacy.py").write_text(broken, encoding="utf-8")
+        task, state = self.run_task(Script([call(1, "edit_file", **FIX), call(2, "run_tests"), call(3, "finish")]))
+        self.assertEqual(state["state"], "completed", state["result"])
+        self.assertEqual(state["result"]["verification_level"], "no_new_failures")
+        self.assertFalse(state["result"]["tests_verified"])  # never reported as a full pass
+        self.assertIn("not a full test pass", state["result"]["limitations"])
+        check = [c for c in state["result"]["checks"] if c.get("no_new_failures")][0]
+        self.assertEqual(check["preexisting_failures"], ["test_legacy (test_legacy.Old.test_legacy)"])
+        self.assertIn("a + b", self.calc())
+        self.assertEqual((self.root / "test_legacy.py").read_text(encoding="utf-8"), broken)
+
+    def test_a_new_failure_still_fails_even_when_others_already_failed(self):
+        (self.root / "calc.py").write_bytes(b"def add(a, b):\n    return a + b\n")
+        (self.root / "test_legacy.py").write_text("import unittest\n\nclass Old(unittest.TestCase):\n    def test_legacy(self):\n        self.assertEqual(1, 2)\n", encoding="utf-8")
+        breaking = call(1, "edit_file", path="calc.py", before="a + b", after="a * b")
+        task, state = self.run_task(Script([breaking, call(2, "run_tests"), call(3, "finish"), ModelResponse("Done.", [])]))
+        self.assertNotEqual(state["state"], "completed", state["result"])
+        self.assertFalse(state["result"]["tests_verified"])
+
+    def test_commands_write_utf8_text(self):
+        self.assertEqual(local_exec.child_env()["PYTHONUTF8"], "1")
+        with patch.dict(os.environ, {"PYTHONUTF8": "0"}):
+            self.assertEqual(local_exec.child_env()["PYTHONUTF8"], "0")  # the user's own setting wins
 
     def test_undo_leaves_files_you_changed_afterwards(self):
         task, _ = self.run_task(Script([call(1, "edit_file", **FIX), ModelResponse("Done.", [])]))

@@ -31,6 +31,13 @@ describe("conversation list", () => {
     expect(recent.older).toBe(1);
     expect(recent.pinned.map(t => t.id)).toEqual(["a-pinned"]);
   });
+  test("terminal and browser sessions are panels, not conversations", () => {
+    const panels = [...tasks, task("g-terminal", { session: "terminal" }), task("h-browser", { session: "browser", archived: true })];
+    const out = organiseTasks(panels, view);
+    expect([...out.recent, ...out.folders.flatMap(f => f.tasks)].map(t => t.id)).not.toContain("g-terminal");
+    expect(out.archived).toBe(1);
+    expect(organiseTasks(panels, { ...view, selected: "g-terminal" as never }).recent.map(t => t.id)).toContain("g-terminal");
+  });
   test("sorts by title and keeps the open conversation visible", () => {
     expect(organiseTasks(tasks, { ...view, sort: "title" }).folders[0]!.tasks.map(t => t.id)).toEqual(["c-bug", "d-bug"]);
     expect(organiseTasks(tasks, { ...view, selected: "f-archived" }).recent.map(t => t.id)).toContain("f-archived");
