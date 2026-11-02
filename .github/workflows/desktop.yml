@@ -50,7 +50,14 @@ jobs:
           mkdir -p dist/installers build/dmg
           cp -R dist/desktop/Dikdik.app build/dmg/
           ln -s /Applications build/dmg/Applications
-          hdiutil create -volname Dikdik -srcfolder build/dmg -ov -format UDZO "dist/installers/Dikdik-${DIKDIK_VERSION}-macOS-$(uname -m).dmg"
+          # Hosted macOS runners intermittently report "Resource busy" while the system still
+          # scans the freshly built bundle; the same command succeeds a little later.
+          for attempt in 1 2 3 4 5; do
+            hdiutil create -volname Dikdik -srcfolder build/dmg -ov -format UDZO "dist/installers/Dikdik-${DIKDIK_VERSION}-macOS-$(uname -m).dmg" && break
+            if [ "$attempt" = 5 ]; then exit 1; fi
+            echo "hdiutil create failed (attempt $attempt); retrying"
+            sleep $((attempt * 15))
+          done
       - if: runner.os == 'Linux'
         run: |
           mkdir -p build/deb/opt/dikdik build/deb/DEBIAN build/deb/usr/share/applications build/deb/usr/share/icons/hicolor/512x512/apps dist/installers
