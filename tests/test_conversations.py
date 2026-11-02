@@ -15,7 +15,7 @@ def offline(text, before, after):
     return {"objective": text, "mode": "offline", "verification": "syntax", "edits": [{"path": "calculator.py", "before": before, "after": after}]}
 
 
-AGENT = {"mode": "agent", "verification": "docker", "approve_external": True, "approve_execution": True}
+AGENT = {"mode": "agent", "verification": "syntax", "approve_external": True}
 
 
 class ScriptedModel:
@@ -147,8 +147,7 @@ class ConversationTests(unittest.TestCase):
             ModelResponse("", [ToolCall("f", "finish", {})]),
         ])
         second = ScriptedModel([ModelResponse("It now returns the sum of a and b.", [])])
-        with patch("dikdik.engine.CompatibleAgentModel", side_effect=[first, second]), \
-                patch("dikdik.engine.run_tests", return_value={"kind": "unittest", "status": "passed"}):
+        with patch("dikdik.engine.CompatibleAgentModel", side_effect=[first, second]):
             task = self.engine.submit({"objective": "Fix addition", **AGENT})
             self.assertEqual(self.idle(task)["state"], "completed")
             self.engine.send(task, {"objective": "What does add return now?", **AGENT})

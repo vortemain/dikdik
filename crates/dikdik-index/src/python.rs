@@ -15,7 +15,7 @@ fn downcast_prev(previous: &Bound<'_, PyDict>) -> PyResult<HashMap<String, PrevS
         let value = item.1;
         let state = if value.is_instance_of::<PyString>() {
             PrevState { sha256: Some(value.extract()?), size: None, mtime: None }
-        } else if let Ok(dict) = value.downcast::<PyDict>() {
+        } else if let Ok(dict) = value.cast::<PyDict>() {
             PrevState {
                 sha256: dict.get_item("sha256")?.and_then(|v| v.extract().ok()),
                 size: dict.get_item("size")?.and_then(|v| v.extract().ok()),
@@ -47,9 +47,11 @@ impl<'py> IntoPyObject<'py> for ScanEntry {
     }
 }
 
-impl<'py> FromPyObject<'py> for ScanEntry {
-    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        let dict = ob.downcast::<PyDict>()?;
+impl<'a, 'py> FromPyObject<'a, 'py> for ScanEntry {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let dict = ob.cast::<PyDict>()?;
         Ok(ScanEntry {
             path: dict.get_item("path")?.map(|v| v.extract()).transpose()?.unwrap_or_default(),
             bytes: dict.get_item("bytes")?.and_then(|v| v.extract().ok()).unwrap_or(0),

@@ -17,19 +17,31 @@ class AutomationRunTests(unittest.TestCase):
     def test_runs_need_the_users_approvals(self):
         with self.assertRaisesRegex(ValueError, "Approve sending code"):
             self.sched.create(BASE)
-        with self.assertRaisesRegex(ValueError, "Docker"):
-            self.sched.create({**BASE, "approve_external": True, "verification": "docker"})
+        for verification in ("docker", "local"):
+            with self.assertRaisesRegex(ValueError, "syntax verification"):
+                self.sched.create({**BASE, "approve_external": True, "verification": verification, "approve_execution": True})
         with self.assertRaisesRegex(ValueError, "agent or single-proposal"):
             self.sched.create({**BASE, "approve_external": True, "mode": "offline"})
 
     def test_each_run_submits_exactly_what_was_approved(self):
-        self.sched.create({**BASE, "approve_external": True, "mode": "agent", "verification": "docker", "approve_execution": True, "agent_profile": "p1"})
+        self.sched.create({**BASE, "approve_external": True, "mode": "agent", "verification": "syntax", "agent_profile": "p1"})
         self.h.clock.advance(61)
         self.sched.tick()
-        self.assertEqual(self.h.submitted[0][1], {"objective": "Tidy up", "mode": "agent", "verification": "docker",
-                                                   "approve_external": True, "approve_execution": True, "agent_profile": "p1"})
+        self.assertEqual(self.h.submitted[0][1], {"objective": "Tidy up", "mode": "agent", "verification": "syntax",
+                                                   "approve_external": True, "approve_execution": False, "agent_profile": "p1"})
         row = self.sched.list_automations()[1][0]
         self.assertEqual((row["run"]["mode"], row["last_task_id"]), ("agent", self.h.submitted[0][0]))
+
+    def test_saved_docker_runs_become_syntax_checked(self):
+        created = self.sched.create({**BASE, "approve_external": True})[1]
+        with self.h.store.connect() as db:
+            db.execute("UPDATE automations SET request=? WHERE id=?", (json.dumps(
+                {"mode": "agent", "verification": "docker", "approve_external": True, "approve_execution": True}), created["id"]))
+        from dikdik.automation import _no_docker
+        with self.h.store.connect() as db:
+            _no_docker(db)
+        run = self.sched.list_automations()[1][0]["run"]
+        self.assertEqual((run["verification"], run["approve_execution"]), ("syntax", False))
 
     def test_old_automations_wait_for_setup(self):
         created = self.sched.create({**BASE, "approve_external": True})[1]

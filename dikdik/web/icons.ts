@@ -30,9 +30,9 @@ export function folderSymbol(path: string, open: boolean, light = false): string
 }
 
 const PROVIDERS: Record<string, string> = {
-  nvidia: "nvidia",
+  nvidia: "nvidia", nebius: "nebius",
   openrouter: "openrouter", openai: "openai", anthropic: "anthropic", google: "gemini-color", gemini: "gemini-color",
-  deepseek: "deepseek-color", xai: "grok", grok: "grok", mistral: "mistral-color", groq: "groq", cerebras: "cerebras-color",
+  deepseek: "deepseek-color", xai: "xai", mistral: "mistral-color", groq: "groq", cerebras: "cerebras-color",
   together: "together-color", fireworks: "fireworks-color", moonshot: "moonshot", zai: "zai", qwen: "qwen-color",
   perplexity: "perplexity-color", "perplexity-orchestrator": "perplexity-color", ollama: "ollama", lmstudio: "lmstudio", azure: "azure-color",
 };

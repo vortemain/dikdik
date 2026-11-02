@@ -168,7 +168,7 @@ class ModelResolutionTests(unittest.TestCase):
         self.profile()
         with patch("urllib.request.build_opener") as opener:
             opener.return_value.open.side_effect = OSError("offline")
-            task = self.engine.submit({"objective": "Fix addition", "mode": "agent", "verification": "docker", "approve_external": True, "approve_execution": True})
+            task = self.engine.submit({"objective": "Fix addition", "mode": "agent", "verification": "syntax", "approve_external": True})
             self.wait(task)
         result = self.engine.store.get(task)
         self.assertIn(result["state"], TERMINAL)
@@ -184,3 +184,17 @@ class ModelResolutionTests(unittest.TestCase):
         routes = build_routes(self.engine)
         for path in ("/api/secrets", "/api/secrets/openai-key", "/api/profiles"):
             self.assertNotIn(KEY, json.dumps(routes("GET", path, {})))
+
+
+class EnvironmentEndpointPolicyTests(unittest.TestCase):
+    def test_https_anywhere_and_plain_http_only_on_loopback(self):
+        from unittest.mock import patch
+        from dikdik.model_config import from_environment
+        for url, allowed in (("https://api.example.com/v1", True), ("http://127.0.0.1:11434/v1", True),
+                             ("http://localhost:1234/v1", True), ("http://api.example.com/v1", False), ("ftp://127.0.0.1/v1", False)):
+            with self.subTest(url=url), patch.dict("os.environ", {"DIKDIK_MODEL_URL": url, "DIKDIK_MODEL": "m", "DIKDIK_API_KEY": "k"}):
+                if allowed:
+                    self.assertEqual(from_environment().model, "m")
+                else:
+                    with self.assertRaises(ValueError):
+                        from_environment()

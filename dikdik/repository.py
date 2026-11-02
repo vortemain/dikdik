@@ -103,8 +103,9 @@ def _new_path(value: str) -> PurePosixPath:
     return path
 
 
-def can_create_file(root: Path, value: str) -> bool:
-    """Read-only project policy; refuse ignored or existing unindexed paths."""
+def can_create_file(root: Path, value: str, *, existing_ok: bool = False) -> bool:
+    """Read-only project policy; refuse ignored or existing unindexed paths. ``existing_ok`` accepts a
+    regular file that is already there, for files the agent's own command just created."""
     try:
         path = _new_path(value)
         root = approved_root(str(root))
@@ -118,7 +119,7 @@ def can_create_file(root: Path, value: str) -> bool:
             if target.is_symlink() or target.is_junction():
                 return False
             if index == len(path.parts) - 1:
-                return not os.path.lexists(target)
+                return not os.path.lexists(target) or (existing_ok and target.is_file())
             if os.path.lexists(target) and not target.is_dir():
                 return False
             if target.exists() and target.resolve(strict=True).relative_to(root).as_posix() != "/".join(path.parts[:index + 1]):

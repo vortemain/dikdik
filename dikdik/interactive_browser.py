@@ -6,6 +6,7 @@ import queue
 import threading
 from urllib.parse import urljoin
 
+from .accessibility import AUDIT
 from .browser_network import fetch_public, public_url
 from .host_browser import PublicProxy, find_browser, page_text
 
@@ -210,12 +211,16 @@ class BrowserSessions:
                     png = None if args.get("capture_screenshot") is False else page.locator(selector).screenshot(timeout=10000) if action == "screenshot" and selector else page.screenshot(timeout=10000)
                     if png and len(png) > 8 * 1024 * 1024:
                         raise ValueError("Browser screenshot exceeded 8 MiB")
-                    future.set_result({"status": "passed", "url": url, "title": page.title()[:300],
+                    outcome = {"status": "passed", "url": url, "title": page.title()[:300],
                         "text": page.locator("body").inner_text(timeout=5000)[:20000],
                         "elements": page.evaluate(ELEMENTS), "png": png,
                         "runtime_errors": list(state["errors"]), "http_errors": list(state["http_errors"]),
                         "layout": page.evaluate("() => ({width: innerWidth, height: innerHeight, scroll_width: document.documentElement.scrollWidth, visible_elements: document.body.querySelectorAll('*').length})"),
-                        "interactive": not (action == "screenshot" and selector), "untrusted": True})
+                        "interactive": not (action == "screenshot" and selector), "untrusted": True}
+                    if args.get("audit") is True:
+                        # Previews only: the audit focuses controls, which ordinary browsing must not do.
+                        outcome["accessibility"] = page.evaluate(AUDIT)
+                    future.set_result(outcome)
                 except Exception as exc:
                     if browser and not browser.is_connected():
                         browser = None; pages.clear()

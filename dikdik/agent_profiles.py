@@ -11,6 +11,8 @@ import time
 import uuid
 
 from .profiles import SCHEMA as MODEL_PROFILES
+from . import sql
+from . import migrations
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent_profiles (
@@ -26,18 +28,22 @@ REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 MAX_PROFILES = 50
 
 
+def _baseline(db) -> None:
+    db.execute(SCHEMA)
+    migrations.add_column(db, "agent_profiles", "allow_browser", "ALTER TABLE agent_profiles ADD COLUMN allow_browser INTEGER NOT NULL DEFAULT 1")
+    # critic: judge each finished turn; memory: read .dikdik/memory.md; secret_refs: secrets its commands may use.
+    migrations.add_column(db, "agent_profiles", "critic", "ALTER TABLE agent_profiles ADD COLUMN critic INTEGER NOT NULL DEFAULT 0")
+    migrations.add_column(db, "agent_profiles", "memory", "ALTER TABLE agent_profiles ADD COLUMN memory INTEGER NOT NULL DEFAULT 0")
+    migrations.add_column(db, "agent_profiles", "secret_refs", "ALTER TABLE agent_profiles ADD COLUMN secret_refs TEXT")
+
+
+STEPS = [(1, "agent profiles with browser, critic, memory and secret columns", _baseline)]
+
+
 class AgentProfiles:
     def __init__(self, store):
         self.store = store
-        with store.connect() as db:
-            db.execute(SCHEMA)
-            columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_profiles)")}
-            if "allow_browser" not in columns:
-                db.execute("ALTER TABLE agent_profiles ADD COLUMN allow_browser INTEGER NOT NULL DEFAULT 1")
-            # critic: judge each finished turn; memory: read .dikdik/memory.md; secret_refs: sandbox secrets it may use.
-            for name, kind in (("critic", "INTEGER NOT NULL DEFAULT 0"), ("memory", "INTEGER NOT NULL DEFAULT 0"), ("secret_refs", "TEXT")):
-                if name not in columns:
-                    db.execute(f"ALTER TABLE agent_profiles ADD COLUMN {name} {kind}")
+        migrations.ensure(store.path, "agent_profiles", STEPS)
 
     @staticmethod
     def _row(row) -> dict:
@@ -86,7 +92,7 @@ class AgentProfiles:
         if "secret_refs" in body:
             refs = body["secret_refs"]
             if refs is not None and (not isinstance(refs, list) or len(refs) > 50 or not all(isinstance(r, str) and REF.fullmatch(r) for r in refs)):
-                raise ValueError("Sandbox secrets must be a list of secret names, or null for every exposed secret")
+                raise ValueError("Secrets must be a list of secret names, or null for every exposed secret")
             out["secret_refs"] = json.dumps(sorted(set(refs))) if refs is not None else None
         return out
 
@@ -110,7 +116,7 @@ class AgentProfiles:
                 raise ValueError("An agent profile with this name already exists")
             profile_id = uuid.uuid4().hex
             columns = ["id", "created", *fields]
-            db.execute(f"INSERT INTO agent_profiles({','.join(columns)}) VALUES({','.join('?' * len(columns))})", (profile_id, time.time(), *fields.values()))
+            db.execute(f"INSERT INTO agent_profiles({sql.columns(columns, sql.table_columns(db, 'agent_profiles'))}) VALUES({sql.marks(len(columns))})", (profile_id, time.time(), *fields.values()))
         return {"id": profile_id}
 
     def update(self, profile_id: str, body) -> dict:
@@ -122,8 +128,9 @@ class AgentProfiles:
                 raise KeyError(profile_id)
             if "name" in fields and db.execute("SELECT 1 FROM agent_profiles WHERE name=? AND id<>?", (fields["name"], profile_id)).fetchone():
                 raise ValueError("An agent profile with this name already exists")
+            writable = sql.writable_columns(db, "agent_profiles")
             for key, value in fields.items():
-                db.execute(f"UPDATE agent_profiles SET {key}=? WHERE id=?", (value, profile_id))
+                db.execute(f"UPDATE agent_profiles SET {sql.assign([key], writable)} WHERE id=?", (value, profile_id))
         return self.get(profile_id)
 
     def delete(self, profile_id: str) -> dict:

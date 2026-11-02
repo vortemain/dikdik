@@ -229,7 +229,7 @@ class HTTPTests(unittest.TestCase):
 
     def test_missing_task_and_execution_approval_errors(self):
         self.assertEqual(self.call("GET", "/api/tasks/missing")[0], 404)
-        status, _, body = self.call("POST", "/api/tasks", {"objective": "x", "mode": "offline", "verification": "docker"})
+        status, _, body = self.call("POST", "/api/tasks", {"objective": "x", "mode": "agent", "verification": "local", "approve_external": True})
         self.assertEqual(status, 400)
         self.assertIn("approval", json.loads(body)["error"])
 
@@ -242,12 +242,8 @@ class HTTPTests(unittest.TestCase):
             ModelResponse("Finish", [ToolCall("finish", "finish", {})]),
         ]
 
-        def instrumented_verifier(candidate, *args, **kwargs):
-            self.assertEqual((candidate / "app.py").read_text(), "x = 2\n")
-            return {"kind": "unittest", "status": "passed", "note": "Instrumented contract verifier; not a real test execution"}
-
-        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.engine.run_tests", side_effect=instrumented_verifier):
-            status, _, body = self.call("POST", "/api/tasks", {"objective": "Change x", "mode": "agent", "verification": "docker", "approve_execution": True, "approve_external": True})
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            status, _, body = self.call("POST", "/api/tasks", {"objective": "Change x", "mode": "agent", "verification": "syntax", "approve_external": True})
             self.assertEqual(status, 202)
             task = json.loads(body)["id"]
             for _ in range(200):
@@ -261,10 +257,11 @@ class HTTPTests(unittest.TestCase):
         self.assertNotIn("edits", data["request"])
         self.assertIn("+x = 2", data["result"]["diff"])
 
-    def test_agent_api_denies_missing_disclosure_or_non_docker_verification(self):
+    def test_agent_api_denies_missing_approvals_or_removed_docker_verification(self):
         for request in [
-            {"objective": "x", "mode": "agent", "verification": "docker", "approve_execution": True},
-            {"objective": "x", "mode": "agent", "verification": "docker", "approve_external": True},
+            {"objective": "x", "mode": "agent", "verification": "local", "approve_execution": True},
+            {"objective": "x", "mode": "agent", "verification": "local", "approve_external": True},
+            {"objective": "x", "mode": "agent", "verification": "docker", "approve_external": True, "approve_execution": True},
             {"objective": "x", "mode": "agent", "verification": "syntax"},
         ]:
             with self.subTest(request=request):

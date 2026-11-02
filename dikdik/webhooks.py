@@ -7,6 +7,7 @@ machine. Each delivery carries `X-Dikdik-Signature: sha256=<hex>`, an HMAC of th
 exact body, which the receiver recomputes with its copy of the secret.
 """
 
+import logging
 import hashlib
 import hmac
 import json
@@ -14,6 +15,9 @@ import threading
 import urllib.error
 import urllib.request
 from .store import Store
+from . import sql
+from . import migrations
+from . import logs
 
 
 def signature(secret: bytes | str, payload: bytes) -> str:
@@ -24,14 +28,13 @@ def signature(secret: bytes | str, payload: bytes) -> str:
 class WebhookStore:
     def __init__(self, store: Store):
         self.store = store
-        with self.store.connect() as db:
-            db.executescript("""
+        migrations.ensure(self.store.path, "webhooks", [(1, "webhooks", migrations.script("""
                 CREATE TABLE IF NOT EXISTS webhooks (
                     id TEXT PRIMARY KEY, url TEXT NOT NULL, secret_ref TEXT,
                     events TEXT NOT NULL DEFAULT 'terminal', enabled INTEGER NOT NULL DEFAULT 1,
                     created REAL NOT NULL
                 );
-            """)
+            """))])
 
     def list(self) -> list[dict]:
         with self.store.connect() as db:
@@ -68,20 +71,20 @@ class WebhookStore:
         if "url" in body:
             if not isinstance(body["url"], str) or not body["url"].startswith(("http://", "https://")):
                 raise ValueError("url must be an http(s) URL")
-            fields.append("url=?"); values.append(body["url"])
+            fields.append("url"); values.append(body["url"])
         if "secret_ref" in body:
-            fields.append("secret_ref=?"); values.append(body["secret_ref"])
+            fields.append("secret_ref"); values.append(body["secret_ref"])
         if "events" in body:
             if not isinstance(body["events"], str) or not body["events"].strip():
                 raise ValueError("events must be a non-empty string")
-            fields.append("events=?"); values.append(body["events"])
+            fields.append("events"); values.append(body["events"])
         if "enabled" in body:
-            fields.append("enabled=?"); values.append(1 if body["enabled"] else 0)
+            fields.append("enabled"); values.append(1 if body["enabled"] else 0)
         if not fields:
             raise ValueError("Nothing to update")
         values.append(webhook_id)
         with self.store.connect() as db:
-            db.execute(f"UPDATE webhooks SET {', '.join(fields)} WHERE id=?", values)
+            db.execute(f"UPDATE webhooks SET {sql.assign(fields, ('url', 'secret_ref', 'events', 'enabled'))} WHERE id=?", values)
         return self.get(webhook_id)
 
     def delete(self, webhook_id: str) -> None:
@@ -109,8 +112,8 @@ class WebhookStore:
                     secret = reveal(row["secret_ref"])
                     if secret:
                         headers["X-Dikdik-Signature"] = signature(secret, payload)
-                except Exception:
-                    pass  # a bad secret ref should never break the task
+                except Exception:  # a bad secret ref should never break the task
+                    logs.log("webhook_signature_unavailable", logging.WARNING, exc_info=True, task=task_id)
             deliveries.append((row["url"], headers))
         threading.Thread(target=deliver, args=(deliveries, payload), daemon=True).start()
 

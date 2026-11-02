@@ -3,9 +3,11 @@
 ## Local mode (the default since 2026-10-28)
 
 The owner chose to make Dikdik work like Claude Code: in a project you trust, the
-agent edits your real files and runs commands **on this computer, outside Docker**,
-with your own tools and environment. This deliberately relaxes the earlier rule that
-no repository code runs on the host. What protects you instead:
+agent edits your real files and runs commands **on this computer**, with your own
+tools and environment. Dikdik has no container sandbox: the Docker runner was removed
+on 2026-11-02 at the owner's request, and nothing in Dikdik calls Docker. This
+deliberately relaxes the earlier rule that no repository code runs on the host. What
+protects you instead:
 
 - **One trust decision per project.** The first message in a folder asks whether
   Dikdik may read it, send what it reads to your model provider, edit it and run
@@ -30,11 +32,12 @@ no repository code runs on the host. What protects you instead:
   output cap, and Stop ends the whole process tree.
 - **What it cannot protect against:** a command you allow runs with your user's
   rights and can reach the network and any file you can. Use *Classic* mode (an
-  isolated copy, Docker for tests, Apply to write) for repositories you do not trust.
+  isolated copy, syntax checks only, no commands, Apply to write) for repositories
+  you do not trust; there is no way to run an untrusted repository's code isolated.
 
 ## The computer's own browser
 
-When Docker's browser image is not ready, page captures use the Edge or Chrome on
+When Playwright's Chromium is not installed, page captures use the Edge or Chrome on
 this computer: headless, a new empty profile per capture (no cookies, logins or
 extensions), deleted afterwards. The browser is pointed at a proxy inside Dikdik that
 resolves every host itself and connects only to public addresses on ports 443
@@ -52,8 +55,8 @@ are disabled. It is single-owner: anyone with the sign-in link has full control.
 
 ## Trust and permissions (Classic mode)
 
-The local operator, host OS, Python installation, Docker CLI/daemon/image and
-private data directory are trusted. Repository contents, objectives, model
+The local operator, host OS, Python installation and private data directory are
+trusted. Repository contents, objectives, model
 proposals and tool output are untrusted. An objective cannot change policy.
 
 - Opening a project (startup folder, Open folder, New project, Clone) approves read
@@ -68,6 +71,43 @@ proposals and tool output are untrusted. An objective cannot change policy.
   `Authorization: Bearer <secret>`. `--rotate-token` invalidates every session.
   There is no query-string token, JavaScript-readable token storage, access
   logging or analytics.
+- **Stored secrets** use format v2 (`dikdik/secrets_store.py`): separate encryption and MAC
+  keys derived from the master key, an HMAC-SHA256 keystream over a random 16-byte nonce per
+  sealed value, and encrypt-then-MAC. Restoring an old copy of the store can no longer reuse a
+  keystream. Values sealed by earlier releases are authenticated and re-sealed as v2 when the
+  engine starts; a value that fails authentication stops the upgrade with the file unchanged.
+  It remains a standard-library construction, not a reviewed AEAD library.
+- **Diagnostics logs** (`<data>/logs/dikdik.jsonl`) mask credential shapes, the session token
+  and any field named like a secret before writing. Treat them as private anyway.
+- **Backups** (`python -m dikdik.backup`) contain everything in the data directory, including sealed
+  keys and the sign-in token; store them like the directory itself. Restore refuses while Dikdik runs.
+- **Traces** (`DIKDIK_OTEL_ENDPOINT`) export only span names, durations, counts and outcomes, never tool
+  arguments, file contents or model text; plain HTTP is accepted only for a loopback collector.
+- **Local resource limits:** each local command tree runs in a Windows Job Object capped at 8 GB committed
+  memory and 1,024 processes by default (`local_limits`); this bounds runaway commands, it is not isolation.
+- **Load tests, DAST and fault tests** reach only the project's own servers on Dikdik-assigned loopback ports.
+  `dast_scan` sends GET requests only (POST forms are listed, never submitted) and its reflection probe is an
+  inert marker, not script; links to other origins are never followed. The `fault_test` proxy listens on
+  127.0.0.1 only. Both are confirmed like `run_command`, and a permission rule must allow both of a fault
+  test's commands, while a deny rule matching either one refuses it.
+- **Visual baselines** are accepted only by the owner (`POST /api/visual-baselines/accept`); the agent can
+  record a pending capture but never change the accepted look.
+- **Parallel writers** (`parallel_edit`) edit only the files they own, cannot run commands, and each edit
+  passes the same permission checks as `edit_file`; a writer that trespasses or does not finish is not merged.
+- **SQL construction:** values are always `?` parameters; identifiers and fixed fragments go
+  through `dikdik/sql.py` allowlists only. CodeQL (security-extended) adds data-flow analysis in CI.
+- **Security scanning:** `python -m dikdik.security_scan [--deps]` and the agent's
+  `security_scan` tool apply the same deterministic secret, code-pattern and OSV dependency
+  rules; a turn that introduces a critical finding cannot finish. CI runs the scanner, pip-audit,
+  bun audit and Gitleaks on every push (`.github/workflows/security.yml`), and a test asserts
+  every API route refuses anonymous and foreign-Host requests (`tests/test_route_authorization.py`).
+  Pattern rules are not proof of security.
+- **Device pairing** (`POST /api/pair`) is a second way to hand out that secret, so
+  only the signed-in owner can mint a code (API keys cannot, even with `admin`).
+  A code is 8 hex characters, single use, valid 10 minutes, at most five at once.
+  Redeeming it (`POST /api/pair/verify`) needs the same exact Host/Origin as every
+  other route and counts toward the server sign-in lockout; five wrong codes revoke
+  every outstanding code.
 - Provider keys stored under Settings → API keys are decrypted in-process only
   when the default profile's model is called (`SecretsStore.reveal`, which no
   route exposes). The key lives in memory for that task and is never persisted
@@ -80,35 +120,30 @@ proposals and tool output are untrusted. An objective cannot change policy.
 - **Git** runs with fixed arguments, no shell, a timeout, no pager or prompts,
   `core.fsmonitor=false`, and an empty hooks directory plus `--no-verify`, so a
   commit made from Dikdik never runs repository hooks.
-- **The agent's shell** (`run_command`) exists only when Docker execution is
-  approved. It runs on a throwaway copy of the candidate in the same restricted
-  container profile as tests (no network, read-only root, no capabilities, user
-  65534, bounded memory/PIDs/time, an in-container `timeout`). Text files it changes
-  are kept only under the edit rules: original tests stay protected and new files
-  need an approved path.
-- **The task Bash API and read-only Terminal** reuse that Docker-only boundary.
-  There is no global or host-shell route. Every command is scoped to an existing
-  task whose latest persisted turn has literal Boolean execution approval, uses a fresh
-  throwaway copy, receives no ambient host environment, and cannot write to the
-  approved workspace. Commands accept only a supported image, a 1–300 second
-  timeout and a safe relative working directory. Output is capped at 2 MiB and
-  persisted in SQLite, so it can contain repository or command-produced secrets.
-  Treat the private data directory as sensitive and clear history when appropriate.
+- **The agent's shell** (`run_command`) exists only in local mode with execution
+  approval, in a trusted project. It runs in the project folder on this computer with
+  the user's rights, under the permission mode, a time limit, an output cap and
+  process-tree supervision. Classic mode offers no shell. Original tests stay
+  protected and new files need an approved path.
+- **The task Bash API and Terminal** run only for a local-mode task whose latest
+  persisted turn has literal Boolean execution approval, in a trusted project. There
+  is no global shell route. Commands accept a 1–300 second timeout and a safe relative
+  working directory inside the project, and run there on this computer. Output is
+  capped at 2 MiB and persisted in SQLite, so it can contain repository or
+  command-produced secrets. Treat the private data directory as sensitive and clear
+  history when appropriate.
 - **MCP servers** are added and enabled by the user. HTTP servers must use HTTPS
   (or plain HTTP on loopback), with redirects refused. *Local command* servers run
   on the host by design, like any MCP client: they get a minimal environment plus
   the single stored key the user assigns, never the server's environment or other
   secrets. MCP tool output is treated as data. Each agent task connects to enabled
   servers only and stops command servers when the task ends.
-- **Browser captures** require separate literal Boolean browsing and Docker
-  approvals. Chromium runs only in an optional operator-built container, with no
-  network, no workspace mount and the restricted Docker profile. A bounded trusted
-  standard-library relay performs public HTTP/HTTPS GET requests: every DNS answer
-  and redirect is checked, sockets are pinned to public addresses, and no host
-  cookies, keys, proxy settings or authorization are forwarded. Forms, uploads,
-  login, local targets and WebSockets are unsupported. The worker's Chromium
-  sandbox is disabled under this profile, so the outer Docker boundary is
-  essential. See `docs/BROWSER.md` for limits and the missing live-security gate.
+- **Browser captures** require separate literal Boolean browsing and execution
+  approvals. They use Playwright's Chromium when installed, otherwise the computer's
+  own Edge or Chrome, always with a fresh empty profile and no workspace access.
+  Every request goes through Dikdik's public-only proxy: each DNS answer and redirect
+  is checked and local, private and special-use targets are refused. See
+  `docs/BROWSER.md` for limits.
 - Browser screenshots are authenticated task-scoped PNG responses, stored in the
   private SQLite database with bounded retention. Task deletion removes their rows
   atomically with task events. URLs, screenshots and page text may themselves be
@@ -135,8 +170,11 @@ proposals and tool output are untrusted. An objective cannot change policy.
   tools, approvals or limits. **Agent profiles** can only narrow tool access.
 - **Automations** store the mode and approvals the user chose; a schedule never
   grants consent. Automations created before this rule stay paused until edited.
-- Every Docker task requires Boolean execution approval; every external model
-  task requires separate Boolean disclosure approval. Strings do not grant consent.
+- Every task that runs commands requires Boolean execution approval; every external
+  model task requires separate Boolean disclosure approval. Strings do not grant
+  consent. Requests that still ask for `docker` verification are refused.
+- **Automations** never run commands: scheduled runs are syntax-checked candidates,
+  and saved runs that used the removed Docker verification were migrated to that.
 - There is no global command API, host shell, source-write endpoint, deployment,
   installation, Git hook execution, production DB access or external publication.
 
@@ -173,7 +211,7 @@ patch is retained in the task artifact and authenticated diff download.
 Exact edits can address supported existing workspace text files. Test-named paths are
 protected heuristically (`test*`, test directories, `.test.`, `.spec.`, conftest).
 This is not a semantic proof that an edit cannot affect test behavior. Changes
-go to a separate candidate directory in Classic/Docker mode. Local Agent mode
+go to a separate candidate directory in Classic mode. Local Agent mode
 writes the source workspace with conflict checks and Undo checkpoints, including
 deferred files materialized for editing (see Local mode above).
 
@@ -188,44 +226,31 @@ new POSIX data directories request mode 0700, but Windows/existing-directory
 permissions must be managed by the operator. Disk retention/quota/secure deletion
 and encrypted state storage are not implemented.
 
-## Actual execution boundary
+## Execution boundary
 
-Repository tests run only through a fixed Docker invocation:
+There is no container or VM boundary. Repository tests and commands run only in
+local mode, on this computer, in the project folder, with the user's rights
+(`dikdik/local_exec.py`):
 
-- Preloaded Linux `python:3.13-slim`, no automatic pull or dependency installation.
-- Non-root UID/GID 65534; no capabilities; no-new-privileges.
-- No network, read-only root filesystem and read-only candidate mount.
-- No original repository, credentials, Docker socket or host-root mount.
-- 256MB memory (no extra swap), one CPU, 64 PIDs, 128 open-file limit.
-- 16MB noexec/nosuid temporary filesystem, disabled persistent container logs.
-- 64KiB captured output limit, 60-second host monitor; in-container supervisor
-  imposes a 55-second test-subprocess timeout even if the service disappears.
-- Cancellation/timeout attempts container removal by recorded task-derived name,
-  then terminates the Docker client. Killing a client alone is not cleanup.
-- Startup attempts cleanup of previously approved stale Docker tasks and records
-  warnings; exact restart/resume is not claimed. Cleanup failure requires operator
-  action. Docker service outages can prevent proof of removal.
+- Only after the project is trusted and the task carries literal Boolean execution
+  approval; the permission mode decides which commands ask first.
+- A time limit, an output cap and supervision of the whole process tree, so Stop and
+  timeouts end every child. On Windows a Job Object also bounds committed memory and
+  live processes; on macOS/Linux only an explicitly configured memory limit applies.
+- Approved secrets reach the command as environment variables; their values are
+  replaced in streamed and stored output.
+- The shell is Git Bash when installed, otherwise PowerShell 7 or Windows PowerShell.
+  For PowerShell, Dikdik translates `&&`/`||`, `/dev/null` and `$NAME` for approved
+  variables, adds stand-ins for common POSIX commands, keeps the real exit code, and
+  starts it with `-ExecutionPolicy Bypass` for that process only (Windows' default
+  policy otherwise blocks `npm.ps1`); no system or user policy is changed.
+- A suite passes only when its command exits 0; Python's unittest exits non-zero when
+  it found no tests.
 
-The host CLI is invoked with fixed argv and `shell=False`, not a repository shell.
-No environment secrets are forwarded to the container. Docker daemon settings
-and CLI lookup remain trusted host configuration. The image tag is mutable:
-immutable digest pinning, vulnerability scans and distribution license review
-are release gates, not completed security claims.
-
-**Live container boundary tests could not run in this environment.** The Docker
-daemon was unavailable. Command-construction and mocked cleanup tests are not
-proof of actual isolation. Containers share a kernel and do not eliminate kernel
-or daemon escapes. For actively malicious repositories, evaluate microVMs or an
-equivalent stronger boundary before enabling execution. Tests can lie, bypass
-their own assertions, or forge runtime signals; process success is not proof against
-malicious test code or satisfaction of the objective. The runner now requires a
-current-run nonce-tagged completion receipt, discovered==executed>0 and zero
-failure/error/skip/expected-failure/unexpected-success counts in addition to exit 0.
-This rejects accidental `os._exit(0)` during discovery with no completed tests.
-It is **not cryptographic attestation**: repository code executes in the test
-interpreter and can deliberately inspect or subvert that interpreter/harness.
-Independent trusted acceptance checks outside that trust domain remain a future
-requirement for stronger adversarial assurance.
+Classic mode runs no repository code at all: it syntax-checks an isolated candidate.
+Tests can lie, bypass their own assertions, or forge runtime signals; process success
+is not proof against malicious test code or satisfaction of the objective. Do not
+run code from a repository you do not trust.
 
 ## Model boundary
 
@@ -248,7 +273,7 @@ No real-provider privacy/security test has been run.
 ## Original agent loop
 
 Tool-using mode is original DIKDIK code, not an imported OpenHands runtime. It
-requires disclosure approval, plus execution approval for local/Docker execution,
+requires disclosure approval, plus execution approval for local execution,
 and exposes policy-checked workspace tools and the fixed test runner. Existing exact-edit restrictions
 remain authoritative. A model cannot add a shell command argument to `run_tests`.
 Every edit invalidates prior verification; finish requires net edits and current

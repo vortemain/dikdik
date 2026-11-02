@@ -15,9 +15,9 @@ test("browser history keeps the last valid screenshot across failures and reload
   const view = browserView([
     event({ status: "passed", url: "https://example.com", title: "<h1>Example</h1>", text: "untrusted", screenshot }),
     event({ url: "https://other.example/" }, "browser_started"),
-    event({ status: "blocked", error: "Docker unavailable" }),
+    event({ status: "blocked", error: "No browser available" }),
   ]);
-  expect(view).toMatchObject({ url: "https://example.com/", title: "<h1>Example</h1>", screenshot, status: "blocked", error: "Docker unavailable" });
+  expect(view).toMatchObject({ url: "https://example.com/", title: "<h1>Example</h1>", screenshot, status: "blocked", error: "No browser available" });
   expect(eventToMessages(event({ status: "passed", screenshot }), "Browse")[0]?.kind).toBe("browser_result");
 });
 

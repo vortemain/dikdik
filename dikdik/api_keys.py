@@ -9,12 +9,14 @@ the API after creation.
 
 from __future__ import annotations
 
+import logging
 import hashlib
 import json
 import os
 import secrets
 import time
 from pathlib import Path
+from . import logs
 
 
 SCOPES = {"read", "write", "admin"}
@@ -95,8 +97,8 @@ class ApiKeyStore:
                         if e["id"] == entry["id"]:
                             e["last_used"] = time.time()
                     self._write(entries)
-                except Exception:
-                    pass
+                except Exception:  # last-used time is informational; verification already succeeded
+                    logs.log("api_key_last_used_not_saved", logging.WARNING, exc_info=True)
                 return {"id": entry["id"], "name": entry["name"],
                         "scopes": entry["scopes"]}
         return None

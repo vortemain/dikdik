@@ -18,7 +18,7 @@ def main() -> int:
     if shutil.which("cargo") is None:
         print("cargo is not installed; the Python indexer will be used.", file=sys.stderr)
         return 1
-    subprocess.run(["cargo", "build", "--release", "-p", "dikdik-index"], cwd=ROOT, check=True)
+    subprocess.run(["cargo", "build", "--release", "-p", "dikdik-index"], cwd=ROOT, check=True, timeout=1800)
     release = ROOT / "target" / "release"
     if sys.platform == "win32":
         built, target = release / "dikdik_index.dll", ROOT / "dikdik" / "dikdik_index.pyd"
@@ -28,7 +28,7 @@ def main() -> int:
         built, target = release / "libdikdik_index.so", ROOT / "dikdik" / "dikdik_index.abi3.so"
     shutil.copyfile(built, target)
     check = subprocess.run([sys.executable, "-c", "from dikdik import repository; print(repository.INDEXER)"],
-                           cwd=ROOT, capture_output=True, text=True, check=True)
+                           cwd=ROOT, capture_output=True, text=True, check=True, timeout=120)
     print(f"Installed {target.relative_to(ROOT)}; active indexer: {check.stdout.strip()}")
     return 0
 

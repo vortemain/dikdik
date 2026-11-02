@@ -1,0 +1,2 @@
+{"objective": "FIX the add function in calculator.py so it returns the sum of its arguments, and verify it with the tests.",
+ "category": "logic bug", "timeout_seconds": 900}

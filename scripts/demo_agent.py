@@ -1,4 +1,4 @@
-"""Real-provider/Docker demonstration. No scripted model or fake verifier."""
+"""Real-provider demonstration with tests on this computer. No scripted model or fake verifier."""
 
 import argparse
 import json
@@ -14,7 +14,7 @@ from dikdik.engine import Engine, TERMINAL
 def main():
     parser = argparse.ArgumentParser(description="Run DIKDIK's original agent on its broken addition fixture")
     parser.add_argument("--approve-external", action="store_true", help="Approve disclosure to the configured model; may incur charges")
-    parser.add_argument("--approve-execution", action="store_true", help="Approve fixture test execution in restricted Docker")
+    parser.add_argument("--approve-execution", action="store_true", help="Approve running the fixture's commands and tests on this computer (a temporary copy)")
     args = parser.parse_args()
     if not (args.approve_external and args.approve_execution):
         parser.error("Both --approve-external and --approve-execution are required; no model or tests have run")
@@ -30,7 +30,7 @@ def main():
         try:
             task = engine.submit({
                 "objective": "Investigate and fix the addition bug. Establish the failure with tests, make a minimal production-code repair without modifying tests, rerun them and finish only when the current candidate passes.",
-                "mode": "agent", "verification": "docker",
+                "mode": "agent", "verification": "local",
                 "approve_external": True, "approve_execution": True,
             })
             while True:
@@ -38,7 +38,7 @@ def main():
                 if data["state"] in TERMINAL:
                     break
                 time.sleep(.1)
-            report = {"mode": "real_model_and_docker", "state": data["state"], "result": data["result"], "events": [{"kind": event["kind"], "data": event["data"]} for event in data["events"]]}
+            report = {"mode": "real_model_and_local_tests", "state": data["state"], "result": data["result"], "events": [{"kind": event["kind"], "data": event["data"]} for event in data["events"]]}
             print(json.dumps(report, indent=2))
             return 0 if data["state"] == "completed" and data["result"].get("tests_verified") else 1
         except KeyboardInterrupt:

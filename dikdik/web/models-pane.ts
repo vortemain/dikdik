@@ -185,7 +185,7 @@ export function modelsPane(root: HTMLElement, deps: PaneDeps): () => Promise<voi
     return form;
   }
   function connectionsBlock(): HTMLElement {
-    const box = section("Provider connections", "Share one API key across several model profiles. New keys stay in memory for up to 8 hours. Reconnect after restarting; keys are never shown again.",
+    const box = section("Provider connections", "Share one API key across several model profiles. Keys are saved encrypted on this computer and never shown again.",
       button("Add connection", "small", () => { editingConnection = "new"; render(); }));
     if (editingConnection === "new") box.append(connectionForm(null));
     const list = make("ul", "m4-list");

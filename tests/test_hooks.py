@@ -205,6 +205,27 @@ class HookTests(unittest.TestCase):
         self.assertEqual(events, ["task.started", "context.building", "tool.before", "tool.after",
                                   "tool.before", "tool.failed", "task.completed"])
 
+    def test_before_block_stops_a_parallel_read_before_it_runs(self):
+        # Regression: batched reads executed before tool.before hooks, so a block only
+        # discarded a result that had already been read. Each hook also ran once per call.
+        from dikdik.agent import AgentBudget
+        import dikdik.agent as agent_module
+        traces, executed = [], []
+        hooks = HookEngine(lambda k, d: traces.append((k, d)))
+        hooks.register_rule("project", rule(match={"tool": "read_file", "pattern": "secret"}))
+        batch = ModelResponse("", [ToolCall("a", "read_file", {"path": "app.py"}),
+                                   ToolCall("b", "read_file", {"path": "secret.py"})])
+        real = agent_module._execute_read_only
+        def spy(call, *args):
+            executed.append(call.arguments["path"])
+            return real(call, *args)
+        with patch.object(agent_module, "_execute_read_only", spy):
+            run_agent({"app.py": "x=1\n", "secret.py": "key=1\n"}, "Inspect", Script(batch, ModelResponse("Done", [])),
+                      None, lambda *_: None, threading.Event(), AgentBudget(parallel_reads=True), hooks=hooks, task_id="t")
+        self.assertEqual(executed, ["app.py"])
+        before = [d for k, d in traces if k == "hook_event" and d["event"] == "tool.before"]
+        self.assertEqual(sorted(d["call_id"] for d in before), ["a", "b"])
+
     def test_allow_cannot_skip_confirmation_or_create_policy(self):
         hooks, calls = HookEngine(), []
         hooks.register_rule("plugin allow", rule(decision="allow"))

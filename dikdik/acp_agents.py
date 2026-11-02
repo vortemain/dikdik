@@ -14,6 +14,8 @@ import re
 import secrets
 import shlex
 import shutil
+from . import sql
+from . import migrations
 
 PRESETS = {
     "claude-code": {
@@ -70,15 +72,14 @@ def credential_pairs(entries) -> list[tuple[str, str]]:
 class AcpAgentStore:
     def __init__(self, store):
         self.store = store
-        with self.store.connect() as db:
-            db.executescript("""
+        migrations.ensure(self.store.path, "acp_agents", [(1, "ACP agents", migrations.script("""
                 CREATE TABLE IF NOT EXISTS acp_agents (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, preset TEXT,
                     command TEXT NOT NULL, args TEXT, credentials TEXT,
                     model TEXT, enabled INTEGER NOT NULL DEFAULT 0,
                     created REAL NOT NULL
                 );
-            """)
+            """))])
 
     def list(self) -> list[dict]:
         with self.store.connect() as db:
@@ -167,7 +168,7 @@ class AcpAgentStore:
         fields = self._check(body)
         if fields:
             with self.store.connect() as db:
-                db.execute(f"UPDATE acp_agents SET {', '.join(f'{key}=?' for key in fields)} WHERE id=?",
+                db.execute(f"UPDATE acp_agents SET {sql.assign(fields, sql.writable_columns(db, 'acp_agents'))} WHERE id=?",
                            [*fields.values(), agent_id])
         return self.get(agent_id)
 

@@ -26,8 +26,8 @@ def main():
         for i in range(500):
             path = root / f"package_{i // 25}" / f"module_{i}.py"
             path.parent.mkdir(exist_ok=True)
-            path.write_text(f"def function_{i}(value):\n    return value + {i}\n" * 20)
-        (root / ".env").write_text("DO_NOT_INDEX=fixture\n")
+            path.write_text(f"def function_{i}(value):\n    return value + {i}\n" * 20, encoding="utf-8")
+        (root / ".env").write_text("DO_NOT_INDEX=fixture\n", encoding="utf-8")
         times = []
         for _ in range(args.samples):
             start = time.perf_counter()
@@ -36,13 +36,13 @@ def main():
             times.append((time.perf_counter() - start) * 1000)
         assert len(info["files"]) == 500 and ".env" not in files
         # Change one file; implementation currently rescans everything.
-        (root / "package_0" / "module_0.py").write_text("changed = True\n")
+        (root / "package_0" / "module_0.py").write_text("changed = True\n", encoding="utf-8")
         start = time.perf_counter()
         refreshed = metadata(inventory(root))
         refresh_ms = (time.perf_counter() - start) * 1000
         assert info["files"][0]["sha256"] != refreshed["files"][0]["sha256"]
         report = {
-            "scope": "Synthetic 500-file UTF-8 inventory + SHA256 metadata; no model, Docker, retrieval-quality or end-to-end agent performance claims",
+            "scope": "Synthetic 500-file UTF-8 inventory + SHA256 metadata; no model, retrieval-quality or end-to-end agent performance claims",
             "baseline": "First implementation; no preexisting application or comparative optimization baseline",
             "environment": {"python": platform.python_version(), "platform": platform.platform(), "processor": platform.processor(), "logical_cpus": os.cpu_count()},
             "fixture": {"files": 500, "bytes": sum(len(t.encode()) for t in files.values()), "excluded_hidden_files": 1},

@@ -24,6 +24,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from .model_config import check_url
+from . import migrations
 
 PROTOCOL = "2025-06-18"
 CLIENT = {"name": "dikdik", "version": "0.1.0"}
@@ -41,7 +42,7 @@ def _cleanup_stdio_clients(*_args):
     for client in list(_stdio_clients):
         try:
             client.close()
-        except Exception:
+        except Exception:  # closing an already-dead client is best effort
             pass
     _stdio_clients.clear()
 
@@ -69,7 +70,16 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     enabled INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL
 );
 """
-MIGRATIONS = (("env_refs", "TEXT"), ("auth", "TEXT"), ("catalog_id", "TEXT"))
+
+
+def _baseline(db) -> None:
+    db.execute(SCHEMA)
+    migrations.add_column(db, "mcp_servers", "env_refs", "ALTER TABLE mcp_servers ADD COLUMN env_refs TEXT")
+    migrations.add_column(db, "mcp_servers", "auth", "ALTER TABLE mcp_servers ADD COLUMN auth TEXT")
+    migrations.add_column(db, "mcp_servers", "catalog_id", "ALTER TABLE mcp_servers ADD COLUMN catalog_id TEXT")
+
+
+STEPS = [(1, "MCP servers with environment, auth and catalog columns", _baseline)]
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
 REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -103,12 +113,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 class McpStore:
     def __init__(self, store):
         self.store = store
-        with store.connect() as db:
-            db.execute(SCHEMA)
-            have = {r["name"] for r in db.execute("PRAGMA table_info(mcp_servers)")}
-            for column, kind in MIGRATIONS:
-                if column not in have:
-                    db.execute(f"ALTER TABLE mcp_servers ADD COLUMN {column} {kind}")
+        migrations.ensure(store.path, "mcp_servers", STEPS)
 
     @staticmethod
     def _row(row) -> dict:

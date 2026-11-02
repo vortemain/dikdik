@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .agent import ToolCall, _tool
 from .providers import chat_completion
+from . import migrations
 
 # --- risk -----------------------------------------------------------------------
 HIGH = [
@@ -28,6 +29,7 @@ HIGH = [
     (re.compile(r"\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f)\b"), "rewrites or publishes history"),
 ]
 READ_TOOLS = {"list_files", "read_file", "search_text", "read_skill", "read_plan", "task_tracker", "write_plan", "finish", "delegate",
+              "architecture_map", "impacted_tests", "security_scan", "quality_check", "release_gate", "record_requirements",
               "request_secret", "ask_question"}  # both are themselves questions to the user
 
 ENV_EXCLUDED = {".env.example", ".env.sample", ".env.template", ".env.defaults"}
@@ -48,8 +50,8 @@ def assess(call: ToolCall) -> tuple[str, str]:
         return "high", "reads a secrets file such as .env"
     if call.name in READ_TOOLS:
         return "low", "reads or reports only"
-    if call.name in {"run_command", "preview_app"}:
-        command = str(call.arguments.get("command", ""))
+    if call.name in {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}:
+        command = str(call.arguments.get("command", "")) + "\n" + str(call.arguments.get("dependency_command", ""))
         for pattern, reason in HIGH:
             if pattern.search(command):
                 return "high", f"the command {reason}"
@@ -64,15 +66,17 @@ def assess(call: ToolCall) -> tuple[str, str]:
         return "low", "observes the current browser page"
     if call.name.startswith("mcp__"):
         return "medium", "calls an outside tool through MCP"
-    if call.name in {"edit_file", "create_file"}:
+    if call.name in {"edit_file", "create_file", "record_decision"}:
         path = str(call.arguments.get("path", ""))
         return ("medium", "changes a configuration or build file") if re.search(r"(^|/)(\.github|Dockerfile|Makefile|package\.json|pyproject\.toml|setup\.py|Cargo\.toml)", path) else ("low", "edits the isolated copy")
     if call.name == "run_tests":
-        return "low", "runs the project's tests in the sandbox"
+        return "low", "runs the project's tests"
+    if call.name == "parallel_edit":
+        return "low", "splits edits of the isolated copy across writers; each writer's edits are checked like edit_file"
     return "medium", "uses a tool"
 
 
-ACTION_TOOLS = {"run_command", "preview_app", "browser_click", "browser_fill", "browser_press", "browser_select"}
+ACTION_TOOLS = {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test", "browser_click", "browser_fill", "browser_press", "browser_select"}
 
 
 # --- structured permission rules -------------------------------------------------------
@@ -80,10 +84,10 @@ ACTION_TOOLS = {"run_command", "preview_app", "browser_click", "browser_fill", "
 # "ask" always prompts. Rules come only from the settings screen (untrusted content
 # can never add one). An unmatched call falls through to the normal policy.
 RULE_ACTIONS = {"*", "read", "edit", "create", "command", "browse"}
-RULE_GROUPS = {"read": READ_TOOLS, "edit": {"edit_file"}, "create": {"create_file"},
-               "command": {"run_command", "preview_app"}, "browse": {"preview_app", "browse_url", "web_fetch", "web_search", "browser_click", "browser_fill", "browser_press", "browser_select", "browser_scroll", "browser_screenshot"}}
+RULE_GROUPS = {"read": READ_TOOLS, "edit": {"edit_file"}, "create": {"create_file", "record_decision"},
+               "command": {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}, "browse": {"preview_app", "browse_url", "web_fetch", "web_search", "browser_click", "browser_fill", "browser_press", "browser_select", "browser_scroll", "browser_screenshot"}}
 RULE_SUBJECT = {"list_files": "path", "read_file": "path", "search_text": "path", "edit_file": "path",
-                "create_file": "path", "run_command": "command", "preview_app": "command", "browse_url": "url", "web_search": "query"}
+                "create_file": "path", "run_command": "command", "preview_app": "command", "measure_performance": "command", "repeat_command": "command", "load_test": "command", "dast_scan": "command", "fault_test": "command", "browse_url": "url", "web_search": "query"}
 RULE_NAME = re.compile(r"[a-z0-9_.-]{1,60}")
 
 
@@ -100,7 +104,7 @@ def permission_rule_effect(rules, call: ToolCall) -> str | None:
 
 
 def _rule_matches(rule, call: ToolCall) -> bool:
-    if rule.get("enabled") is False or not isinstance(rule, dict):
+    if not isinstance(rule, dict) or rule.get("enabled") is False:
         return False
     action = rule.get("action")
     if not isinstance(action, str):
@@ -111,6 +115,11 @@ def _rule_matches(rule, call: ToolCall) -> bool:
     if not isinstance(pattern, str) or pattern == "*" or pattern == "":
         return True
     subject = str(call.arguments.get(RULE_SUBJECT.get(call.name, ""), ""))
+    if call.name == "fault_test":
+        # Two commands run: deny and ask rules match either one; an allow rule must cover both.
+        both = [subject, str(call.arguments.get("dependency_command", ""))]
+        matched = [fnmatch.fnmatch(s.casefold(), pattern.casefold()) for s in both]
+        return all(matched) if rule.get("effect") == "allow" else any(matched)
     return fnmatch.fnmatch(subject.casefold(), pattern.casefold())
 
 
@@ -153,7 +162,7 @@ def needs_approval(policy: str, risk: str, tool: str | None = None) -> bool:
 
 REQUEST_SECRET = _tool(
     "request_secret",
-    "Ask the user for a secret (a token or password) that a sandbox command needs. The value is never shown to you: "
+    "Ask the user for a secret (a token or password) that a command needs. The value is never shown to you: "
     "it becomes the environment variable `name` for your run_command calls. Use only when a command truly needs it.",
     {"name": {"type": "string", "description": "Environment variable name, e.g. GITHUB_TOKEN"},
      "reason": {"type": "string", "description": "One sentence the user sees: what the secret is for"}},
@@ -426,8 +435,8 @@ class Attachments:
     def __init__(self, store, folder: Path):
         self.store, self.folder = store, folder
         folder.mkdir(parents=True, exist_ok=True)
-        with store.connect() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created REAL NOT NULL)")
+        migrations.ensure(store.path, "attachments", [(1, "attachments", migrations.script(
+            "CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created REAL NOT NULL);"))])
 
     def add(self, body) -> dict:
         if not isinstance(body, dict):

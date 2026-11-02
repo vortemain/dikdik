@@ -1,0 +1,2 @@
+{"objective": "Users report that pages from paginate() in pages.py overlap: the last item of one page also appears as the first item of the next. Fix it, and add a test that proves pages do not overlap.",
+ "category": "off-by-one", "timeout_seconds": 900}

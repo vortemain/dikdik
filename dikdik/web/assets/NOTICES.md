@@ -11,9 +11,9 @@ These assets are served by Dikdik itself. No CDN or favicon service is used.
   `providers/` contains original marks selected from the pinned package.
   Source: https://github.com/lobehub/lobe-icons/tree/49a2130
   Full notice: `LICENSE-lobe-icons.txt`.
-  The xAI model-provider entry uses the package's Grok product symbol (`grok.svg`),
-  rather than the separate xAI company mark. Brand reference:
-  https://x.ai/legal/brand-guidelines
+  The xAI entry uses the package's xAI company mark (`xai.svg`; its `<title>` is changed from
+  "Grok" to "xAI"). Brand reference: https://x.ai/legal/brand-guidelines. Nebius uses the
+  package's Nebius mark (`nebius.svg`).
 - **Highlight.js 11.12.0**, copyright (c) 2006 Ivan Sagalaev, BSD 3-Clause.
   Its engine and 193 language grammars are compiled into the browser bundle.
   Source: https://github.com/highlightjs/highlight.js

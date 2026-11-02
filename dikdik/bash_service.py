@@ -1,22 +1,21 @@
-"""Durable command terminal, using the task's approved local or Docker runtime."""
+"""Durable command terminal: commands run in the project folder on this computer."""
 
 import json
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from urllib.parse import parse_qs, urlsplit
 
-from .repository import inventory
-from .runners import IMAGES, run_shell
 from . import local_exec
+from . import sql
+from . import migrations
 
 
 MAX_TIMEOUT = 300
 MAX_LIMIT = 500
 MAX_OUTPUT = 2 * 1024 * 1024
-CHUNK_SIZE = 1024 * 1024
 MAX_INFLIGHT = 16
 
 _SCHEMA = """
@@ -69,8 +68,8 @@ class BashService:
         self._deleting: set[str] = set()
         self._closed = False
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dikdik-bash")
+        migrations.ensure(self.store.path, "bash_events", [(1, "terminal command history", migrations.script(_SCHEMA))])
         with self.store.connect() as db:
-            db.executescript(_SCHEMA)
             unfinished = db.execute("SELECT task_id,command_id FROM bash_events b WHERE kind='command' AND NOT EXISTS "
                                     "(SELECT 1 FROM bash_events o WHERE o.command_id=b.command_id AND o.kind='output' "
                                     "AND json_extract(o.data,'$.final')=1)").fetchall()
@@ -116,12 +115,6 @@ class BashService:
             raise ValueError("cwd must be an existing directory inside this project")
         return target
 
-    def _files(self, task_id: str) -> dict[str, str]:
-        artifact = self.engine.data / "artifacts" / task_id
-        if artifact.is_dir():
-            return inventory(artifact)
-        return inventory(self.engine.root)
-
     def _insert(self, task_id: str, command_id: str, order: int, kind: str, data: dict) -> dict:
         event_id, now = uuid.uuid4().hex, time.time()
         with self.store.connect() as db:
@@ -143,19 +136,17 @@ class BashService:
         timeout = body.get("timeout", 60)
         if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= MAX_TIMEOUT:
             raise ValueError(f"timeout must be a whole number from 1 to {MAX_TIMEOUT}")
-        image = body.get("image", "python")
-        if image not in IMAGES:
-            raise ValueError(f"Image must be one of {', '.join(sorted(IMAGES))}")
-        return {"command": command, "timeout": timeout, "image": image, "cwd": _relative_cwd(body.get("cwd"))}
+        return {"command": command, "timeout": timeout, "cwd": _relative_cwd(body.get("cwd"))}
 
     def start(self, task_id: str, body) -> dict:
         task = self._approved_task(task_id)
         request = self._validate(body)
-        request["runtime"] = "local" if task["request"].get("verification") == "local" else "docker"
-        if request["runtime"] == "local":
-            if not self.engine.trusted():
-                raise PermissionError("Trust this project before running local commands")
-            self._local_cwd(request["cwd"])
+        if task["request"].get("verification") != "local":
+            raise PermissionError("Commands run only in tasks that work in your files on this computer")
+        if not self.engine.trusted():
+            raise PermissionError("Trust this project before running local commands")
+        self._local_cwd(request["cwd"])
+        request["runtime"] = "local"
         command_id = uuid.uuid4().hex
         key = f"{task_id}:{command_id}"
         cancel, done = threading.Event(), threading.Event()
@@ -173,8 +164,7 @@ class BashService:
         try:
             self._insert(task_id, command_id, 0, "command", {
                 "command": request["command"], "cwd": request["cwd"] or None,
-                "timeout": request["timeout"], "image": request["image"],
-                "runtime": request["runtime"],
+                "timeout": request["timeout"], "runtime": request["runtime"],
             })
             self._pool.submit(self._run, task_id, command_id, request, cancel, done)
         except Exception:
@@ -192,15 +182,15 @@ class BashService:
             done = self._done.get(key)
         if done is None or not done.wait(command["timeout"] + 20):
             self.stop(task_id, command["id"])
-            raise TimeoutError("Sandbox command did not finish cleanly")
+            raise TimeoutError("Command did not finish cleanly")
         outputs = self.search(task_id, {"command_id": command["id"], "kind": "output", "limit": str(MAX_LIMIT)})["items"]
         final = next((event for event in reversed(outputs) if event.get("final") is True), None)
         if final is None:
-            raise RuntimeError("Sandbox command ended without a final output event")
+            raise RuntimeError("Command ended without a final output event")
         return {**final, "output": "".join(str(event.get("output", "")) for event in outputs)}
 
     def _run(self, task_id: str, command_id: str, request: dict, cancel: threading.Event, done: threading.Event):
-        order, buffered, sent = 0, [], 0
+        order, sent = 0, 0
 
         def chunk(text: str):
             nonlocal order, sent
@@ -208,40 +198,17 @@ class BashService:
                 return
             text = text[:MAX_OUTPUT - sent]
             sent += len(text)
-            if request.get("runtime") == "local":
-                order += 1
-                self._insert(task_id, command_id, order, "output", {"output": text, "final": False})
-                return
-            buffered.append(text)
-            joined = "".join(buffered)
-            while len(joined) >= CHUNK_SIZE:
-                order += 1
-                self._insert(task_id, command_id, order, "output", {"output": joined[:CHUNK_SIZE], "final": False})
-                joined = joined[CHUNK_SIZE:]
-            buffered[:] = [joined]
+            order += 1
+            self._insert(task_id, command_id, order, "output", {"output": text, "final": False})
 
-        command = request["command"]
-        if request["cwd"] and request.get("runtime") != "local":
-            # The path is already restricted to plain relative workspace segments.
-            quoted = "'" + request["cwd"].replace("'", "'\\''") + "'"
-            command = f"cd -- {quoted} && {command}"
         try:
             if cancel.is_set():
                 result = {"status": "cancelled", "exit_code": -15, "output": "", "changed": {}}
-            elif request.get("runtime") == "local":
-                result = local_exec.run(self._local_cwd(request["cwd"]), command, cancel,
-                                        timeout=request["timeout"], on_chunk=chunk, output_limit=MAX_OUTPUT)
             else:
-                result = run_shell(
-                          self.engine.data / "bash" / command_id, self._files(task_id), command, cancel,
-                          image=request["image"], timeout=request["timeout"],
-                          name="dikdik-" + command_id, on_chunk=chunk, output_limit=MAX_OUTPUT,
-                      )
+                result = local_exec.run(self._local_cwd(request["cwd"]), request["command"], cancel,
+                                        timeout=request["timeout"], on_chunk=chunk, output_limit=MAX_OUTPUT)
             if not sent and result.get("output"):
                 chunk(str(result["output"]))
-            if buffered and buffered[0]:
-                order += 1
-                self._insert(task_id, command_id, order, "output", {"output": buffered[0], "final": False})
             order += 1
             self._insert(task_id, command_id, order, "output", {
                 "output": "", "final": True, "exit_code": result.get("exit_code"),
@@ -253,7 +220,7 @@ class BashService:
             order += 1
             self._insert(task_id, command_id, order, "output", {
                 "output": "", "final": True, "exit_code": None, "status": "inconclusive",
-                "error": "Sandbox command failed",
+                "error": "Command failed",
             })
         finally:
             key = f"{task_id}:{command_id}"
@@ -278,7 +245,7 @@ class BashService:
         value = _command_id(event_id)
         column = "command_id" if command_event else "id"
         with self.store.connect() as db:
-            row = db.execute(f"SELECT * FROM bash_events WHERE task_id=? AND {column}=? " +
+            row = db.execute(f"SELECT * FROM bash_events WHERE task_id=? AND {sql.ident(column, ('id', 'command_id'))}=? " +
                              ("AND kind='command' " if command_event else "") + "ORDER BY time LIMIT 1", (task_id, value)).fetchone()
         return self._row(row) if row else None
 
@@ -301,7 +268,7 @@ class BashService:
             args.append(query["kind"])
         args.append(int(limit_text) + 1)
         with self.store.connect() as db:
-            rows = db.execute("SELECT * FROM bash_events WHERE " + " AND ".join(clauses) +
+            rows = db.execute("SELECT * FROM bash_events WHERE " + sql.clauses(clauses, ("task_id=?", "seq>?", "command_id=?", "kind=?")) +
                               " ORDER BY seq LIMIT ?", args).fetchall()
         limit = int(limit_text)
         items = [self._row(row) for row in rows[:limit]]

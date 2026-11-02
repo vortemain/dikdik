@@ -8,17 +8,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dikdik.agent import ModelResponse, ToolCall
-from dikdik.bash_service import BashService, CHUNK_SIZE, MAX_INFLIGHT
+from dikdik.bash_service import BashService, MAX_INFLIGHT
 from dikdik.engine import Engine
 from dikdik.server import make_server
 
 
-def approved_request(approved=True):
-    return {
-        "objective": "terminal fixture", "mode": "offline", "verification": "docker",
-        "edits": [{"path": "app.py", "before": "x = 1", "after": "x = 2"}],
-        "approve_execution": approved,
-    }
+def approved_request(approved=True, verification="local"):
+    return {"objective": "terminal fixture", "mode": "agent", "verification": verification,
+            "approve_execution": approved, "approve_external": True}
 
 
 class BashServiceTests(unittest.TestCase):
@@ -31,28 +28,27 @@ class BashServiceTests(unittest.TestCase):
         (self.root / "app.py").write_text("x = 1\n", encoding="utf-8")
         self.engine = Engine(self.root, self.data)
         self.addCleanup(self.engine.close)
+        self.engine.set_trusted(True)
         self.task = self.engine.store.create(approved_request())
 
-    @staticmethod
-    def fake_shell(_workdir, files, command, cancel, **kwargs):
-        assert files["app.py"].replace("\r\n", "\n") == "x = 1\n"
+    def fake_shell(self, cwd, command, cancel, **kwargs):
+        assert cwd == self.root.resolve()
         assert command == "printf hello"
-        assert kwargs["name"].startswith("dikdik-") and len(kwargs["name"]) == 39
         kwargs["on_chunk"]("hel")
         kwargs["on_chunk"]("lo\n")
         return {"status": "passed", "exit_code": 0, "output": "hello\n", "changed": {}}
 
     def test_execute_persists_command_chunks_and_task_stream_events(self):
-        with patch("dikdik.bash_service.run_shell", side_effect=self.fake_shell):
+        with patch("dikdik.bash_service.local_exec.run", side_effect=self.fake_shell):
             result = self.engine.bash.execute(self.task, {"command": "printf hello", "timeout": 4})
         self.assertEqual((result["exit_code"], result["status"], result["output"]), (0, "passed", "hello\n"))
         events = self.engine.bash.search(self.task, {"limit": "20"})["items"]
-        self.assertEqual([event["kind"] for event in events], ["command", "output", "output"])
-        self.assertEqual(events[1]["output"], "hello\n")
+        self.assertEqual([event["kind"] for event in events], ["command", "output", "output", "output"])
+        self.assertEqual("".join(event["output"] for event in events[1:]), "hello\n")
         self.assertTrue(events[-1]["final"])
         streamed = [event["kind"] for event in self.engine.store.get(self.task)["events"]]
-        self.assertEqual(streamed[-3:], ["terminal_command", "terminal_output", "terminal_output"])
-        self.assertEqual(self.engine.bash.get(self.task, events[1]["id"])["output"], "hello\n")
+        self.assertEqual(streamed[-4:], ["terminal_command", "terminal_output", "terminal_output", "terminal_output"])
+        self.assertEqual(self.engine.bash.get(self.task, events[1]["id"])["output"], "hel")
 
     def test_execution_needs_per_task_approval_and_valid_input(self):
         denied = self.engine.store.create(approved_request(False))
@@ -63,6 +59,14 @@ class BashServiceTests(unittest.TestCase):
             with self.subTest(body=body), self.assertRaisesRegex(ValueError, message):
                 self.engine.bash.start(self.task, body)
 
+    def test_only_tasks_that_work_on_this_computer_run_commands(self):
+        candidate = self.engine.store.create(approved_request(verification="syntax"))
+        with self.assertRaisesRegex(PermissionError, "on this computer"):
+            self.engine.bash.start(candidate, {"command": "true"})
+        self.engine.set_trusted(False)
+        with self.assertRaisesRegex(PermissionError, "Trust"):
+            self.engine.bash.start(self.task, {"command": "true"})
+
     def test_pending_command_queue_is_bounded(self):
         with patch.object(self.engine.bash._pool, "submit", return_value=None):
             for index in range(MAX_INFLIGHT):
@@ -70,16 +74,17 @@ class BashServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, str(MAX_INFLIGHT)):
                 self.engine.bash.start(self.task, {"command": "one too many"})
 
-    def test_large_output_is_chunked_paged_and_reassembled(self):
-        output = "x" * (CHUNK_SIZE + 17)
-        def large(_workdir, _files, _command, _cancel, **kwargs):
-            kwargs["on_chunk"](output)
-            return {"status": "passed", "exit_code": 0, "output": output, "changed": {}}
-        with patch("dikdik.bash_service.run_shell", side_effect=large):
+    def test_large_output_is_paged_and_reassembled(self):
+        output = "x" * (1024 * 1024 + 17)
+        def large(_cwd, _command, _cancel, **kwargs):
+            kwargs["on_chunk"](output[:1024 * 1024])
+            kwargs["on_chunk"](output[1024 * 1024:])
+            return {"status": "passed", "exit_code": 0, "output": output}
+        with patch("dikdik.bash_service.local_exec.run", side_effect=large):
             result = self.engine.bash.execute(self.task, {"command": "large output"})
         self.assertEqual(result["output"], output)
         events = self.engine.bash.search(self.task, {"kind": "output", "limit": "10"})["items"]
-        self.assertEqual([len(event["output"]) for event in events], [CHUNK_SIZE, 17, 0])
+        self.assertEqual([len(event["output"]) for event in events], [1024 * 1024, 17, 0])
         first = self.engine.bash.search(self.task, {"limit": "1"})
         second = self.engine.bash.search(self.task, {"after": str(first["next_after"]), "limit": "1"})
         self.assertNotEqual(first["items"][0]["id"], second["items"][0]["id"])
@@ -87,18 +92,18 @@ class BashServiceTests(unittest.TestCase):
     def test_async_stop_is_scoped_idempotent_and_clear_isolated(self):
         entered = threading.Event()
 
-        def waiting(_workdir, _files, _command, cancel, **_kwargs):
+        def waiting(_cwd, _command, cancel, **_kwargs):
             entered.set()
             cancel.wait(2)
             return {"status": "cancelled", "exit_code": -15, "output": "", "changed": {}}
 
         other = self.engine.store.create(approved_request())
-        with patch("dikdik.bash_service.run_shell", side_effect=waiting):
+        with patch("dikdik.bash_service.local_exec.run", side_effect=waiting):
             command = self.engine.bash.start(self.task, {"command": "sleep 30"})
             self.assertTrue(entered.wait(1))
             self.assertTrue(self.engine.bash.stop(self.task, command["id"])["stop_requested"])
             done = self.engine.bash._done[f"{self.task}:{command['id']}"]
-            self.assertTrue(done.wait(5), "cancelled sandbox command did not persist its final event")
+            self.assertTrue(done.wait(5), "cancelled command did not persist its final event")
         self.assertFalse(self.engine.bash.stop(self.task, command["id"])["stop_requested"])
         self.assertEqual(self.engine.bash.search(other, {})["items"], [])
         self.assertGreater(self.engine.bash.clear(self.task)["cleared_count"], 0)
@@ -106,7 +111,7 @@ class BashServiceTests(unittest.TestCase):
         self.assertFalse(any(event["kind"].startswith("terminal_") for event in self.engine.store.get(self.task)["events"]))
 
     def test_history_survives_engine_restart(self):
-        with patch("dikdik.bash_service.run_shell", side_effect=self.fake_shell):
+        with patch("dikdik.bash_service.local_exec.run", side_effect=self.fake_shell):
             self.engine.bash.execute(self.task, {"command": "printf hello"})
         self.engine.bash.close()
         self.engine.bash = BashService(self.engine)
@@ -116,12 +121,12 @@ class BashServiceTests(unittest.TestCase):
     def test_task_delete_refuses_active_command_then_purges_history(self):
         entered = threading.Event()
 
-        def waiting(_workdir, _files, _command, cancel, **_kwargs):
+        def waiting(_cwd, _command, cancel, **_kwargs):
             entered.set()
             cancel.wait(2)
             return {"status": "cancelled", "exit_code": -15, "output": "", "changed": {}}
 
-        with patch("dikdik.bash_service.run_shell", side_effect=waiting):
+        with patch("dikdik.bash_service.local_exec.run", side_effect=waiting):
             command = self.engine.bash.start(self.task, {"command": "sleep 30"})
             self.assertTrue(entered.wait(1))
             with self.assertRaisesRegex(ValueError, "terminal commands"):
@@ -144,24 +149,24 @@ class BashServiceTests(unittest.TestCase):
             def respond(self, _messages, _tools):
                 return self.replies.pop(0)
 
-        def shell(_workdir, _files, command, _cancel, **kwargs):
+        def shell(root, command, _cancel, **kwargs):
             self.assertEqual(command, "printf live")
+            (root / "app.py").write_text("x = 2\n", encoding="utf-8")
             kwargs["on_chunk"]("live\n")
-            return {"status": "passed", "exit_code": 0, "output": "live\n",
-                    "changed": {"app.py": "x = 2\n"}, "deleted_ignored": []}
+            return {"status": "passed", "exit_code": 0, "output": "live\n", "runs_on": "this computer"}
 
         with patch("dikdik.engine.CompatibleAgentModel", return_value=Model()), \
-                patch("dikdik.engine.run_shell", side_effect=shell), \
-                patch("dikdik.engine.run_tests", return_value={"kind": "unittest", "status": "passed"}):
-            task = self.engine.submit({"objective": "change x", "mode": "agent", "verification": "docker",
-                                       "approve_execution": True, "approve_external": True})
+                patch("dikdik.engine.local_exec.run", side_effect=shell), \
+                patch("dikdik.engine.local_exec.run_tests", return_value={"kind": "unittest", "status": "passed", "runs_on": "this computer"}):
+            task = self.engine.submit({"objective": "change x", "mode": "agent", "verification": "local",
+                                       "approve_execution": True, "approve_external": True, "confirmation": "never"})
             for _ in range(300):
                 data = self.engine.store.get(task)
                 if data["state"] in {"completed", "failed", "blocked", "cancelled", "interrupted"}:
                     break
                 time.sleep(.01)
         self.assertEqual(data["state"], "completed", data.get("result"))
-        terminal = [event for event in data["events"] if event["kind"].startswith("terminal_")]
+        terminal = [event for event in data["events"] if event["kind"].startswith("terminal_")][:3]
         self.assertEqual([event["kind"] for event in terminal], ["terminal_command", "terminal_output", "terminal_output"])
         self.assertEqual((terminal[1]["data"]["output"], terminal[-1]["data"]["status"]), ("live\n", "passed"))
 
@@ -176,6 +181,7 @@ class BashHTTPTests(unittest.TestCase):
         (root / "app.py").write_text("x = 1\n", encoding="utf-8")
         self.engine = Engine(root, base / "data")
         self.addCleanup(self.engine.close)
+        self.engine.set_trusted(True)
         self.task = self.engine.store.create(approved_request())
         self.server = make_server(self.engine, 0, "token")
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -198,13 +204,13 @@ class BashHTTPTests(unittest.TestCase):
         return result
 
     def test_authenticated_execute_start_search_get_stop_and_clear(self):
-        def fake(_workdir, _files, _command, _cancel, **kwargs):
+        def fake(_cwd, _command, _cancel, **kwargs):
             kwargs["on_chunk"]("ok\n")
-            return {"status": "passed", "exit_code": 0, "output": "ok\n", "changed": {}}
+            return {"status": "passed", "exit_code": 0, "output": "ok\n"}
 
         prefix = f"/api/tasks/{self.task}/bash"
         self.assertEqual(self.call("GET", prefix + "/events", auth=False)[0], 401)
-        with patch("dikdik.bash_service.run_shell", side_effect=fake):
+        with patch("dikdik.bash_service.local_exec.run", side_effect=fake):
             status, executed = self.call("POST", prefix + "/execute", {"command": "echo ok"})
             self.assertEqual((status, executed["output"]), (200, "ok\n"))
             status, started = self.call("POST", prefix + "/start", {"command": "echo ok"})

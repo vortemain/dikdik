@@ -10,7 +10,6 @@ include scripts/requirements-release.txt
 recursive-include tests *.py *.ts
 recursive-include dikdik/web *.ts *.js *.css *.html *.svg *.json *.txt *.md *.woff2
 recursive-include dikdik/web *.png *.ico *.icns
-recursive-include dikdik/browser_runtime *
 recursive-include dikdik/skills SKILL.md
 global-exclude *.pyc *.pyd *.so *.dll *.dylib
 prune upstream

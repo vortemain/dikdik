@@ -1,0 +1,2 @@
+{"objective": "parse_age in ages.py must accept only whole-number ages from 0 to 150 (surrounding spaces allowed) and raise ValueError for anything else, including negative numbers, values over 150, decimals and non-numbers. Implement and test it.",
+ "category": "input validation", "timeout_seconds": 900}

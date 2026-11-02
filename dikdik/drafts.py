@@ -2,6 +2,7 @@
 
 import re
 import time
+from . import migrations
 
 
 class DraftConflict(Exception):
@@ -12,8 +13,8 @@ class DraftConflict(Exception):
 class Drafts:
     def __init__(self, store):
         self.store = store
-        with store.connect() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS composer_drafts (scope TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL, updated REAL NOT NULL)")
+        migrations.ensure(store.path, "composer_drafts", [(1, "composer drafts", migrations.script(
+            "CREATE TABLE IF NOT EXISTS composer_drafts (scope TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL, updated REAL NOT NULL);"))])
 
     @staticmethod
     def _scope(db, scope):

@@ -54,12 +54,12 @@ export function keysPane(root: HTMLElement, deps: PaneDeps): () => Promise<void>
     const replaceButton = button("Replace key", "secondary small"); replaceButton.type = "submit";
     replace.append(value.box, replaceButton);
     replace.onsubmit = event => { event.preventDefault(); if (value.input.value.trim()) void act(async () => { await request("/api/secrets", "POST", { ref: key.ref, plaintext: value.input.value }); value.input.value = ""; }, "Key replaced. The previous value can be restored."); };
-    const advanced = make("details", "vault-advanced"), summary = make("summary", "", "Sandbox access");
+    const advanced = make("details", "vault-advanced"), summary = make("summary", "", "Command access");
     const env = field("Environment variable", "vault-env", "text", key.env, "e.g. GITHUB_TOKEN"); env.input.maxLength = 64;
     const envForm = make("form", "vault-edit-row"), envButton = button("Save access", "secondary small"); envButton.type = "submit";
     envForm.append(env.box, envButton);
-    envForm.onsubmit = event => { event.preventDefault(); void act(() => request(`/api/secrets/${encodeURIComponent(key.ref)}`, "PATCH", { env: env.input.value.trim() || null }), env.input.value.trim() ? "Sandbox access updated. Each task still needs your approval." : "Sandbox access removed."); };
-    advanced.append(summary, make("p", "", "Only tasks you explicitly allow can receive this key. Leave blank to keep it out of sandbox commands."), envForm);
+    envForm.onsubmit = event => { event.preventDefault(); void act(() => request(`/api/secrets/${encodeURIComponent(key.ref)}`, "PATCH", { env: env.input.value.trim() || null }), env.input.value.trim() ? "Command access updated. Each task still needs your approval." : "Command access removed."); };
+    advanced.append(summary, make("p", "", "Only tasks you explicitly allow can receive this key. Leave blank to keep it out of commands."), envForm);
     const actions = make("div", "vault-editor-actions");
     if (key.previous_set_at) actions.append(button("Restore previous value", "ghost small", () => { void act(() => request(`/api/secrets/${encodeURIComponent(key.ref)}/restore`, "POST", {}), "Previous value restored."); }));
     if (deleting === key.ref) {
@@ -105,13 +105,13 @@ export function keysPane(root: HTMLElement, deps: PaneDeps): () => Promise<void>
         const hidden = make("span", "vault-masked", "••••••••"); hidden.setAttribute("aria-label", "Saved value hidden");
         const manage = button(editing === key.ref ? "Done" : "Manage", "ghost small", () => { editing = editing === key.ref ? "" : key.ref; deleting = ""; render(); }); manage.setAttribute("aria-expanded", String(editing === key.ref)); manage.setAttribute("aria-label", `Manage ${key.ref}`);
         row.append(mark, text, hidden, manage); item.append(row);
-        if (key.env) item.append(make("p", "vault-access-note", `Sandbox variable · ${key.env}`));
+        if (key.env) item.append(make("p", "vault-access-note", `Command variable · ${key.env}`));
         if (editing === key.ref) item.append(editor(key));
         list.append(item);
       }
       if (!shown.length) {
         const empty = make("li", "vault-empty");
-        empty.append(make("strong", "", keys.length ? "No matching keys" : "No saved keys yet"), make("p", "", keys.length ? "Try a different name." : "Add a token for an MCP server, model profile, or approved sandbox task.")); list.append(empty);
+        empty.append(make("strong", "", keys.length ? "No matching keys" : "No saved keys yet"), make("p", "", keys.length ? "Try a different name." : "Add a token for an MCP server, model profile, or approved command.")); list.append(empty);
       }
     };
     search.oninput = () => { query = search.value; paint(); };

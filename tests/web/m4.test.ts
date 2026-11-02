@@ -76,10 +76,10 @@ test("buildAutomation validates the schedule and carries the user's approvals", 
   expect(buildAutomation({ ...base, agentProfile: "p" }).agent_profile).toBe("p");
   expect(buildAutomation({ ...base, mode: "model", agentProfile: "p" }).agent_profile).toBeUndefined();
   for (const bad of [{ name: "" }, { objective: "  " }, { intervalMinutes: "0" }, { intervalMinutes: "1.5" }, { scheduleKind: "daily" as const, dailyAt: "7:5" },
-    { mode: "offline" }, { approveExternal: false }, { verification: "docker" }]) {
+    { mode: "offline" }, { approveExternal: false }, { verification: "docker" }, { verification: "local" }]) {
     expect(() => buildAutomation({ ...base, ...bad })).toThrow();
   }
-  expect(buildAutomation({ ...base, verification: "docker", approveExecution: true }).approve_execution).toBe(true);
+  expect(buildAutomation({ ...base, approveExecution: true }).approve_execution).toBe(false);  // unattended runs never execute
   expect(buildAutomation({ ...base, scheduleKind: "cron", cron: "0 9 * * 1-5", timezone: "UTC" }).schedule).toEqual({ cron: "0 9 * * 1-5", timezone: "UTC" });
   expect(buildAutomation({ ...base, scheduleKind: "event", eventRepository: ".", eventRef: "HEAD" }).schedule).toEqual({ event: { type: "git_commit", repository: ".", ref: "HEAD" } });
   expect([{ interval_seconds: 60 }, { interval_seconds: 7200 }, { interval_seconds: 86400 }, { interval_seconds: 300 }, { daily_at: "07:30" }, { cron: "0 9 * * 1-5", timezone: "UTC" }, { event: { type: "git_commit", repository: ".", ref: "HEAD" } }].map(describeSchedule))

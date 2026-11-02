@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     bundle = ROOT / "dist/desktop/Dikdik"
     executable = bundle / ("Dikdik.exe" if sys.platform == "win32" else "Dikdik")
     if sys.platform == "darwin":
@@ -24,7 +24,7 @@ def main():
         base = Path(directory).resolve()
         project, data = base / "project", base / "data"
         project.mkdir()
-        (project / "app.py").write_text("value = 1\n")
+        (project / "app.py").write_text("value = 1\n", encoding="utf-8")
         with socket.socket() as port_socket:
             port_socket.bind(("127.0.0.1", 0))
             port = port_socket.getsockname()[1]
@@ -36,7 +36,7 @@ def main():
                     headers = {"Content-Type": "application/json"}
                     token = data / "web.token"
                     if token.exists():
-                        headers["Authorization"] = "Bearer " + token.read_text().strip()
+                        headers["Authorization"] = "Bearer " + token.read_text(encoding="utf-8").strip()
                     request = urllib.request.Request(f"http://127.0.0.1:{port}" + path,
                         data=json.dumps(body).encode() if body is not None else None, headers=headers)
                     with urllib.request.urlopen(request, timeout=45) as response:
@@ -76,15 +76,15 @@ def main():
                 print(f"Frozen desktop {version}: native host, authenticated task and bundled Chromium passed")
             except Exception:
                 log.flush()
-                output = (base / "desktop.log").read_text(errors="replace")[-12000:]
+                output = (base / "desktop.log").read_text(encoding="utf-8", errors="replace")[-12000:]
                 token_file = data / "web.token"
                 if token_file.exists():
-                    output = output.replace(token_file.read_text().strip(), "<redacted>")
+                    output = output.replace(token_file.read_text(encoding="utf-8").strip(), "<redacted>")
                 print(output)
                 raise
             finally:
                 if os.name == "nt":
-                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False, capture_output=True)
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False, capture_output=True, timeout=30)
                 else:
                     try:
                         os.killpg(process.pid, signal.SIGTERM)

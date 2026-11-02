@@ -8,8 +8,13 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import sql
+from .migrations import migrate
+
 
 TAG = re.compile(r"[\w][\w -]{0,31}")
+WORKSPACE_CLAUSES = frozenset({"1=1", "workspace=?", "t.workspace=?"})  # everything _mine() can return
+TASK_TABLES = ("bash_events", "browser_snapshots", "task_progress", "requirements")
 
 
 class Store:
@@ -20,32 +25,8 @@ class Store:
     def __init__(self, path: Path):
         self.path = path
         self.workspace: str | None = None
-        with self.connect() as db:
-            db.executescript("""
-                PRAGMA journal_mode=WAL;
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id TEXT PRIMARY KEY, created REAL NOT NULL,
-                    state TEXT NOT NULL, request TEXT NOT NULL, result TEXT
-                );
-                CREATE TABLE IF NOT EXISTS events (
-                    seq INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
-                    time REAL NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS events_task ON events(task_id, seq);
-                CREATE INDEX IF NOT EXISTS events_task_time ON events(task_id, time);
-            """)
-            # Conversation metadata, added after the first release: migrate in place.
-            columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)")}
-            for name, kind in (("title", "TEXT"), ("pinned", "INTEGER NOT NULL DEFAULT 0"), ("archived", "INTEGER NOT NULL DEFAULT 0"),
-                               ("folder", "TEXT"), ("tags", "TEXT"), ("workspace", "TEXT")):
-                if name not in columns:
-                    db.execute(f"ALTER TABLE tasks ADD COLUMN {name} {kind}")
-            db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            # Before projects, a data directory served exactly one folder: its tasks belong there.
-            bound = db.execute("SELECT value FROM settings WHERE key='workspace'").fetchone()
-            if bound:
-                db.execute("UPDATE tasks SET workspace=? WHERE workspace IS NULL", (bound[0],))
-            db.execute("CREATE INDEX IF NOT EXISTS tasks_workspace ON tasks(workspace)")
+        # Versioned, atomic migrations with a backup before any upgrade (dikdik/migrations.py).
+        self.schema = migrate(path)
 
     @contextmanager
     def connect(self):
@@ -75,7 +56,7 @@ class Store:
 
     def _owned(self, db, task):
         where, params = self._mine()
-        row = db.execute(f"SELECT state FROM tasks WHERE id=? AND {where}", (task, *params)).fetchone()
+        row = db.execute(f"SELECT state FROM tasks WHERE id=? AND {sql.clause(where, WORKSPACE_CLAUSES)}", (task, *params)).fetchone()
         if row is None:
             raise KeyError(task)
         return row
@@ -86,10 +67,6 @@ class Store:
             for task in ids:
                 db.execute("UPDATE tasks SET state='interrupted', result=? WHERE id=?", (json.dumps({"error": "Service stopped before a terminal result. Re-run as a new task; exact resume is unsupported."}), task))
                 db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, time.time(), "interrupted", "{}"))
-
-    def stale_execution_ids(self):
-        with self.connect() as db:
-            return [row[0] for row in db.execute("SELECT id,request FROM tasks WHERE state IN ('queued','running')") if json.loads(row[1]).get("verification") == "docker" and json.loads(row[1]).get("approve_execution") is True]
 
     def create(self, request):
         task = uuid.uuid4().hex
@@ -102,6 +79,19 @@ class Store:
     def event(self, task, kind, data):
         with self.connect() as db:
             db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, time.time(), kind, json.dumps(data)))
+            if kind == "requirements" and isinstance(data.get("requirements"), list):
+                # The agent replaces its whole list; keep a revision so later readers can tell lists apart.
+                revision = db.execute("SELECT COALESCE(MAX(revision), 0) + 1 FROM requirements WHERE task_id=?", (task,)).fetchone()[0]
+                db.execute("DELETE FROM requirements WHERE task_id=?", (task,))
+                db.executemany("INSERT INTO requirements(task_id,id,revision,data,updated) VALUES(?,?,?,?,?)",
+                               [(task, r["id"], revision, json.dumps(r), time.time()) for r in data["requirements"]])
+
+    def requirements(self, task) -> dict:
+        """The conversation's latest recorded requirements (ownership-checked)."""
+        with self.connect() as db:
+            self._owned(db, task)
+            rows = db.execute("SELECT revision, data FROM requirements WHERE task_id=? ORDER BY CAST(SUBSTR(id, 5) AS INTEGER)", (task,)).fetchall()
+        return {"revision": rows[0]["revision"] if rows else 0, "requirements": [json.loads(row["data"]) for row in rows]}
 
     def state(self, task, state, result=None, *, details=None):
         with self.connect() as db:
@@ -118,7 +108,7 @@ class Store:
         with self.connect() as db:
             db.execute("BEGIN")
             where, params = self._mine()
-            row = db.execute(f"SELECT * FROM tasks WHERE id=? AND {where}", (task, *params)).fetchone()
+            row = db.execute(f"SELECT * FROM tasks WHERE id=? AND {sql.clause(where, WORKSPACE_CLAUSES)}", (task, *params)).fetchone()
             if row is None:
                 raise KeyError(task)
             data = dict(row)
@@ -134,7 +124,7 @@ class Store:
             where, params = self._mine()
             rows = db.execute("SELECT id,created,state,request,title,pinned,archived,folder,tags,"
                               "(SELECT MAX(time) FROM events WHERE task_id=tasks.id) AS updated "
-                              f"FROM tasks WHERE {where} ORDER BY pinned DESC, updated DESC LIMIT 500", params)
+                              f"FROM tasks WHERE {sql.clause(where, WORKSPACE_CLAUSES)} ORDER BY pinned DESC, updated DESC LIMIT 500", params)
             for row in rows:
                 request = json.loads(row["request"])
                 # The objective doubles as the conversation title until it is renamed.
@@ -179,7 +169,7 @@ class Store:
         with self.connect() as db:
             rows = db.execute(
                 "SELECT e.task_id, e.seq, e.time, e.kind, e.data "
-                f"FROM events e JOIN tasks t ON e.task_id = t.id WHERE {where} "
+                f"FROM events e JOIN tasks t ON e.task_id = t.id WHERE {sql.clause(where, WORKSPACE_CLAUSES)} "
                 "ORDER BY e.time DESC LIMIT ?", (*params, min(limit, 500))).fetchall()
             return [{"task": r["task_id"], "seq": r["seq"], "time": r["time"],
                      "kind": r["kind"], "data": json.loads(r["data"])} for r in rows]
@@ -224,7 +214,7 @@ class Store:
         with self.connect() as db:
             self._owned(db, task)
             for key, value in values.items():
-                db.execute(f"UPDATE tasks SET {key}=? WHERE id=?", (value, task))
+                db.execute(f"UPDATE tasks SET {sql.assign([key], ('title', 'pinned', 'archived', 'folder', 'tags'))} WHERE id=?", (value, task))
 
     def delete(self, task):
         with self.connect() as db:
@@ -234,9 +224,9 @@ class Store:
             for identity in identities:
                 db.execute('DELETE FROM tasks WHERE id=?', (identity,))
                 db.execute('DELETE FROM events WHERE task_id=?', (identity,))
-                for table in ('bash_events', 'browser_snapshots', 'task_progress'):
+                for table in TASK_TABLES:
                     if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
-                        db.execute(f'DELETE FROM {table} WHERE task_id=?', (identity,))
+                        db.execute(f'DELETE FROM {sql.ident(table, TASK_TABLES)} WHERE task_id=?', (identity,))
                 if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='composer_drafts'").fetchone():
                     db.execute('DELETE FROM composer_drafts WHERE scope=?', (identity,))
                 if has_plans:

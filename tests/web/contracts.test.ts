@@ -25,22 +25,22 @@ describe("mode and permission boundaries", () => {
     expect(request.edits).toEqual([]);
     expect(modePolicy("model", "syntax").locksVerification).toBe(false);
   });
-  test("agent runs syntax-only or with Docker tests, and ignores user-authored edits", () => {
+  test("agent runs syntax-only or on this computer, and ignores user-authored edits", () => {
     const agent = { ...base, mode: "agent" as const, approveExternal: true, edits: "invalid JSON" };
     expect(buildTaskRequest(agent)).toEqual({
       objective: base.objective, mode: "agent", verification: "syntax", edits: [], approve_execution: false, approve_external: true,
     });
-    const docker = { ...agent, verification: "docker" as const };
-    expect(() => buildTaskRequest(docker)).toThrow("Docker");
-    expect(() => buildTaskRequest({ ...docker, approveExecution: true, approveExternal: false })).toThrow("external provider");
-    expect(buildTaskRequest({ ...docker, approveExecution: true })).toEqual({
-      objective: base.objective, mode: "agent", verification: "docker", edits: [], approve_execution: true, approve_external: true,
+    const local = { ...agent, verification: "local" as const };
+    expect(() => buildTaskRequest(local)).toThrow("on this computer");
+    expect(() => buildTaskRequest({ ...local, approveExecution: true, approveExternal: false })).toThrow("external provider");
+    expect(buildTaskRequest({ ...local, approveExecution: true })).toEqual({
+      objective: base.objective, mode: "agent", verification: "local", edits: [], approve_execution: true, approve_external: true,
     });
     expect(modePolicy("agent", "syntax")).toEqual({ showEdits: false, requiresExternal: true, verification: "syntax", locksVerification: false, requiresExecution: false });
   });
-  test("all Docker tasks require execution permission", () => {
-    expect(() => buildTaskRequest({ ...base, verification: "docker" })).toThrow("Docker");
-    expect(buildTaskRequest({ ...base, verification: "docker", approveExecution: true }).approve_execution).toBe(true);
+  test("working on this computer is agent-only and needs execution permission", () => {
+    expect(buildTaskRequest({ ...base, verification: "local", approveExecution: true })).toMatchObject({ verification: "syntax", approve_execution: false });
+    expect(modePolicy("agent", "local").requiresExecution).toBe(true);
   });
   test("rejects empty objectives, invalid edits, and unsupported selections", () => {
     expect(() => buildTaskRequest({ ...base, objective: "  " })).toThrow("objective");
@@ -48,7 +48,8 @@ describe("mode and permission boundaries", () => {
     expect(() => parseMode("unknown")).toThrow();
     expect(() => parseVerification("host")).toThrow();
     for (const mode of ["offline", "model", "agent"] as const) expect(parseMode(mode)).toBe(mode);
-    expect(parseVerification("docker")).toBe("docker");
+    expect(parseVerification("local")).toBe("local");
+    expect(() => parseVerification("docker")).toThrow();
   });
 });
 
@@ -74,6 +75,6 @@ describe("evidence-based status", () => {
   });
   test("reports verification only with backend evidence and prioritizes errors", () => {
     expect(resultStatus("completed", { tests_verified: true })).toContain("not proof of every acceptance criterion");
-    expect(resultStatus("failed", { error: "Docker unavailable", tests_verified: true })).toBe("Docker unavailable");
+    expect(resultStatus("failed", { error: "Tests could not start", tests_verified: true })).toBe("Tests could not start");
   });
 });

@@ -12,19 +12,20 @@ import json
 import time
 import urllib.error
 import urllib.request
+from . import sql
+from . import migrations
 
 
 class BackendStore:
     def __init__(self, store):
         self.store = store
-        with self.store.connect() as db:
-            db.executescript("""
+        migrations.ensure(self.store.path, "backends", [(1, "remote backends", migrations.script("""
                 CREATE TABLE IF NOT EXISTS backends (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
                     key_ref TEXT, enabled INTEGER NOT NULL DEFAULT 1,
                     last_checked REAL, last_ok INTEGER, created REAL NOT NULL
                 );
-            """)
+            """))])
 
     def list(self) -> list[dict]:
         with self.store.connect() as db:
@@ -67,18 +68,18 @@ class BackendStore:
             if "name" in body:
                 if not isinstance(body["name"], str) or not body["name"].strip():
                     raise ValueError("name must be a non-empty string")
-                fields.append("name=?"); values.append(body["name"].strip())
+                fields.append("name"); values.append(body["name"].strip())
             if "url" in body:
                 if not isinstance(body["url"], str) or not body["url"].startswith(("http://", "https://")):
                     raise ValueError("url must be an http(s) URL")
-                fields.append("url=?"); values.append(body["url"].strip())
+                fields.append("url"); values.append(body["url"].strip())
             if "key_ref" in body:
-                fields.append("key_ref=?"); values.append(body["key_ref"])
+                fields.append("key_ref"); values.append(body["key_ref"])
             if "enabled" in body:
-                fields.append("enabled=?"); values.append(1 if body["enabled"] else 0)
+                fields.append("enabled"); values.append(1 if body["enabled"] else 0)
             if fields:
                 values.append(backend_id)
-                db.execute(f"UPDATE backends SET {', '.join(fields)} WHERE id=?", values)
+                db.execute(f"UPDATE backends SET {sql.assign(fields, ('name', 'url', 'key_ref', 'enabled'))} WHERE id=?", values)
             return dict(db.execute("SELECT * FROM backends WHERE id=?", (backend_id,)).fetchone())
 
     def delete(self, backend_id: str) -> None:

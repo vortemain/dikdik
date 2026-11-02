@@ -21,7 +21,7 @@ Behaviour (keyed on words in the latest user message):
   then run_tests, then answers (for local mode: Ask asks before the command);
 - "SLOW": slow read_file calls, so Pause/Stop can be clicked mid-run
   (alternating two files, which Dikdik's stuck detector stops after 6 calls);
-- "SECRET": asks for a DEMO_TOKEN secret with request_secret (needs Docker approval in the task);
+- "SECRET": asks for a DEMO_TOKEN secret with request_secret (needs command approval in the task);
 - "MARKDOWN": a reply with a table, an alert, a quote and a file path, plus
   provider "reasoning_content" (shown as a Thinking row);
 - an attached image: says it sees an image;

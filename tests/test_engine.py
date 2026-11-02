@@ -60,28 +60,23 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(reopened.get(task), result)
 
     def test_execution_and_disclosure_require_actual_boolean_approval(self):
-        for change in [{"verification": "docker"}, {"verification": "docker", "approve_execution": "yes"}, {"mode": "model"}, {"mode": "model", "approve_external": "true"}]:
+        local = {"mode": "agent", "verification": "local", "approve_external": True}
+        for change in [local, {**local, "approve_execution": "yes"}, {"mode": "model"}, {"mode": "model", "approve_external": "true"}]:
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, "approval"):
                 self.engine.submit(request(**change))
 
-    def test_docker_block_is_not_success(self):
-        with patch("dikdik.engine.run_tests", return_value={"kind": "unittest", "status": "blocked", "exit_code": 125}) as runner:
-            result = self.wait(self.engine.submit(request(verification="docker", approve_execution=True)))
-        self.assertEqual(result["state"], "blocked")
-        self.assertFalse(result["result"]["tests_verified"])
-        runner.assert_called_once()
+    def test_docker_verification_is_refused_with_a_way_forward(self):
+        for change in [{"verification": "docker"}, {"verification": "docker", "approve_execution": True},
+                       {"mode": "agent", "verification": "docker", "approve_external": True, "approve_execution": True}]:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "Docker verification was removed; choose local"):
+                self.engine.submit(request(**change))
 
-    def test_test_failure_is_not_success(self):
-        with patch("dikdik.engine.run_tests", return_value={"kind": "unittest", "status": "failed", "exit_code": 1}):
-            result = self.wait(self.engine.submit(request(verification="docker", approve_execution=True)))
-        self.assertEqual(result["state"], "failed")
-        self.assertFalse(result["result"]["tests_verified"])
-
-    def test_syntax_failure_prevents_execution(self):
+    def test_syntax_failure_fails_the_candidate(self):
         bad = [{"path": "calculator.py", "before": "a - b", "after": "("}]
-        with patch("dikdik.engine.run_tests") as runner:
-            result = self.wait(self.engine.submit(request(edits=bad, verification="docker", approve_execution=True)))
+        with patch("dikdik.engine.local_exec.run_tests") as runner:
+            result = self.wait(self.engine.submit(request(edits=bad)))
         self.assertEqual(result["state"], "failed")
+        self.assertFalse(result["result"]["tests_verified"])
         runner.assert_not_called()
 
     def test_no_matching_edit_fails(self):
@@ -102,12 +97,12 @@ class EngineTests(unittest.TestCase):
         model.respond.side_effect = delayed_respond
 
         with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
-            task = self.engine.submit(request(mode="agent", verification="docker", approve_external=True, approve_execution=True))
+            task = self.engine.submit(request(mode="agent", approve_external=True))
             self.assertTrue(entered.wait(2))
             try:
                 # A second agent task on the same workspace is rejected while one runs.
                 with self.assertRaisesRegex(ValueError, "agent task is already running"):
-                    self.engine.submit(request(mode="agent", verification="docker", approve_external=True, approve_execution=True))
+                    self.engine.submit(request(mode="agent", approve_external=True))
                 self.assertTrue(self.engine.cancel(task))
             finally:
                 release.set()
@@ -154,22 +149,6 @@ class EngineTests(unittest.TestCase):
         diff = candidate_diff({"app.py": "x=1"}, {"app.py": "x=2"})
         self.assertIn("-x=1\n\\ No newline at end of file\n+x=2\n", diff)
 
-    def test_recovery_attempts_only_previously_approved_container_cleanup(self):
-        data = self.base / "recovery"
-        data.mkdir()
-        store = Store(data / "state.sqlite3")
-        store.bind_workspace(self.root)
-        task = store.create(request(verification="docker", approve_execution=True))
-        with patch("dikdik.engine.cleanup_container", return_value="Daemon unavailable") as cleanup:
-            recovered = Engine(self.root, data)
-        try:
-            cleanup.assert_called_once_with("dikdik-" + task)
-            result = recovered.store.get(task)
-            self.assertEqual(result["state"], "interrupted")
-            self.assertEqual(result["events"][-2]["kind"], "recovery_cleanup")
-        finally:
-            recovered.close()
-
     def test_malformed_credential_never_reaches_results_or_events(self):
         credential = "DUMMY_REVIEW_CREDENTIAL\nINVALID"
         env = {"DIKDIK_MODEL_URL": "https://provider.example/v1/chat/completions", "DIKDIK_MODEL": "configured", "DIKDIK_API_KEY": credential}
@@ -179,11 +158,12 @@ class EngineTests(unittest.TestCase):
         self.assertNotIn("DUMMY_REVIEW_CREDENTIAL", json.dumps(result))
         network.assert_not_called()
 
-    def test_agent_mode_requires_disclosure_and_execution_approval_for_docker(self):
+    def test_agent_mode_requires_disclosure_and_execution_approval_for_local_work(self):
         for changes in [
             {"mode": "agent"},
-            {"mode": "agent", "verification": "docker", "approve_external": True},
-            {"mode": "agent", "verification": "docker", "approve_execution": True},
+            {"mode": "agent", "verification": "local", "approve_external": True},
+            {"mode": "agent", "verification": "local", "approve_execution": True},
+            {"mode": "model", "verification": "local", "approve_external": True, "approve_execution": True},
         ]:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 self.engine.submit(request(**changes))
@@ -195,7 +175,7 @@ class EngineTests(unittest.TestCase):
             ModelResponse("Check", [ToolCall("t", "run_tests", {})]),
             ModelResponse("Done", [ToolCall("f", "finish", {})]),
         ]
-        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.engine.run_tests") as runner:
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.engine.local_exec.run_tests") as runner:
             result = self.wait(self.engine.submit(request(mode="agent", approve_external=True)))
         runner.assert_not_called()
         self.assertEqual(result["state"], "completed", result["result"])
@@ -214,26 +194,27 @@ class EngineTests(unittest.TestCase):
             ModelResponse("Finish", [ToolCall("done", "finish", {})]),
         ]
 
-        def verification(path, cancel, **kwargs):
+        def verification(root, checks, cancel, **kwargs):
             # Instrumented verifier contract, not actual repository test execution.
-            fixed = "a + b" in (path / "calculator.py").read_text()
-            return {"kind": "unittest", "status": "passed" if fixed else "failed", "exit_code": 0 if fixed else 1}
+            fixed = "a + b" in (root / "calculator.py").read_text()
+            return {"kind": "unittest", "status": "passed" if fixed else "failed", "exit_code": 0 if fixed else 1, "runs_on": "this computer"}
 
-        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.engine.run_tests", side_effect=verification) as runner:
-            data = self.wait(self.engine.submit(request(mode="agent", verification="docker", approve_external=True, approve_execution=True, edits=[])))
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.engine.local_exec.run_tests", side_effect=verification) as runner:
+            data = self.wait(self.engine.submit(request(mode="agent", verification="local", approve_external=True, approve_execution=True, edits=[])))
         self.assertEqual(data["state"], "completed")
         self.assertTrue(data["result"]["tests_verified"])
         self.assertEqual(data["result"]["agent"]["repair_attempts"], 1)
         self.assertEqual(runner.call_count, 2)
-        self.assertIn("a - b", (self.root / "calculator.py").read_text())
+        self.assertIn("a + b", (self.root / "calculator.py").read_text())  # local mode edits the real files
+        self.assertTrue(data["result"]["source_modified"])
         self.assertIn("+    return a + b", data["result"]["diff"])
         self.assertTrue(any(e["kind"] == "agent_repair" for e in data["events"]))
 
-    def test_agent_blocked_docker_cannot_be_completed(self):
+    def test_agent_blocked_tests_cannot_be_completed(self):
         model = Mock()
         model.respond.return_value = ModelResponse("Verify", [ToolCall("test", "run_tests", {})])
-        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.engine.run_tests", return_value={"kind": "unittest", "status": "blocked"}):
-            data = self.wait(self.engine.submit(request(mode="agent", verification="docker", approve_external=True, approve_execution=True)))
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.engine.local_exec.run_tests", return_value={"kind": "unittest", "status": "blocked"}):
+            data = self.wait(self.engine.submit(request(mode="agent", verification="local", approve_external=True, approve_execution=True)))
         self.assertEqual(data["state"], "blocked")
         self.assertFalse(data["result"]["tests_verified"])
         self.assertEqual(model.respond.call_count, 1)
@@ -249,12 +230,12 @@ class EngineTests(unittest.TestCase):
 
         def delayed_diff(original, changed):
             entered.set()
-            release.wait(3)
+            release.wait(30)
             return candidate_diff(original, changed)
 
-        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.engine.run_tests", return_value={"kind": "unittest", "status": "passed"}), patch("dikdik.engine.candidate_diff", side_effect=delayed_diff):
-            task = self.engine.submit(request(mode="agent", verification="docker", approve_external=True, approve_execution=True))
-            self.assertTrue(entered.wait(2))
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.engine.candidate_diff", side_effect=delayed_diff):
+            task = self.engine.submit(request(mode="agent", approve_external=True))
+            self.assertTrue(entered.wait(30))  # generous for slow, loaded runners
             try:
                 self.assertTrue(self.engine.cancel(task))
             finally:
@@ -275,15 +256,13 @@ class EngineTests(unittest.TestCase):
             ModelResponse("Finish", [ToolCall("finish", "finish", {})]),
         ]
 
-        def instrumented_verifier(candidate, *args, **kwargs):
-            self.assertEqual((candidate / "feature" / "service.py").read_text(), "value = 2\n")
-            self.assertIn("test_value", (candidate / "test_feature.py").read_text())
-            return {"kind": "unittest", "status": "passed", "note": "Contract verifier only; no live model or Docker run"}
-
         before = {p.relative_to(self.root).as_posix(): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
-        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.engine.run_tests", side_effect=instrumented_verifier):
-            data = self.wait(self.engine.submit(request(mode="agent", verification="docker", approve_external=True, approve_execution=True)))
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            data = self.wait(self.engine.submit(request(mode="agent", approve_external=True)))
         self.assertEqual(data["state"], "completed")
+        self.assertFalse(data["result"]["tests_verified"])
+        artifact = self.base / "data" / "artifacts" / data["id"]
+        self.assertEqual((artifact / "feature" / "service.py").read_text(), "value = 2\n")
         self.assertEqual([(item["path"], item["status"]) for item in data["result"]["file_changes"]], [("calculator.py", "modified"), ("feature/service.py", "added"), ("test_feature.py", "added")])
         self.assertEqual(data["result"]["changed_files"], ["calculator.py", "feature/service.py", "test_feature.py"])
         self.assertIn("+++ b/feature/service.py", data["result"]["diff"])
@@ -296,22 +275,8 @@ class EngineTests(unittest.TestCase):
             model = Mock()
             model.respond.side_effect = [ModelResponse("Create", [ToolCall("create", "create_file", {"path": path, "content": "value = 1\n"})])]
             with self.subTest(path=path), patch("dikdik.engine.CompatibleAgentModel", return_value=model):
-                data = self.wait(self.engine.submit(request(mode="agent", verification="docker", approve_external=True, approve_execution=True)))
+                data = self.wait(self.engine.submit(request(mode="agent", approve_external=True)))
             self.assertEqual(data["state"], "failed")
             self.assertEqual(data["result"]["changed_files"], [])
             self.assertFalse((self.base / "data" / "artifacts" / data["id"] / path).exists())
         self.assertEqual((self.root / "binary.py").read_bytes(), b"\xff\x00")
-
-    def test_new_file_candidate_reaches_actual_unavailable_docker_boundary(self):
-        model = Mock()
-        model.respond.side_effect = [
-            ModelResponse("Create", [ToolCall("create", "create_file", {"path": "feature.py", "content": "value = 1\n"})]),
-            ModelResponse("Verify", [ToolCall("test", "run_tests", {})]),
-        ]
-        # Real sandbox runner, with only the missing CLI simulated. No host fallback.
-        with patch("dikdik.engine.CompatibleAgentModel", return_value=model), patch("dikdik.sandbox.subprocess.Popen", side_effect=FileNotFoundError):
-            data = self.wait(self.engine.submit(request(mode="agent", verification="docker", approve_external=True, approve_execution=True)))
-        self.assertEqual(data["state"], "blocked")
-        self.assertFalse(data["result"]["tests_verified"])
-        self.assertEqual(data["result"]["file_changes"][0]["status"], "added")
-        self.assertFalse((self.root / "feature.py").exists())

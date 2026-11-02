@@ -146,13 +146,13 @@
       </button>
       <button id="new-task" class="new-task" type="button"><svg class="i"><use href="#i-plus"/></svg>New task<kbd>Ctrl ⇧ O</kbd></button>
       <label class="task-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Search tasks</span><input id="task-search" type="search" placeholder="Search tasks" autocomplete="off"></label>
-      <div class="list-tools">
+      <div id="list-tools" class="list-tools" hidden>
         <label class="sr-only" for="task-sort">Sort conversations</label>
-        <select id="task-sort" class="mini-select"><option value="recent">Recent activity</option><option value="created">Newest first</option><option value="title">Title</option></select>
+        <select id="task-sort" class="mini-select"><option value="recent">Recent</option><option value="created">Newest</option><option value="title">Title</option></select>
         <label class="sr-only" for="task-since">Show conversations from</label>
-        <select id="task-since" class="mini-select"><option value="0">Any time</option><option value="7">Past week</option><option value="30">Past month</option></select>
+        <select id="task-since" class="mini-select"><option value="0">Any time</option><option value="7">7 days</option><option value="30">30 days</option></select>
         <label class="sr-only" for="task-scope">Show conversations by status</label>
-        <select id="task-scope" class="mini-select"><option value="all">All</option><option value="running">Running</option><option value="attention">Needs you</option></select>
+        <select id="task-scope" class="mini-select"><option value="all">All</option><option value="running">Running</option><option value="attention">Waiting</option></select>
       </div>
       <div id="tag-chips" class="tag-chips" role="group" aria-label="Filter by tag" hidden></div>
       <p id="recent-head" class="list-head">Recent</p>
@@ -162,11 +162,6 @@
         <button id="delete-archived" class="ghost small show-archived danger-text" type="button" hidden>Delete all archived</button>
       </nav>
       <div class="sidebar-foot">
-        <div class="project">
-          <span class="project-icon"><svg class="i"><use href="#i-folder"/></svg></span>
-          <button id="project-switch" class="project-text project-switch" type="button" title="Switch project" aria-haspopup="dialog"><h2 id="project-name">—</h2><p id="project-summary"></p></button>
-          <button id="refresh" type="button" class="ghost icon" aria-label="Refresh inventory" title="Refresh inventory"><svg class="i"><use href="#i-refresh"/></svg></button>
-        </div>
         <div class="foot-actions">
           <button id="sidebar-update" class="foot-button update-indicator" type="button" hidden title="A newer Dikdik is available — click to update">
             <svg class="i" aria-hidden="true"><use href="#i-download"/></svg><span>Update</span>
@@ -202,21 +197,11 @@
         <section class="welcome" aria-label="Welcome">
           <img class="welcome-mark" src="/icon.svg" alt="">
           <h1>What should we build?</h1>
-          <div class="start-project" role="group" aria-label="Start with a project">
-            <button class="start-card" type="button" data-start="open"><svg class="i"><use href="#i-folder"/></svg><strong>Open a folder</strong><span>Work on a project on this computer</span></button>
-            <button class="start-card" type="button" data-start="clone"><svg class="i"><use href="#i-branch"/></svg><strong>Clone a repository</strong><span>From GitHub, GitLab or any Git URL</span></button>
-            <button class="start-card" type="button" data-start="new"><svg class="i"><use href="#i-plus"/></svg><strong>New project</strong><span>Start an empty folder with Git</span></button>
-          </div>
-          <div id="onboarding" class="onboarding" hidden>
-            <div class="onb-head"><strong>Get started</strong><button id="onboarding-dismiss" class="ghost small" type="button">Dismiss</button></div>
-            <ol id="onboarding-steps" class="onb-steps"></ol>
-          </div>
-          <p id="welcome-sub">Describe a bug, feature or change. Dikdik works on an isolated copy and shows you every diff.</p>
           <div class="suggestions">
-            <button class="suggestion" type="button" data-prompt="Fix the failing tests without changing the tests."><strong>Fix failing tests</strong><span>Find the bug and repair it; tests stay untouched.</span></button>
-            <button class="suggestion" type="button" data-prompt="Find a likely bug in this project and fix it."><strong>Hunt a bug</strong><span>Investigate the code and propose a fix.</span></button>
-            <button class="suggestion" type="button" data-prompt="Add input validation and clear error messages to the main module."><strong>Harden inputs</strong><span>Validate arguments with clear errors.</span></button>
-            <button class="suggestion" type="button" data-prompt="Add a unit test that covers the main function's edge cases."><strong>Add test coverage</strong><span>Write a new test for edge cases.</span></button>
+            <button class="suggestion" type="button" data-prompt="Fix the failing tests without changing the tests.">Fix failing tests</button>
+            <button class="suggestion" type="button" data-prompt="Find a likely bug in this project and fix it.">Hunt a bug</button>
+            <button class="suggestion" type="button" data-prompt="Add input validation and clear error messages to the main module.">Harden inputs</button>
+            <button class="suggestion" type="button" data-prompt="Add a unit test that covers the main function's edge cases.">Add test coverage</button>
           </div>
         </section>
         <ol id="message-stream" class="message-stream" aria-label="Conversation messages"></ol>
@@ -259,15 +244,15 @@
             <div id="approvals" class="approvals classic-only">
               <span class="approvals-label">Allow for this task</span>
               <label id="external-field" class="toggle" title="Sends the objective, bounded repository text and tool output to your configured model provider."><input id="external" type="checkbox">Share code with model</label>
-              <label id="execution-field" class="toggle" title="Runs approved tools and tests inside restricted Docker containers." hidden><input id="execution" type="checkbox">Run tools in Docker</label>
-              <label id="secrets-field" class="toggle" title="Agent commands in Docker can read the keys you exposed to the sandbox (Settings → API keys) as environment variables. Their values are redacted from output." hidden><input id="secrets-approval" type="checkbox">Use sandbox secrets</label>
+              <label id="execution-field" class="toggle" title="Runs approved commands and tests on this computer, in the project folder." hidden><input id="execution" type="checkbox">Run commands on this computer</label>
+              <label id="secrets-field" class="toggle" title="Agent commands can read the keys you exposed to commands (Settings → API keys) as environment variables. Their values are redacted from output." hidden><input id="secrets-approval" type="checkbox">Use saved secrets</label>
               <label id="browser-field" class="toggle" title="Allows web fetch and browser tools for this task. Page content is sent to your model as untrusted data. Website interactions follow your action approval settings."><input id="browser-approval" type="checkbox">Browse public web</label>
             </div>
             <div class="composer-controls">
               <button id="attach" class="ghost icon" type="button" aria-label="Attach files" title="Attach images or text files (or paste / drop them)"><svg class="i"><use href="#i-paperclip"/></svg></button>
               <label class="pill run-mode-pill" title="How Dikdik works in this project"><span class="sr-only">Permissions</span><svg class="i"><use href="#i-shield"/></svg><select id="run-mode"><option value="auto">Auto</option><option value="ask">Ask before commands</option><option value="plan">Plan only</option><option value="classic">Classic (copy, then Apply)</option></select></label>
               <label class="pill classic-only" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="plan">Plan</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
-              <label class="pill classic-only" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="docker">Docker tests</option><option value="local">On this computer</option></select></label>
+              <label class="pill classic-only" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="local">On this computer</option></select></label>
               <label id="agent-profile-pill" class="pill" title="Agent profile"><span class="sr-only">Agent profile</span><svg class="i"><use href="#i-book"/></svg><select id="agent-profile"><option value="">Default agent</option></select></label>
               <button id="model-pill" class="ghost small model-pill" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="model-menu" title="Choose a model"><span id="model-symbol"><img class="dikdik-logo" src="/icon.svg" alt=""></span><span id="model-label">Model</span><svg class="i model-chevron"><use href="#i-chevron"/></svg></button>
               <button id="options-toggle" class="ghost icon options-toggle" type="button" aria-expanded="false" aria-controls="options-panel" aria-label="Mode options" title="Mode options"><svg class="i"><use href="#i-sliders"/></svg></button>
@@ -277,7 +262,6 @@
               <button id="cancel" type="button" class="primary composer-stop" aria-label="Stop response" title="Stop response" hidden><svg class="i" aria-hidden="true"><use href="#i-stop"/></svg></button>
             </div>
           </form>
-          <p id="composer-footnote" class="composer-footnote">Dikdik works on an isolated copy. Your files change only when you apply.</p>
         </div>
       </section>
     </main>
@@ -460,10 +444,10 @@
             <label for="agent-model">Model</label><select id="agent-model"><option value="">Default model profile</option></select>
             <label for="agent-steps">Max model calls (optional)</label><input id="agent-steps" type="number" min="1" max="60" placeholder="No limit">
             <label for="agent-minutes">Time limit in seconds (optional)</label><input id="agent-minutes" type="number" min="30" max="1800" placeholder="No limit">
-            <label for="agent-secrets">Sandbox secrets</label><input id="agent-secrets" placeholder="Blank: every key exposed to the sandbox · or names, comma-separated · or none" autocomplete="off">
+            <label for="agent-secrets">Secrets</label><input id="agent-secrets" placeholder="Blank: every key exposed to commands · or names, comma-separated · or none" autocomplete="off">
             <span>Tools</span>
             <div class="agent-flags">
-              <label class="check"><input id="agent-shell" type="checkbox" checked>Shell in Docker</label>
+              <label class="check"><input id="agent-shell" type="checkbox" checked>Shell commands</label>
               <label class="check"><input id="agent-browser" type="checkbox" checked>Web fetch and browser actions</label>
               <label class="check"><input id="agent-mcp" type="checkbox" checked>MCP servers</label>
               <label class="check"><input id="agent-skills" type="checkbox" checked>Skills</label>
@@ -545,13 +529,11 @@
             <label for="auto-mode">Mode</label>
             <div class="row auto-when">
               <select id="auto-mode"><option value="agent">Agent</option><option value="model">Single proposal</option></select>
-              <select id="auto-verification" aria-label="Verification"><option value="syntax">Syntax check</option><option value="docker">Docker tests</option></select>
               <select id="auto-profile" aria-label="Agent profile"><option value="">Default agent</option></select>
             </div>
             <span>Approvals</span>
             <div class="agent-flags">
               <label class="check"><input id="auto-external" type="checkbox">Send code to my model provider on each run</label>
-              <label class="check" id="auto-execution-field" hidden><input id="auto-execution" type="checkbox">Run tests in Docker on each run</label>
             </div>
           </div>
           <div class="row"><button id="auto-save" type="submit" class="primary small">Add automation</button><button id="auto-draft" type="button" class="secondary small">Save draft</button><button id="auto-cancel" type="button" class="ghost small" hidden>Cancel edit</button></div>
@@ -570,7 +552,7 @@
         <div class="setting-row"><div><h4 class="vscode-mention"><img class="vscode-logo" src="/assets/brands/vscode.svg" alt="" aria-hidden="true">VS Code</h4><p id="plat-vscode">Checking…</p></div></div>
       </section>
       <section class="settings-pane" data-pane="acp" role="tabpanel" hidden>
-        <p class="lead">External coding agents that speak ACP: Claude Code, Codex, Gemini CLI and OpenCode. They run on this computer, outside Docker, in a throwaway copy; their changes come back as a diff you apply.</p>
+        <p class="lead">External coding agents that speak ACP: Claude Code, Codex, Gemini CLI and OpenCode. They run on this computer in a throwaway copy; their changes come back as a diff you apply.</p>
         <div class="row"><button id="acp-add" class="secondary small" type="button">Add ACP agent</button></div>
         <div id="acp-list" class="m4-list"></div>
         <div class="setting-row"><div><h4>ChatGPT login</h4><p id="acp-chatgpt">Checking…</p></div><button id="acp-chatgpt-login" class="secondary small" type="button">Start login</button></div>

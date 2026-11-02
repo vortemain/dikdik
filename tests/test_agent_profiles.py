@@ -68,18 +68,18 @@ class AgentProfileTests(unittest.TestCase):
     def test_profile_shapes_the_agent(self):
         made = self.agents.create({"name": "Careful", "instructions": "Explain before editing.", "max_model_calls": 3,
                                    "allow_shell": False, "use_skills": False})
-        data, model, _ = self.run_task(agent_profile=made["id"], verification="docker", approve_execution=True)
+        data, model, _ = self.run_task(agent_profile=made["id"], verification="local", approve_execution=True)
         self.assertEqual(data["state"], "completed", data["result"])
         texts = [m["content"] for m in model.seen[0] if m["role"] == "user"]
         self.assertIn("Instructions from the user's agent profile “Careful”:\nExplain before editing.", texts)
         self.assertFalse(any("Use tabs." in t for t in texts))  # skills switched off
-        self.assertNotIn("run_command", model.tools[0])  # shell switched off despite Docker approval
+        self.assertNotIn("run_command", model.tools[0])  # shell switched off despite execution approval
         started = next(e for e in data["events"] if e["kind"] == "agent_started")["data"]
         self.assertEqual((started["profile"], started["max_model_calls"]), ("Careful", 3))
         self.assertEqual(data["request"]["agent_profile"], made["id"])
 
     def test_default_profile_keeps_skills_and_shell(self):
-        data, model, _ = self.run_task(verification="docker", approve_execution=True)
+        data, model, _ = self.run_task(verification="local", approve_execution=True)
         self.assertIn("run_command", model.tools[0])
         self.assertTrue(any("Use tabs." in m["content"] for m in model.seen[0]))
         self.assertEqual(next(e for e in data["events"] if e["kind"] == "agent_started")["data"]["profile"], "Default")

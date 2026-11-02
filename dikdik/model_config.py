@@ -69,8 +69,9 @@ def from_environment() -> ModelConfig:
                            {"source": "environment", "model": NVIDIA_DEFAULT_MODEL, "host": "integrate.api.nvidia.com", "provider_name": "NVIDIA"})
     if not (endpoint and model and key):
         raise ValueError("No model is set up. Connect NVIDIA or another provider in Settings → Models, set NVIDIA_API_KEY, or set DIKDIK_MODEL_URL, DIKDIK_MODEL and DIKDIK_API_KEY on the server")
-    if urlsplit(endpoint).scheme != "https":
-        raise ValueError("DIKDIK_MODEL_URL must use HTTPS")
+    parts = urlsplit(endpoint)
+    if parts.scheme != "https" and not (parts.scheme == "http" and parts.hostname in LOOPBACK_HOSTS):
+        raise ValueError("DIKDIK_MODEL_URL must use HTTPS (plain HTTP is accepted only for a model server on this computer)")
     host = urlsplit(endpoint).hostname or ""
     return ModelConfig(endpoint, model, key, "bearer", ENV_TIMEOUT, {"source": "environment", "model": model, "host": host})
 

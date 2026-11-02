@@ -38,10 +38,7 @@ CATALOG = [
     {"id": "github", "name": "GitHub", "description": "Issues, pull requests, code search and repository files on GitHub.",
      "homepage": "https://github.com/github/github-mcp-server", "options": [
         {"id": "remote", "label": "GitHub's hosted server", "transport": "http", "url": "https://api.githubcopilot.com/mcp/",
-         "credentials": [{"name": "token", "label": "GitHub personal access token"}]},
-        {"id": "docker", "label": "Docker on this machine", "transport": "stdio",
-         "command": "docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server",
-         "credentials": [{"name": "token", "label": "GitHub personal access token", "env_var": "GITHUB_PERSONAL_ACCESS_TOKEN"}]}]},
+         "credentials": [{"name": "token", "label": "GitHub personal access token"}]}]},
     {"id": "sentry", "name": "Sentry", "description": "Errors, issues and releases from Sentry.",
      "homepage": "https://github.com/getsentry/sentry-mcp", "options": [
         {"id": "remote", "label": "Sentry's hosted server (sign in)", "transport": "http", "url": "https://mcp.sentry.dev/mcp", "auth": "oauth"},

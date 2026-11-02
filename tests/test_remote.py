@@ -110,7 +110,8 @@ class TlsTests(unittest.TestCase):
             server = make_server(Engine(base / "repo", base / "data"), 0, "tok", remote)
             threading.Thread(target=server.serve_forever, daemon=True).start()
             try:
-                context = ssl._create_unverified_context()
+                context = ssl.create_default_context(cafile=str(cert))  # trust exactly this test certificate
+                context.check_hostname = False  # CN=localhost has no SAN for 127.0.0.1; the chain is still verified
                 conn = http.client.HTTPSConnection("127.0.0.1", server.server_port, timeout=20, context=context)
                 conn.request("GET", "/api/tasks", headers={"Host": "localhost", "Authorization": "Bearer tok"})
                 self.assertEqual(conn.getresponse().status, 200)

@@ -27,7 +27,7 @@ class IntegrationTests(unittest.TestCase):
         self.addCleanup(self.engine.close)
         self.routes = build_routes(self.engine)
 
-    def test_nebius_key_shared_with_resolver_but_not_written_and_disconnect(self):
+    def test_nebius_key_is_saved_encrypted_survives_a_restart_and_disconnects(self):
         status, provider = self.routes("POST", "/api/model-catalog/nebius/connect", {"api_key": "test-nebius-key"})
         self.assertEqual(status, 200)
         self.assertTrue(provider["key_set"])
@@ -35,10 +35,19 @@ class IntegrationTests(unittest.TestCase):
         model = self.engine.models.resolve()
         self.assertEqual(model.url, "https://api.tokenfactory.nebius.com/v1/chat/completions")
         self.assertEqual(model.key, "test-nebius-key")
-        self.assertFalse((self.base / "data" / "secrets.bin").exists())
         self.assertNotIn("test-nebius-key", repr(model))
+        sealed = (self.base / "data" / "secrets.bin").read_bytes()  # saved like every other provider key...
+        self.assertNotIn(b"test-nebius-key", sealed)                 # ...and only ever encrypted
+        root = self.engine.root
+        self.engine.close()
+        session_credentials.clear(self.base / "data" / "secrets.bin")  # nothing carried over in memory
+        self.engine = Engine(root, self.base / "data")
+        self.addCleanup(self.engine.close)
+        self.routes = build_routes(self.engine)
+        self.assertEqual(self.engine.models.resolve().key, "test-nebius-key")  # still connected after a restart
         self.routes("POST", "/api/model-catalog/nebius/disconnect", {})
         self.assertFalse(self.engine.models.describe()["configured"])
+        self.assertNotIn("conn.", json.dumps(self.routes("GET", "/api/secrets", {})[1]))
 
     def test_expiry_and_process_shutdown_clear_credentials(self):
         self.routes("POST", "/api/research", {"api_key": "test-tavily-key"})

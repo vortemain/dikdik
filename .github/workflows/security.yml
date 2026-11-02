@@ -1,0 +1,94 @@
+name: Security gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 4 * * 1'  # weekly: new advisories appear without code changes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # secret scanning covers history, not only the tip
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.0'
+      - name: Dikdik scan (secrets, code patterns, OSV dependencies)
+        run: python -m dikdik.security_scan . --deps --fail-on high --exclude 'benchmarks/tasks/*'  # deliberately vulnerable benchmark fixtures
+      - name: Python dependency audit
+        run: |
+          python -m pip install "pip-audit==2.10.1"
+          python -m pip install ".[desktop]"
+          pip-audit --skip-editable
+      - name: JavaScript dependency audit
+        run: |
+          bun install --frozen-lockfile
+          bun audit
+      - name: Software bill of materials (CycloneDX)
+        run: python -m dikdik.sbom . --output sbom.cdx.json --deny AGPL-3.0-only,AGPL-3.0-or-later
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: sbom.cdx.json
+      - name: Secret scan of full history (Gitleaks)
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.18.4
+          "$(go env GOPATH)/bin/gitleaks" detect --source . --redact --no-banner
+
+  accessibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -e ".[desktop]"
+      - run: python -m playwright install --with-deps chromium-headless-shell
+      - name: Rendered accessibility audit in real Chromium
+        run: python -m unittest tests.test_accessibility -v
+      - name: Build-from-scratch benchmark oracles in real Chromium (todo-web)
+        run: python -m unittest tests.test_benchmark_tasks.TaskValidityTests -v
+
+  mutation:
+    # Slow by design; runs weekly and on demand rather than on every push.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -e .
+      - name: SQL identifier helpers (every mutant must die)
+        run: python scripts/mutation_test.py dikdik/sql.py tests.test_sql --max 0 --min-score 1.0
+      - name: Engineering evidence and release gate
+        run: python scripts/mutation_test.py dikdik/engineering.py tests.test_engineering tests.test_performance --max 60 --min-score 0.85
+      - name: Permission and approval engine
+        run: python scripts/mutation_test.py dikdik/control.py tests.test_control_rules tests.test_control --max 40 --min-score 0.9
+      - name: Parallel writer ownership and merge
+        run: python scripts/mutation_test.py dikdik/parallel.py tests.test_parallel --max 0 --min-score 0.9
+      - name: PowerShell translation for Windows without Git Bash
+        run: python scripts/mutation_test.py dikdik/windows_shell.py tests.test_windows_shell --max 0 --min-score 0.9

@@ -20,7 +20,7 @@ export interface Task {
 export interface SubmitRequest {
   objective: string;
   mode: "offline" | "model" | "agent" | "plan";
-  verification: "syntax" | "docker";
+  verification: "syntax" | "local";
   approve_external: boolean;
   approve_execution?: boolean;
   edits?: Array<{ path: string; before: string; after: string }>;

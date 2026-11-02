@@ -1,14 +1,19 @@
 """Supervised project preview on one ephemeral loopback port, with real browser evidence."""
+import hashlib
+import json
 import socket
 import time
 from urllib.parse import urlsplit
 
+from . import accessibility
 from .host_browser import PREVIEW_HOST
 from .interactive_browser import BrowserSessions, available
 from .local_exec import BackgroundShells
 
 
-def preview(root, command, cancel, *, path="/", actions=None, expect_text="", save_screenshot=None, env=None):
+def preview(root, command, cancel, *, path="/", actions=None, expect_text="", save_screenshot=None, env=None, visual=None):
+    """``visual(view, png)``, when given, compares each capture with the accepted baseline for
+    that view (``path#label``; interaction results also key on the actions performed)."""
     if not isinstance(command, str) or "{port}" not in command or len(command) > 4000:
         raise ValueError("Use {port} in the project's server command, for example npm run dev -- --host 127.0.0.1 --port {port}")
     if not isinstance(path, str) or not path.startswith("/") or path.startswith("//") or "\\" in path or any(ord(c) < 32 for c in path) or urlsplit(path).netloc:
@@ -30,7 +35,8 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
         reserved.bind(("127.0.0.1", 0))
         port = reserved.getsockname()[1]
     shells, sessions = BackgroundShells(), BrowserSessions(preview_port=port)
-    views, issues = [], []
+    views, issues, audits, compared = [], [], [], []
+    acted = hashlib.sha256(json.dumps(actions, sort_keys=True).encode()).hexdigest()[:12]
     started = None
     try:
         started = shells.start(root, command.replace("{port}", str(port)), env=env)
@@ -50,12 +56,17 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
                 cancel.wait(0.1)
 
         def capture(action, arguments, label):
-            result = sessions.execute("preview", action, arguments, cancel)
+            result = sessions.execute("preview", action, {**arguments, "audit": True}, cancel)
             png = result.pop("png", None)
             if result.get("status") != "passed":
                 raise ValueError(result.get("error", "Browser action failed"))
             if png and save_screenshot:
                 result["screenshot"] = save_screenshot({**result, "label": label}, png)
+            if png and visual is not None:
+                check = visual(f"{path}#{label}" + (f"#{acted}" if label == "interaction result" else ""), png)
+                if isinstance(check, dict):
+                    compared.append(check)
+                    result["visual"] = check.get("verdict")
             result["label"] = label
             views.append(result)
             if result.get("runtime_errors"):
@@ -67,6 +78,11 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
                 issues.append(label + ": horizontal overflow")
             if not result.get("text", "").strip() and not result.get("elements") and not layout.get("visible_elements"):
                 issues.append(label + ": no visible text or controls")
+            summary = accessibility.summarize(result.get("accessibility"))
+            if summary["serious"]:
+                issues.append(f"{label}: accessibility failures ({', '.join(summary['failing_rules'])})")
+            audits.append({"label": label, **summary,
+                           "violations": (result.get("accessibility") or {}).get("violations", [])[:20]})
             return result
 
         url = f"http://{PREVIEW_HOST}{path}"
@@ -88,7 +104,10 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
         return {"status": "failed" if issues else "passed", "views": compact_views, "issues": list(dict.fromkeys(issues)),
                 "server_port": port,
                 "interactions_checked": len(actions), "expected_text_checked": bool(expect_text),
-                "note": "Measured browser rendering and supplied interactions only. Screenshots are retained; aesthetic quality and unexercised features are not automatically proven.",
+                "accessibility": audits,
+                **({"visual": compared} if visual is not None else {}),
+                "note": "Measured browser rendering, an automated WCAG 2.2 subset and supplied interactions only. Screenshots are retained; "
+                        "aesthetic quality, full accessibility and unexercised features are not automatically proven.",
                 "untrusted": True}
     except Exception as exc:
         return {"status": "cancelled" if cancel.is_set() else "failed", "error": str(exc)[:1500], "views": views}

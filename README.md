@@ -30,14 +30,14 @@ Dikdik brings the conversation, editor, terminal, browser, and change review int
 **34 bundled skills · 6 lifecycle events · Checkpoints and Undo · Your choice of models**
 
 > [!NOTE]
-> **v0.2.0 is a developer preview.** See the [release notes](https://github.com/vortemain/dikdik/releases/tag/v0.2.0) for downloads and validation, and [Security](SECURITY.md) for operating boundaries.
+> **v0.3.3 is a developer preview.** See the [release notes](https://github.com/vortemain/dikdik/releases/tag/v0.3.3) for downloads and validation, and [Security](SECURITY.md) for operating boundaries.
 
 ## Quick start
 
 ### 1. Install a release
 
 Download the **Windows setup `.exe`**, **macOS `.dmg`**, or **Linux amd64 `.deb`**
-from [Dikdik v0.2.0](https://github.com/vortemain/dikdik/releases/tag/v0.2.0).
+from [Dikdik v0.3.3](https://github.com/vortemain/dikdik/releases/tag/v0.3.3).
 Desktop bundles include Python and Chromium. Windows requires WebView2;
 Linux packages target Ubuntu 24.04 or newer compatible Debian systems.
 These are unsigned developer previews; macOS builds are not notarized.
@@ -48,7 +48,7 @@ For the Python command-line and browser interface:
 Requires **Python 3.13 or newer**. Download the wheel and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/vortemain/dikdik/releases), verify its checksum, then install:
 
 ```bash
-python -m pip install ./dikdik-0.2.0-py3-none-any.whl
+python -m pip install ./dikdik-0.3.3-py3-none-any.whl
 dikdik --version
 dikdik /path/to/your-project
 ```
@@ -64,7 +64,7 @@ Dikdik opens its browser interface at **http://127.0.0.1:8787** and signs you in
 Python users can also install the optional desktop support:
 
 ```powershell
-python -m pip install "./dikdik-0.2.0-py3-none-any.whl[desktop]"
+python -m pip install "./dikdik-0.3.3-py3-none-any.whl[desktop]"
 dikdik-desktop C:\Projects\my-app
 ```
 
@@ -111,7 +111,7 @@ Switch to **Ask before commands** when you are ready to implement. Review the ag
 | **Ask before commands** | The agent edits files in your project and asks before commands, web visits, and MCP calls. |
 | **Auto** (default) | The agent works and verifies in your trusted project without per-tool approval prompts. Explicit permission rules still apply. |
 | **Plan only** | Explore the repository and prepare a plan with read-only tools. |
-| **Classic** | Work on an isolated candidate, verify with Docker when approved, and review before applying changes. |
+| **Classic** | Work on an isolated candidate with syntax checks only (no commands run), and review before applying changes. |
 
 Local modes run approved commands with your computer's tools and permissions. Checkpoints record a turn's changes; **Undo** restores them unless you have edited those files afterward.
 
@@ -156,7 +156,7 @@ When no saved profile is configured, these server-side variables provide a fallb
 | `DIKDIK_MODEL` | Provider model ID. Agent work requires function-tool support. |
 | `DIKDIK_API_KEY` | Provider credential, when required by the endpoint. |
 
-Use the session-only provider connection form, or supply server credentials through the environment. Keep them out of source files and committed configuration.
+Use the provider connection form (keys are saved encrypted on this computer), or supply server credentials through the environment. Keep them out of source files and committed configuration.
 
 </details>
 
@@ -202,7 +202,6 @@ Start Dikdik against a separate project folder with `dikdik /path/to/your-projec
 | --- | --- |
 | **Git** | Repository cloning and Git operations. |
 | **GitHub CLI / GitLab CLI** | Their respective account and repository integrations. |
-| **Docker** | Approved container execution and Classic-mode test isolation. Images are configured separately. |
 | **Edge or Chrome** | Local browser captures when using the host browser. |
 | **Rust** | Building the optional native repository indexer. |
 
@@ -235,4 +234,4 @@ Bundled dependencies, fonts, and product marks retain their own terms. Their not
 
 Connect **Nebius Token Factory** under Settings → Models, load the live model directory, and choose an available tool-capable NVIDIA Nemotron model. Connect **Tavily web research** on the same screen and enable web browsing for the task. The agent can then use `web_search` for public documentation and retain source URLs. Keys entered in these forms are not persisted.
 
-See [Nebius and Tavily setup, demo and sponsored access](docs/NEBIUS_TAVILY.md).
+See [Nebius and Tavily setup and demo](docs/NEBIUS_TAVILY.md).

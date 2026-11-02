@@ -127,9 +127,11 @@ class LocalModeTests(unittest.TestCase):
         command = f'"{PY}" -c "open(\'made.py\', \'w\').write(\'made = True\\n\'); print(\'ran here\')"'
         task, state = self.run_task(Script([call(1, "run_command", command=command), ModelResponse("Done.", [])]))
         self.assertEqual((self.root / "made.py").read_text(encoding="utf-8"), "made = True\n")
-        terminal = [e["data"] for e in state["events"] if e["kind"] == "terminal_output"]
+        first = next(e["data"]["command_id"] for e in state["events"] if e["kind"] == "terminal_command")
+        terminal = [e["data"] for e in state["events"] if e["kind"] == "terminal_output" and e["data"]["command_id"] == first]
         self.assertIn("ran here", "".join(t["output"] for t in terminal))
         self.assertEqual(terminal[-1]["exit_code"], 0)
+        self.assertIn("made.py", state["result"]["changed_files"])  # the command's new file is part of the turn
         self.engine.undo(task)
         self.assertFalse((self.root / "made.py").exists())  # a file the turn created goes away again
 
@@ -293,6 +295,41 @@ class LocalModeTests(unittest.TestCase):
     def test_background_shell_poll_missing_id(self):
         with self.assertRaises(KeyError):
             self.engine.poll_background("nonexistent")
+
+    def test_files_a_command_creates_stay_the_agents_to_edit(self):
+        # Found by a live benchmark run: the "new files only" policy refused a file the agent's own command had
+        # just created (it now existed), and once read it counted as a protected pre-existing test.
+        (self.root / ".gitignore").write_text("cache/\n", encoding="utf-8")
+        make = f'"{PY}" -c "import os; os.makedirs(\'cache\', exist_ok=True); open(\'test_extra.py\', \'w\').write(\'A = 1\\n\'); open(\'cache/x.py\', \'w\').write(\'1\')"'
+        script = Script([call(1, "run_command", command=make),
+                         call(2, "edit_file", path="test_extra.py", before="A = 1", after="A = 2"),
+                         call(3, "run_command", command=f'"{PY}" -c "print(1)"'), ModelResponse("Done.", [])])
+        _, state = self.run_task(script, confirmation="never")
+        ended = [e["data"] for e in state["events"] if e["kind"] == "agent_tool" and e["data"].get("phase") == "end"]
+        self.assertEqual(ended[0]["observation"]["changed_files"], ["test_extra.py"])
+        self.assertEqual(ended[0]["observation"]["rejected_changes"], [])  # the ignored cache/x.py is never even listed
+        self.assertFalse(ended[1]["failed"], ended[1]["observation"])
+        self.assertFalse(ended[2]["failed"], ended[2]["observation"])  # no "changed outside the agent" jam
+        self.assertEqual((self.root / "test_extra.py").read_text(encoding="utf-8"), "A = 2\n")
+        self.assertIn("test_extra.py", state["result"]["changed_files"])
+
+    def test_a_command_that_rewrites_dikdik_itself_stops_the_turn(self):
+        # A stand-in for Dikdik's own folder, so the real program is never touched.
+        program = Path(self.temp.name) / "program"
+        program.mkdir()
+        (program / "engine.py").write_text("x = 1\n", encoding="utf-8")
+        target = (program / "engine.py").as_posix()
+        command = f'"{PY}" -c "import pathlib; pathlib.Path(r\'{target}\').write_text(\'x = 2\\n\')"'
+        script = Script([call(1, "run_command", command=command), ModelResponse("Patched it.", [])])
+        with patch("dikdik.engine.PROGRAM", program):
+            task, state = self.run_task(script, confirmation="never")
+        self.assertEqual(state["state"], "blocked", state["result"])
+        self.assertIn("Dikdik's own program files (engine.py)", state["result"]["error"])
+        self.assertEqual(script.seen, 1)  # the model got no further turn
+        with patch("dikdik.engine.PROGRAM", program):  # an ordinary command is unaffected
+            _, state = self.run_task(Script([call(1, "run_command", command=f'"{PY}" -c "print(1)"'), ModelResponse("Done.", [])]),
+                                     confirmation="never")
+        self.assertEqual(state["state"], "completed", state["result"])
 
 
 if __name__ == "__main__":

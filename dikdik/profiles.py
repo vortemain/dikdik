@@ -9,6 +9,8 @@ import urllib.parse
 import uuid
 
 from .model_catalog import approved_endpoints
+from . import sql
+from . import migrations
 
 PROVIDERS = {"openai", "anthropic", "azure", "local"}
 FIXED_ENDPOINTS = {
@@ -25,8 +27,6 @@ NON_PATCHABLE_KEYS = {"id"}
 PATCHABLE = {"name", "provider", "model", "endpoint", "timeout_seconds", "is_default", "credential_secret_ref",
              "connection_id", "temperature", "top_p", "max_output_tokens", "fallback_profile_id", "reasoning_effort"}
 # Columns added after the first release; migrated in place.
-EXTRA_COLUMNS = (("connection_id", "TEXT"), ("temperature", "REAL"), ("top_p", "REAL"),
-                 ("max_output_tokens", "INTEGER"), ("fallback_profile_id", "TEXT"), ("reasoning_effort", "TEXT"))
 EFFORTS = {"minimal", "low", "medium", "high"}  # provider reasoning variants, sent as reasoning_effort
 
 
@@ -65,11 +65,19 @@ CREATE TABLE IF NOT EXISTS profiles (
 
 
 def migrate(db) -> None:
+    """Version 1 of the profiles schema; idempotent, so callers may also run it as a safety net."""
     db.execute(SCHEMA)
-    columns = {row["name"] for row in db.execute("PRAGMA table_info(profiles)")}
-    for name, kind in EXTRA_COLUMNS:
-        if name not in columns:
-            db.execute(f"ALTER TABLE profiles ADD COLUMN {name} {kind}")
+    for column, statement in (
+            ("connection_id", "ALTER TABLE profiles ADD COLUMN connection_id TEXT"),
+            ("temperature", "ALTER TABLE profiles ADD COLUMN temperature REAL"),
+            ("top_p", "ALTER TABLE profiles ADD COLUMN top_p REAL"),
+            ("max_output_tokens", "ALTER TABLE profiles ADD COLUMN max_output_tokens INTEGER"),
+            ("fallback_profile_id", "ALTER TABLE profiles ADD COLUMN fallback_profile_id TEXT"),
+            ("reasoning_effort", "ALTER TABLE profiles ADD COLUMN reasoning_effort TEXT")):
+        migrations.add_column(db, "profiles", column, statement)
+
+
+STEPS = [(1, "model profiles with connection and request-setting columns", migrate)]
 
 
 class ProfileStore:
@@ -77,8 +85,7 @@ class ProfileStore:
 
     def __init__(self, store):
         self.store = store
-        with store.connect() as db:
-            migrate(db)
+        migrations.ensure(store.path, "profiles", STEPS)
 
     # --- validation ----------------------------------------------------
     def _validate(self, body, *, require_core: bool):
@@ -223,8 +230,9 @@ class ProfileStore:
                 raise ApiError(404, "Profile not found")
             if "name" in fields and db.execute("SELECT 1 FROM profiles WHERE name=? AND id<>?", (fields["name"], profile_id)).fetchone():
                 raise ApiError(409, f"Profile '{fields['name']}' already exists")
+            writable = sql.writable_columns(db, "profiles")
             for key, value in fields.items():
-                db.execute(f"UPDATE profiles SET {key}=? WHERE id=?", (int(value) if key == "is_default" else value, profile_id))
+                db.execute(f"UPDATE profiles SET {sql.assign([key], writable)} WHERE id=?", (int(value) if key == "is_default" else value, profile_id))
             if fields.get("is_default"):
                 db.execute("UPDATE profiles SET is_default=0 WHERE id<>?", (profile_id,))
         return 200, {"id": profile_id, **{k: (v if k != "is_default" else bool(v)) for k, v in fields.items()}}

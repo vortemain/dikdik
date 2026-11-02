@@ -64,7 +64,7 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(self.engine.store.get(plan['task_id'])['state'], 'draft')
 
     def test_planner_rejects_write_execution_and_permission_escalation(self):
-        for delta in [{'approve_external': False}, {'verification': 'docker', 'approve_execution': True}, {'approve_execution': True}, {'approve_browser': True}]:
+        for delta in [{'approve_external': False}, {'verification': 'local', 'approve_execution': True}, {'approve_execution': True}, {'approve_browser': True}]:
             with self.subTest(delta=delta), self.assertRaises(ValueError):
                 self.engine.submit({**REQUEST, **delta})
         model = Script([ModelResponse('', [ToolCall('evil', 'edit_file', {'path': 'app.py', 'before': '1', 'after': '9'})]), ModelResponse('Cannot edit in plan mode.', [])])
@@ -79,7 +79,7 @@ class PlanningTests(unittest.TestCase):
     def test_build_requires_review_current_revision_and_new_approvals(self):
         child, _, _ = self.plan()
         body = {'planner_id': child, 'revision': 1, 'confirm': True, 'verification': 'syntax', 'approve_external': True, 'approve_execution': False}
-        for change in [{'confirm': False}, {'revision': 0}, {'approve_external': False}, {'verification': 'docker'}]:
+        for change in [{'confirm': False}, {'revision': 0}, {'approve_external': False}, {'verification': 'local'}, {'verification': 'docker'}]:
             with self.subTest(change=change), self.assertRaises(ValueError):
                 self.engine.build_plan(child, {**body, **change})
         model = Script([
@@ -140,7 +140,7 @@ class PlanningTests(unittest.TestCase):
         child, _, _ = self.plan()
         model = Script([ModelResponse('No changes requested for this permission fixture.', [])])
         with patch('dikdik.engine.CompatibleAgentModel', return_value=model):
-            parent = self.engine.build_plan(child, {'planner_id': child, 'confirm': True, 'revision': 1, 'verification': 'docker', 'approve_external': True, 'approve_execution': True})['id']
+            parent = self.engine.build_plan(child, {'planner_id': child, 'confirm': True, 'revision': 1, 'verification': 'local', 'approve_external': True, 'approve_execution': True})['id']
             self.idle(parent)
         self.engine.bash._approved_task(parent)
         with self.assertRaises(PermissionError):

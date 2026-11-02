@@ -64,7 +64,7 @@ const languageModes = new Map<string, string>();
 let projectImages: string[] = [], pinnedTabs = new Set<string>(), tabsRestored = false;
 let diffMode = "diff", diffNewKey = "", reviewShortened = false, reviewDirect = false;
 let exposedSecrets = 0;
-let pendingFolder: string | null = null;  // a new task started from a folder's "+" goes there  // keys the user exposed to the sandbox; the composer offers them only then
+let pendingFolder: string | null = null;  // a new task started from a folder's "+" goes there
 const composerSize = new ComposerSize();
 
 // --- small DOM helpers ----------------------------------------------------
@@ -243,7 +243,7 @@ function stepLabel(msg: ChatMessage): StepLabel {
     }
     case "agent_tool_result": return { icon: msg.state === "tool_failed" ? "alert" : "terminal", title: `${msg.state === "tool_failed" ? "Agent error" : "Output"} · ${toolName(msg)}`, arg: (msg.body ?? "").split("\n")[0] ?? "" };
     case "inspected": return { icon: "folder", title: "Inspected repository", arg: detailField(details, "file_count") ? `${detailField(details, "file_count")} files` : "" };
-    case "execution": return { icon: "terminal", title: "Running tests in Docker", arg: detailField(details, "command") };
+    case "execution": return { icon: "terminal", title: "Running tests", arg: detailField(details, "command") };
     case "syntax": return { icon: detailField(details, "status") === "passed" ? "check" : "alert", title: msg.title ?? "Syntax check", arg: detailField(details, "status") };
     case "agent_repair": return { icon: "refresh", title: "Repair attempt", arg: detailField(details, "reason") };
     case "agent_started": return { icon: "sparkle", title: "Started agent", arg: "" };
@@ -260,7 +260,7 @@ function stepLabel(msg: ChatMessage): StepLabel {
     case "model_routed": return { icon: "cpu", title: msg.title ?? "Routed", arg: msg.body ?? "" };
     case "secret_answered": return { icon: "key", title: msg.title ?? "Secret", arg: "" };
     case "critic": return { icon: msg.title === "Critic: looks done" ? "check" : "alert", title: msg.title ?? "Critic", arg: (msg.body ?? "").split("\n")[0] ?? "" };
-    case "sandbox_secrets": return { icon: "key", title: "Sandbox secrets available", arg: msg.body ?? "" };
+    case "sandbox_secrets": return { icon: "key", title: "Secrets available to commands", arg: msg.body ?? "" };
     case "confirmation_resolved": return { icon: msg.title === "Approved" ? "check" : "x", title: `${msg.title} · ${detailField(details, "id") ? "action" : ""}`.replace(/ · $/, ""), arg: detailField(details, "reason") };
     case "subagent": return { icon: "sparkle", title: msg.title ?? "Subagent", arg: (msg.body ?? "").split("\n")[0] ?? "" };
     case "condensed": return { icon: "list", title: msg.title ?? "Condensed", arg: "" };
@@ -468,11 +468,20 @@ function renderEvidenceCard(details: unknown): HTMLElement {
     );
     grid.append(stat);
   }
+  const gate = d.release_gate as { decision?: unknown; gates?: unknown } | undefined;
+  if (gate && typeof gate.decision === "string") {
+    const stat = make("div", "evidence-stat");
+    stat.append(
+      make("span", "stat-label", "Release gate"),
+      make("span", `verify-badge ${gate.decision === "APPROVED" ? "verified" : ""}`, gate.decision.replaceAll("_", " ").toLowerCase())
+    );
+    grid.append(stat);
+  }
   if (d.direct !== undefined) {
     const stat = make("div", "evidence-stat");
     stat.append(
       make("span", "stat-label", "Execution mode"),
-      make("span", "stat-value", d.direct ? "Direct workspace edits" : "Sandboxed proposal")
+      make("span", "stat-value", d.direct ? "Direct workspace edits" : "Proposal for review")
     );
     grid.append(stat);
   }
@@ -511,6 +520,35 @@ function renderEvidenceCard(details: unknown): HTMLElement {
     card.append(renderTestChecksWidget(d.checks as Array<{ kind?: string; status?: string; output?: string }>));
   }
 
+  if (gate && Array.isArray(gate.gates) && gate.gates.length) {
+    const wrap = make("div", "evidence-files");
+    wrap.append(make("strong", "card-title", "Release gates"));
+    const list = make("ul", "gate-list");
+    for (const entry of gate.gates as Array<{ gate?: unknown; status?: unknown; detail?: unknown; views?: unknown }>) {
+      const item = make("li", "", `${String(entry.gate ?? "")}: ${String(entry.status ?? "")} — ${String(entry.detail ?? "")}`);
+      if (entry.gate === "visual" && Array.isArray(entry.views)) {
+        // Only the owner accepts a new look; the agent never updates baselines.
+        for (const view of entry.views) {
+          if (typeof view !== "string") continue;
+          const accept = make("button", "small") as HTMLButtonElement;
+          accept.type = "button";
+          accept.textContent = `Accept ${view} as baseline`;
+          accept.onclick = async () => {
+            accept.disabled = true;
+            try {
+              await api("/api/visual-baselines/accept", { view });
+              accept.textContent = `Accepted ${view}`;
+            } catch (error) { accept.disabled = false; message(error instanceof Error ? error.message : "Could not accept the baseline", true); }
+          };
+          item.append(" ", accept);
+        }
+      }
+      list.append(item);
+    }
+    wrap.append(list);
+    card.append(wrap);
+  }
+
   if (Array.isArray(d.changed_files) && d.changed_files.length) {
     const filesWrap = make("div", "evidence-files");
     filesWrap.append(make("strong", "card-title", "Changed files"));
@@ -526,7 +564,7 @@ function renderEvidenceCard(details: unknown): HTMLElement {
     card.append(filesWrap);
   }
 
-  const handled = new Set(["diff", "diff_truncated", "changed_files", "file_changes", "tests_verified", "checks", "direct", "source_modified", "checkpoint", "tokens", "usage"]);
+  const handled = new Set(["diff", "diff_truncated", "changed_files", "file_changes", "tests_verified", "checks", "direct", "source_modified", "checkpoint", "tokens", "usage", "release_gate"]);
   const remaining: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(d)) {
     if (!handled.has(k) && v !== undefined && v !== null && v !== "") {
@@ -636,7 +674,8 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   if (state === "completed" && (result as { turn_changed?: unknown } | undefined)?.turn_changed === false) {
     // An answer-only turn: the reply says it all, so just note that nothing changed.
     li.className = "msg msg-system msg-turn-note";
-    const note = make("p", "turn-note", `No files changed in this turn.${usageText(msg.details) ? " " + usageText(msg.details) : ""}`);
+    const note = make("p", "turn-note", "No files changed");
+    if (usageText(msg.details)) note.title = usageText(msg.details);  // the numbers are there on hover, not in the way
     const seq = Number(msg.id.replace("terminal-", ""));
     if (selected && Number.isInteger(seq)) {
       const branch = make("button", "ghost small turn-branch");
@@ -818,7 +857,7 @@ function secretCard(msg: ChatMessage): HTMLLIElement {
   if (msg.body) card.append(make("p", "result-text", msg.body));
   const field = make("input"); field.type = "password"; field.autocomplete = "off"; field.placeholder = `Value for ${name}`;
   field.setAttribute("aria-label", `Value for ${name}`);
-  card.append(field, make("p", "hint", "Saved encrypted under API keys as " + name + ". Sandbox commands in this run can read it; it is never sent to the model, and command output is redacted."));
+  card.append(field, make("p", "hint", "Saved encrypted under API keys as " + name + ". Commands in this run can read it; it is never sent to the model, and command output is redacted."));
   const actions = make("div", "result-actions");
   const save = make("button", "small primary", "Provide"); save.type = "submit";
   const decline = make("button", "small", "Decline"); decline.type = "button";
@@ -1185,7 +1224,7 @@ function renderTerminal(): void {
   const running = runningTerminalCommands(liveEvents).length > 0;
   el("terminal-project").textContent = projectName || "your project";
   el("terminal-prompt-path").textContent = [projectName, input("terminal-cwd").value.trim()].filter(Boolean).join("/") || "project";
-  el("terminal-runtime").textContent = taskRequest?.verification === "local" || !selected ? "Local terminal" : "Docker terminal";
+  el("terminal-runtime").textContent = "Local terminal";
   el("terminal-state").textContent = running ? "Running…" : "Ready";
   button("terminal-stop").disabled = !running;
   button("terminal-run").disabled = running || terminalSubmitting;
@@ -1548,14 +1587,13 @@ el("browser-stop").addEventListener("click", () => {
 });
 
 async function loadBrowserSettings(): Promise<void> {
-  const info = await api<{ enabled: boolean; image: string; availability: string; launch_verified: boolean }>("/api/browser");
+  const info = await api<{ enabled: boolean; availability: string; launch_verified: boolean }>("/api/browser");
   input("browser-enabled").checked = info.enabled;
   el("browser-availability").textContent = info.availability === "interactive_ready"
-    ? "Persistent Chromium browser in your workspace. Supports page reading, clicks, typing, forms and navigation without Docker."
+    ? "Persistent Chromium browser in your workspace. Supports page reading, clicks, typing, forms and navigation."
     : info.availability === "host_ready"
     ? `Uses ${(info as { browser?: string }).browser ?? "the browser"} on this computer with a fresh, empty profile; pages can only reach public Internet addresses.`
-    : info.availability === "image_ready" ? info.launch_verified ? "Browser image installed. A capture completed in this service session." : "Browser image installed. A successful launch has not been verified."
-    : `No browser available. Install Edge or Chrome, or build the local ${info.image} image and start Docker.`;
+    : "No browser available. Install Edge or Chrome.";
 }
 el("browser-enabled").addEventListener("change", async () => {
   try { await request("/api/browser", "PATCH", { enabled: input("browser-enabled").checked }); message("Browser setting saved."); }
@@ -1924,7 +1962,7 @@ async function request<T>(path: string, method: string, body?: unknown): Promise
   if (token) headers.Authorization = "Bearer " + token;
   const init: RequestInit = { method, headers, credentials: "same-origin" };
   if (body !== undefined) init.body = JSON.stringify(body);
-  const response = await fetch(path, init);
+  const response = await fetch(path, init); // dikdik-scan: ignore[REL101] same-origin API; the server bounds long commands (up to 300 s)
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const detail = typeof data === "object" && data !== null && "error" in data && typeof data.error === "string" ? data.error : "Request failed";
@@ -1973,7 +2011,7 @@ async function loadModel(): Promise<void> {
   pill.title = info.configured
     ? info.source === "profile" ? `${info.model} · ${info.provider_name} (profile “${info.profile}”). Change it in Settings → Models.` : `${info.model} from server environment variables`
     : info.problem ?? "No model is set up";
-  syncModelBanner(); renderOnboarding(); syncSend();
+  syncModelBanner(); syncSend();
 }
 
 async function project(): Promise<void> {
@@ -1985,18 +2023,16 @@ async function project(): Promise<void> {
   if (!tabsRestored) { tabsRestored = true; restoreTabs(); }
   const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
   const summary = `${plural(projectFiles.length, "file")} · ${plural(data.python_tests.length, "test")}`;
-  el("project-name").textContent = data.name;
   el("project-picker-name").textContent = data.name;
   el("topbar-project-name").textContent = data.name;
   el("explorer-project").textContent = data.name;
   el("explorer-stack").replaceChildren(...projectStack(projectFiles).map(name => make("span", "stack-chip", name)));
-  el("project-summary").textContent = summary;
+  el("topbar-project").title = `${data.name} · ${summary}. Switch, open, clone or create a project`;
   projectTrusted = (data as Project & { trusted?: boolean }).trusted === true;
   applyRunMode();
   el("settings-project").textContent = data.name;
   el("settings-indexer").textContent = (data as Project & { indexer?: string }).indexer === "rust" ? "Rust (native, parallel)" : "Python (run scripts/build_native.py for the faster Rust indexer)";
   el("settings-inventory").textContent = `${data.files.length} text files · ${data.python_tests.length} potential Python tests · ${data.manifests.length} manifests`;
-  el("welcome-sub").textContent = `Working in ${data.name}. Describe a bug, feature or change.`;
 }
 
 let lastTasks: TaskSummary[] = [];
@@ -2057,6 +2093,9 @@ function collapsedFolders(): Set<string> {
 }
 function renderHistory(): void {
   const query = ((el("task-search") as HTMLInputElement).value ?? "").trim();
+  // Sort, date and status filters earn their space once there is something to filter (or one is set).
+  const filtering = (select("task-sort").value || "recent") !== "recent" || (select("task-since").value || "0") !== "0" || (select("task-scope").value || "all") !== "all";
+  el("list-tools").hidden = lastTasks.length < 6 && !filtering;
   const view = organiseTasks(lastTasks, {
     query, tag: activeTag, sort: (select("task-sort").value || "recent") as TaskSort, sinceDays: Number(select("task-since").value) || 0,
     showArchived, selected, now: Date.now() / 1000, scope: (select("task-scope").value || "all") as TaskScope,
@@ -2119,7 +2158,6 @@ let deletingArchived = false;
 async function loadHistory(): Promise<void> {
   lastTasks = await api<TaskSummary[]>("/api/tasks");
   renderHistory();
-  renderOnboarding();
 }
 
 // --- task actions menu ----------------------------------------------------
@@ -2506,7 +2544,6 @@ function syncAutoForm(): void {
     first.value = "";
     picker.replaceChildren(first, ...agentProfiles.map(profile => { const option = make("option", "", profile.name); option.value = profile.id; return option; }));
   }
-  el("auto-execution-field").hidden = (el("auto-verification") as HTMLSelectElement).value !== "docker";
 }
 function fillAutoForm(auto: Automation | null): void {
   const field = (id: string) => el(id) as HTMLInputElement;
@@ -2524,11 +2561,9 @@ function fillAutoForm(auto: Automation | null): void {
   (el("auto-repositories") as HTMLTextAreaElement).value = auto?.repositories.join("\n") ?? "";
   field("auto-timeout").value = String(auto?.timeout_seconds ?? 1800);
   (el("auto-mode") as HTMLSelectElement).value = auto?.run?.mode ?? "agent";
-  (el("auto-verification") as HTMLSelectElement).value = auto?.run?.verification ?? "syntax";
   syncAutoForm();
   (el("auto-profile") as HTMLSelectElement).value = auto?.run?.agent_profile ?? "";
   field("auto-external").checked = auto?.run?.approve_external ?? false;
-  field("auto-execution").checked = auto?.run?.approve_execution ?? false;
   el("auto-save").textContent = auto ? "Save changes" : "Add automation";
   el("auto-cancel").hidden = !auto;
 }
@@ -2556,7 +2591,7 @@ function renderAutomations(): void {
     head.append(make("span", "m4-strong", auto.name));
     if (state) head.append(make("span", `auto-state state-${state}`, state === "needs_setup" ? "needs setup" : state));
     const next = typeof auto.next_run === "number" ? new Date(auto.next_run * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
-    const how = auto.run ? `${auto.run.mode === "agent" ? "Agent" : "Single proposal"} · ${auto.run.verification === "docker" ? "Docker tests" : "syntax check"}` : "Edit to choose a mode and approvals";
+    const how = auto.run ? `${auto.run.mode === "agent" ? "Agent" : "Single proposal"} · syntax check` : "Edit to choose a mode and approvals";
     row.append(head, make("span", "m4-meta", `${describeSchedule(auto.schedule)}${auto.enabled && next ? ` · next ${next}` : ""} · ${how}${auto.failures ? ` · ${auto.failures} failed in a row` : ""}`));
     row.append(make("p", "m4-objective", auto.objective));
     const actions = make("span", "m4-actions");
@@ -2631,7 +2666,7 @@ function renderAutomations(): void {
   }));
   if (!visible.length) el("auto-list").replaceChildren(make("li", "hint", automations.length ? "No automations match this view." : "No automations yet."));
 }
-for (const id of ["auto-kind", "auto-mode", "auto-verification"]) el(id).addEventListener("change", syncAutoForm);
+for (const id of ["auto-kind", "auto-mode"]) el(id).addEventListener("change", syncAutoForm);
 for (const id of ["auto-search", "auto-filter", "auto-sort"]) el(id).addEventListener(id === "auto-search" ? "input" : "change", renderAutomations);
 el("auto-cancel").addEventListener("click", () => fillAutoForm(null));
 function autoFormBody(source?: "custom" | "template") {
@@ -2643,8 +2678,8 @@ function autoFormBody(source?: "custom" | "template") {
     cron: field("auto-cron").value, timezone: field("auto-timezone").value,
     eventRepository: field("auto-event-repo").value, eventRef: field("auto-event-ref").value,
     repositories: (el("auto-repositories") as HTMLTextAreaElement).value, timeoutSeconds: field("auto-timeout").value,
-    mode: (el("auto-mode") as HTMLSelectElement).value, verification: (el("auto-verification") as HTMLSelectElement).value,
-    approveExternal: field("auto-external").checked, approveExecution: field("auto-execution").checked,
+    mode: (el("auto-mode") as HTMLSelectElement).value, verification: "syntax",
+    approveExternal: field("auto-external").checked, approveExecution: false,
     agentProfile: (el("auto-profile") as HTMLSelectElement).value, ...(source ? { source } : {}),
   });
 }
@@ -2867,7 +2902,7 @@ function syncMode(): void {
   (el("execution-field") as HTMLElement).hidden = !execution;
   input("execution").disabled = !execution;
   input("execution").required = execution && runMode() === "classic";
-  el("execution-field").title = "Runs approved tools and tests inside restricted Docker containers.";
+  el("execution-field").title = "Runs approved commands and tests on this computer, in the project folder.";
   el("model-pill").hidden = !policy.requiresExternal;
   syncModelBanner();
   el("agent-profile-pill").hidden = !['agent','plan'].includes(mode) || !agentProfiles.length;
@@ -2921,7 +2956,7 @@ function applyRunMode(): void {
   const mode = runMode();
   try { localStorage.setItem("dikdik.runMode.v2", mode); } catch { void 0; }
   document.body?.classList?.toggle("run-simple", mode !== "classic");
-  el("composer-footnote").textContent = FOOTNOTES[mode];
+  select("run-mode").title = FOOTNOTES[mode];
   if (mode === "classic") return;
   select("mode").value = mode === "plan" ? "plan" : "agent";
   select("verification").value = mode === "plan" ? "syntax" : "local";
@@ -3584,7 +3619,8 @@ const PANEL_TITLES: Record<string, string> = { changes: "Changes", files: "Files
 let paletteItems: Command[] = [], paletteIndex = 0;
 function paletteCommands(): Command[] {
   const task = selected;
-  const actions: Command[] = [{ label: "New task", hint: "Ctrl ⇧ O", icon: "plus", keywords: "conversation start", run: newTask }];
+  const actions: Command[] = [{ label: "New task", hint: "Ctrl ⇧ O", icon: "plus", keywords: "conversation start", run: newTask },
+    { label: "Rescan project files", icon: "refresh", keywords: "refresh inventory reload files", run: () => { void rescanProject(); } }];
   if (task) {
     actions.push(
       { label: "Rename this conversation", icon: "pencil", run: () => startRename(task) },
@@ -3709,7 +3745,7 @@ el("delete-archived").addEventListener("click", async () => {
 // --- conversation data, agent info ------------------------------------------------------
 async function downloadTask(task: string): Promise<void> {
   const headers: Record<string, string> = token ? { Authorization: "Bearer " + token } : {};
-  const response = await fetch(`/api/tasks/${encodeURIComponent(task)}/download`, { headers, credentials: "same-origin" });
+  const response = await fetch(`/api/tasks/${encodeURIComponent(task)}/download`, { headers, credentials: "same-origin" }); // dikdik-scan: ignore[REL101] user-started download of any size
   if (!response.ok) { message("Could not download this conversation", true); return; }
   const url = URL.createObjectURL(await response.blob());
   const info = lastTasks.find(item => item.id === task);
@@ -3754,24 +3790,6 @@ function fillComposer(text: string): void {
   autosize();
   textarea("objective").focus?.();
 }
-function renderOnboarding(): void {
-  const steps = [
-    { done: modelReady, label: "Set up a model", detail: "Add a model profile and its API key, or a local server.", action: "Open Models", run: () => openSettings("models") },
-    { done: lastTasks.length > 0, label: "Say hello", detail: "Ask Dikdik about this project.", action: "Try it", run: () => fillComposer("Hello! Give me a quick tour of this project: what it does and how it is organised.") },
-    { done: storageGet("dikdik.onboarding.applied") === "1", label: "Review and apply a change", detail: "Let Dikdik fix something, read the diff, then Apply.", action: "Try it", run: () => fillComposer("Find one small bug or rough edge in this project and fix it.") },
-  ];
-  const box = el("onboarding");
-  box.hidden = storageGet("dikdik.onboarding.dismissed") === "1" || steps.every(step => step.done);
-  el("onboarding-steps").replaceChildren(...steps.map(step => {
-    const li = make("li", step.done ? "onb-step done" : "onb-step");
-    const mark = make("span", "onb-mark"); if (step.done) mark.append(icon("check"));
-    const text = make("span", "onb-text"); text.append(make("strong", "", step.label), make("span", "", step.detail));
-    li.append(mark, text);
-    if (!step.done) { const go = make("button", "small", step.action); go.type = "button"; go.onclick = step.run; li.append(go); }
-    return li;
-  }));
-}
-el("onboarding-dismiss").addEventListener("click", () => { storageSet("dikdik.onboarding.dismissed", "1"); renderOnboarding(); });
 function syncModelBanner(): void {
   const needsModel = parseMode(select("mode").value) !== "offline";
   el("model-banner").hidden = modelReady || !needsModel;
@@ -3845,7 +3863,7 @@ function chime(): void {
   setTimeout(() => { void audio.close(); }, 1000);
 }
 
-// --- models: settings panes, the model picker on the pill, sandbox secrets ----------------
+// --- models: settings panes, the model picker on the pill, command secrets ----------------
 const paneDeps = {
   request: <T>(path: string, method: string, body?: unknown) => request<T>(path, method, body),
   make, message, navigate: (page: string, provider?: string) => {
@@ -3867,7 +3885,7 @@ function useSkill(name: string): void {
   fillComposer(`/${name} `);
   void ensureLists(true);
 }
-/** Agent-profile sandbox secrets: blank → every exposed key (null), "none" → [], else the listed names. */
+/** Agent-profile command secrets: blank → every exposed key (null), "none" → [], else the listed names. */
 function secretRefsField(text: string): string[] | null {
   const value = text.trim();
   if (!value) return null;
@@ -4086,10 +4104,10 @@ async function stopResponse(): Promise<void> {
 }
 button("cancel").onclick = () => { void stopResponse(); };
 
-button("refresh").onclick = async () => {
+async function rescanProject(): Promise<void> {
   try { await Promise.all([project(), loadHistory()]); message(`Re-scanned ${projectName || "the workspace"}.`); }
   catch (error) { message(error instanceof Error ? error.message : "Refresh failed", true); }
-};
+}
 
 // Poll real durable events. No simulated execution or progress percentages.
 setInterval(() => { renderCommandProgress(); void observe(); }, 1000);
@@ -4207,7 +4225,7 @@ let acpPresets: Array<Record<string, unknown>> = [];
 /** Runs an ACP agent as a new conversation. Both approvals are asked for here, in plain words,
  *  every time: the agent is a program on this machine and it sends the code to its own provider. */
 async function runAcpAgent(id: string, name: string): Promise<void> {
-  const fields = await formDialog({ title: `Run ${name}`, description: `${name} will run on this computer, outside Docker, in a throwaway copy of the workspace. `
+  const fields = await formDialog({ title: `Run ${name}`, description: `${name} will run on this computer, in a throwaway copy of the workspace. `
     + "It can read that copy and send it to its own model provider. Your files change only if you apply its changes afterwards.", fields: [{ name: "objective", label: "What should the agent do?", type: "textarea", required: true }], submit: "Run agent" });
   if (!fields?.objective?.trim()) return;
   const objective = fields.objective;
@@ -4336,10 +4354,8 @@ function openProjects(form: string | null = null): void {
   void loadProjects().catch(error => projectStatus(error instanceof Error ? error.message : String(error), true));
   if (form === "open") projectsDialog.querySelector<HTMLButtonElement>('[data-browse="project-open-path"]')?.click();
 }
-el("project-switch").addEventListener("click", () => openProjects());
 el("project-picker").addEventListener("click", () => openProjects());
 el("topbar-project").addEventListener("click", () => openProjects());
-for (const card of document.querySelectorAll?.<HTMLButtonElement>(".start-card") ?? []) card.addEventListener("click", () => openProjects(card.dataset.start ?? null));
 
 // Clone: the signed-in GitHub account's repositories, newest first, one click to pick.
 interface RepoEntry { name: string; description: string; private: boolean; url: string; ssh_url: string }

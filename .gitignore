@@ -15,4 +15,6 @@ upstream/
 !.env.example
 
 .codex-test-tmp/
-gateway-usage.sqlite3*
+.coverage
+.coverage.*
+htmlcov/

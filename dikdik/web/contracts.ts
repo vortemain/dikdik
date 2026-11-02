@@ -1,7 +1,7 @@
 import { terminalRuns, type TerminalRun } from "./terminal-format";
 
 export type Mode = "offline" | "model" | "agent" | "plan";
-export type Verification = "syntax" | "docker" | "local";
+export type Verification = "syntax" | "local";
 export interface Edit { path: string; before: string; after: string }
 export interface TaskRequest {
   objective: string;
@@ -211,14 +211,14 @@ export function isResumable(state: string): boolean {
   return ["paused", "failed", "cancelled", "interrupted", "blocked"].includes(state);
 }
 export function modePolicy(mode: Mode, verification: Verification) {
-  // Every mode can run with a syntax check only, or with tests in Docker.
+  // Every mode can run with a syntax check only; agent mode can also work on this computer.
   return {
     showEdits: mode === "offline",
     requiresExternal: mode !== "offline",
     // Working directly in the folder on this computer is an agent-mode feature.
     verification: mode === 'plan' || (verification === "local" && mode !== "agent") ? 'syntax' as const : verification,
     locksVerification: mode === 'plan',
-    requiresExecution: mode !== 'plan' && (verification === "docker" || (verification === "local" && mode === "agent")),
+    requiresExecution: mode !== 'plan' && verification === "local" && mode === "agent",
   };
 }
 export function parseMode(value: string): Mode {
@@ -226,7 +226,7 @@ export function parseMode(value: string): Mode {
   throw new Error("Select a supported proposal source.");
 }
 export function parseVerification(value: string): Verification {
-  if (value === "syntax" || value === "docker" || value === "local") return value;
+  if (value === "syntax" || value === "local") return value;
   throw new Error("Select a supported verification boundary.");
 }
 export function buildTaskRequest(input: {
@@ -238,8 +238,7 @@ export function buildTaskRequest(input: {
   const policy = modePolicy(input.mode, input.verification);
   if (!input.objective.trim()) throw new Error("Enter an objective.");
   if (policy.requiresExternal && !input.approveExternal) throw new Error("Approve sending code and the objective to the external provider.");
-  if (policy.requiresExecution && !input.approveExecution) throw new Error(policy.verification === "local"
-    ? "Approve running commands on this computer before starting this task." : "Approve execution inside Docker before starting this task.");
+  if (policy.requiresExecution && !input.approveExecution) throw new Error("Approve running commands on this computer before starting this task.");
   const browsing = input.mode === "agent" && input.approveBrowser === true;
   if (browsing && !input.approveExecution) throw new Error("Approve browser tool execution to use the browser.");
   let edits: Edit[] = [];
@@ -595,7 +594,7 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
     case "agent_finished":
       return [{ ...base, role: "assistant", title: "Agent finished", details: { state: d.state } }];
     case "execution":
-      return [{ ...base, role: "tool", title: "Running tests in Docker", details: { runner: textOf(d.runner), command: textOf(d.command), timeout_seconds: numOrUndef(d.timeout_seconds) } }];
+      return [{ ...base, role: "tool", title: "Running tests", details: { runner: textOf(d.runner), command: textOf(d.command), timeout_seconds: numOrUndef(d.timeout_seconds) } }];
     case "syntax":
       return [{ ...base, role: "tool", title: `Syntax check: ${textOf(d.kind, 60) || "python"}`, details: { status: d.status, note: textOf(d.note) } }];
     case "mcp": {
@@ -674,7 +673,7 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
         body: textOf(d.error ?? [d.reason, d.next].filter(item => typeof item === "string" && item).join("\n"), 2000) }];
     case "sandbox_secrets": {
       const names = Array.isArray(d.names) ? d.names.filter((n): n is string => typeof n === "string") : [];
-      return [{ ...base, role: "system", title: "Sandbox secrets available", body: names.join(", ") }];
+      return [{ ...base, role: "system", title: "Secrets available to commands", body: names.join(", ") }];
     }
     case "goal_status": {
       const turns = numOrUndef(d.turns) ?? 0, max = numOrUndef(d.max_turns) ?? 0;
@@ -1160,12 +1159,12 @@ export function buildAutomation(input: {
   if (input.mode !== "model" && input.mode !== "agent") throw new Error("Scheduled runs use agent or single-proposal mode.");
   const verification = parseVerification(input.verification);
   if (!input.approveExternal) throw new Error("Approve sending code to your model provider for these runs.");
-  if (verification === "docker" && !input.approveExecution) throw new Error("Approve running tests in Docker for these runs.");
+  if (verification !== "syntax") throw new Error("Scheduled runs use a syntax check.");
   const timeout = Number(String(input.timeoutSeconds ?? "1800").trim());
   if (!Number.isInteger(timeout) || timeout < 60 || timeout > 86400) throw new Error("Timeout must be 60–86400 seconds.");
   const repositories = (input.repositories ?? "").split("\n").map(item => item.trim()).filter(Boolean);
   return {
-    name, schedule, objective, mode: input.mode, verification, approve_external: true, approve_execution: verification === "docker",
+    name, schedule, objective, mode: input.mode, verification, approve_external: true, approve_execution: false,
     timeout_seconds: timeout, ...(repositories.length ? { repositories } : {}), ...(input.source ? { source: input.source } : {}),
     ...(input.mode === "agent" && input.agentProfile ? { agent_profile: input.agentProfile } : {}),
   };
@@ -1255,7 +1254,7 @@ export function parseAutomations(value: unknown): Automation[] {
         (enabled !== true && enabled !== false) || (lastState !== null && typeof lastState !== "string") ||
         (nextRun !== null && typeof nextRun !== "number" && typeof nextRun !== "string") ||
         typeof failures !== "number" || !Number.isInteger(failures) || schedule === null) continue;
-    const run = isRecord(item.run) && (item.run.mode === "model" || item.run.mode === "agent") && (item.run.verification === "syntax" || item.run.verification === "docker")
+    const run = isRecord(item.run) && (item.run.mode === "model" || item.run.mode === "agent") && item.run.verification === "syntax"
       ? { mode: item.run.mode, verification: item.run.verification, approve_external: item.run.approve_external === true, approve_execution: item.run.approve_execution === true,
           ...(typeof item.run.agent_profile === "string" ? { agent_profile: item.run.agent_profile } : {}) } as AutomationRunSettings
       : null;
@@ -1714,7 +1713,7 @@ export function resultStatus(state: string, result?: TaskResult | null): string 
   if (result?.browser_session) return "Workspace browser session ready.";
   if (result && typeof result.error === "string" && result.error) return result.error;
   if (state === "paused") return result?.pause_reason || "Paused. Resume to continue from the exact step where it stopped.";
-  if (result?.tests_verified === true) return `${result.direct === true ? "Local" : "Container"} tests passed. Review the diff; this is not proof of every acceptance criterion.`;
+  if (result?.tests_verified === true) return "Tests passed on this computer. Review the diff; this is not proof of every acceptance criterion.";
     if (state === "completed" && result?.verification_level === "checks") return "Available project checks passed. No automated test suite was detected. Review the changes; this is not test-verified.";
     if (state === "completed" && result?.verification_level === "unavailable") return "Change applied. Automated validation was unavailable; no test or check pass is claimed. Review the recorded limitations.";
   if (result) {

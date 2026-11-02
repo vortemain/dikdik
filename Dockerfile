@@ -1,5 +1,6 @@
 # Dikdik on a server or cloud VM, for one owner. See docs/CLOUD.md.
 # Not yet built or run in this repository's checks (no Docker engine was available).
+# Hosting only: Dikdik itself never runs Docker; tests and commands run on the host.
 FROM python:3.13-slim
 
 RUN apt-get update \

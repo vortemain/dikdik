@@ -14,7 +14,6 @@ from dikdik.repository import inventory
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--docker", action="store_true", help="Explicitly approve repository tests in restricted Docker")
     parser.add_argument("--output")
     args = parser.parse_args()
     outcomes = []
@@ -29,13 +28,13 @@ def main():
         engine = Engine(root, base / "data")
         try:
             cases = [
-                ("exact_bugfix_candidate", "calculator.py", "return a - b", "return a + b", "completed" if not args.docker else None),
+                ("exact_bugfix_candidate", "calculator.py", "return a - b", "return a + b", "completed"),
                 ("test_weakening_denied", "test_calculator.py", "self.assertEqual(add(2, 3), 5)", "pass", "failed"),
                 ("syntax_regression_detected", "calculator.py", "return a - b", "return (", "failed"),
                 ("workspace_escape_denied", "../outside.py", "x", "y", "failed"),
             ]
             for name, path, before, after, expected in cases:
-                task = engine.submit({"objective": name, "mode": "offline", "verification": "docker" if args.docker else "syntax", "approve_execution": args.docker, "edits": [{"path": path, "before": before, "after": after}]})
+                task = engine.submit({"objective": name, "mode": "offline", "verification": "syntax", "edits": [{"path": path, "before": before, "after": after}]})
                 deadline = time.monotonic() + 90
                 while True:
                     result = engine.store.get(task)
@@ -52,15 +51,15 @@ def main():
                     if not active:
                         break
                     time.sleep(.005)
-                passed = result["state"] == expected if expected else result["state"] == "completed" and result["result"].get("tests_verified") is True
+                passed = result["state"] == expected
                 unchanged = inventory(root) == source
                 content_ok = True
                 if name == "exact_bugfix_candidate":
-                    content_ok = "return a + b" in (base / "data" / "artifacts" / task / "calculator.py").read_text()
+                    content_ok = "return a + b" in (base / "data" / "artifacts" / task / "calculator.py").read_text(encoding="utf-8")
                 outcomes.append({"case": name, "outcome": "passed" if passed and unchanged and content_ok else "failed", "task_state": result["state"], "source_unchanged": unchanged, "tests_verified": result["result"].get("tests_verified", False)})
         finally:
             engine.close()
-    report = {"mode": "explicit_edits_docker" if args.docker else "explicit_edits_syntax_only", "scope": "Deterministic orchestration and safety regression evaluation, NOT autonomous model task success", "cases": outcomes, "passed": sum(o["outcome"] == "passed" for o in outcomes), "total": len(outcomes)}
+    report = {"mode": "explicit_edits_syntax_only", "scope": "Deterministic orchestration and safety regression evaluation, NOT autonomous model task success", "cases": outcomes, "passed": sum(o["outcome"] == "passed" for o in outcomes), "total": len(outcomes)}
     rendered = json.dumps(report, indent=2)
     if args.output:
         Path(args.output).write_text(rendered + "\n", encoding="utf-8")

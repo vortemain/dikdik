@@ -1,0 +1,2 @@
+{"objective": "A security review says find_user in users.py is vulnerable to SQL injection. Fix the vulnerability without changing what the function returns for real user names, and add a test for the attack.",
+ "category": "security", "timeout_seconds": 900}

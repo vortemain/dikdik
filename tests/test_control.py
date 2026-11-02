@@ -111,16 +111,16 @@ class ControlTests(unittest.TestCase):
         entered = threading.Event()
         secret = "INTERRUPT_SECRET_MUST_NOT_APPEAR"
 
-        def shell(_workdir, _files, _command, cancel, **_kwargs):
+        def shell(_root, _command, cancel, **_kwargs):
             entered.set()
             self.assertTrue(cancel.wait(3), "interrupt did not reach the active tool")
             return {"status": "cancelled", "exit_code": None, "output": secret, "changed": {}}
 
         first = Script([call(1, "run_command", command="sleep 30")])
         resumed = Script([ModelResponse("Recovered after the interruption.", [])])
-        with patch("dikdik.engine.CompatibleAgentModel", side_effect=[first, resumed]), patch("dikdik.engine.run_shell", side_effect=shell):
-            task = self.engine.submit({"objective": "Run slowly", "mode": "agent", "verification": "docker",
-                                       "approve_external": True, "approve_execution": True})
+        with patch("dikdik.engine.CompatibleAgentModel", side_effect=[first, resumed]), patch("dikdik.engine.local_exec.run", side_effect=shell):
+            task = self.engine.submit({"objective": "Run slowly", "mode": "agent", "verification": "local",
+                                       "approve_external": True, "approve_execution": True, "confirmation": "never"})
             self.assertTrue(entered.wait(2))
             started = time.monotonic()
             self.assertTrue(self.engine.interrupt(task))
@@ -243,7 +243,7 @@ class ControlTests(unittest.TestCase):
         model = Script([call(1, "read_file", path=".env"), ModelResponse("It is excluded, so I will ask.", [])])
         with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
             holder["task"] = task = self.engine.submit(
-                {"objective": "Inspect configuration", "mode": "agent", "verification": "docker",
+                {"objective": "Inspect configuration", "mode": "agent", "verification": "local",
                  "approve_external": True, "approve_execution": True, "confirmation": "risky"})
             worker = threading.Thread(target=decide)
             worker.start()
@@ -258,7 +258,7 @@ class ControlTests(unittest.TestCase):
         model = Script([call(1, "read_file", path=".env")])
         with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
             task = self.engine.submit(
-                {"objective": "Inspect configuration", "mode": "agent", "verification": "docker",
+                {"objective": "Inspect configuration", "mode": "agent", "verification": "local",
                  "approve_external": True, "approve_execution": True, "confirmation": "never"})
             data = self.idle(task)
         self.assertEqual([e for e in data["events"] if e["kind"] == "confirmation_requested"], [])
@@ -300,8 +300,8 @@ class ControlTests(unittest.TestCase):
         model = Script([call(1, "run_command", command="python -m pytest -q"), ModelResponse("Done.", [])])
         ran = []
         with patch("dikdik.engine.CompatibleAgentModel", return_value=model), \
-                patch("dikdik.engine.run_shell", side_effect=lambda *a, **k: ran.append(a[2]) or {"status": "passed", "exit_code": 0, "output": "", "changed": {}}):
-            task = self.engine.submit({"objective": "Check", "mode": "agent", "verification": "docker",
+                patch("dikdik.engine.local_exec.run", side_effect=lambda *a, **k: ran.append(a[1]) or {"status": "passed", "exit_code": 0, "output": ""}):
+            task = self.engine.submit({"objective": "Check", "mode": "agent", "verification": "local",
                                        "approve_external": True, "approve_execution": True, "confirmation": "always"})
             data = self.idle(task)
         self.assertEqual([e for e in data["events"] if e["kind"] == "confirmation_requested"], [])
@@ -313,7 +313,7 @@ class ControlTests(unittest.TestCase):
         self.engine.update_app_settings({"permission_rules": [{"action": "edit", "resource": "calc.py", "effect": "deny"}]})
         model = Script([call(1, "edit_file", path="calc.py", before="a", after="b")])
         with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
-            task = self.engine.submit({"objective": "Change add", "mode": "agent", "verification": "docker",
+            task = self.engine.submit({"objective": "Change add", "mode": "agent", "verification": "local",
                                        "approve_external": True, "approve_execution": True, "confirmation": "always"})
             data = self.idle(task)
         self.assertEqual([e for e in data["events"] if e["kind"] == "confirmation_requested"], [])
@@ -524,8 +524,8 @@ class ControlTests(unittest.TestCase):
         model = Script([call(1, "run_command", command="rm -rf build"), call(2, "run_command", command="ls"), ModelResponse("Done.", [])])
         ran = []
         with patch("dikdik.engine.CompatibleAgentModel", return_value=model), \
-                patch("dikdik.engine.run_shell", side_effect=lambda *a, **k: ran.append(a[2]) or {"status": "passed", "exit_code": 0, "output": "", "changed": {}}):
-            holder["task"] = task = self.engine.submit({"objective": "Clean", "mode": "agent", "verification": "docker",
+                patch("dikdik.engine.local_exec.run", side_effect=lambda *a, **k: ran.append(a[1]) or {"status": "passed", "exit_code": 0, "output": ""}):
+            holder["task"] = task = self.engine.submit({"objective": "Clean", "mode": "agent", "verification": "local",
                                                         "approve_external": True, "approve_execution": True, "confirmation": "always"})
             worker = threading.Thread(target=decide)
             worker.start()
@@ -693,7 +693,7 @@ class ControlTests(unittest.TestCase):
 
     # --- settings -------------------------------------------------------------------------------------
     def test_app_settings(self):
-        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": True, "notifications": "background", "notification_previews": False, "router": "", "title_model": "auto", "event_retention_seconds": 0, "permission_rules": [], "formatter": {"enabled": False, "command": ""}, "warming": {"enabled": False, "interval_seconds": 240, "duration_seconds": 1800}})
+        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": True, "notifications": "background", "notification_previews": False, "router": "", "title_model": "auto", "event_retention_seconds": 0, "permission_rules": [], "formatter": {"enabled": False, "command": ""}, "warming": {"enabled": False, "interval_seconds": 240, "duration_seconds": 1800}, "local_limits": {"memory_mb": 8192, "processes": 1024}})
         self.assertEqual(self.engine.update_app_settings({"confirmation": "risky"})["confirmation"], "risky")
         for bad in ({"confirmation": "sometimes"}, {"condenser": "yes"}, {"theme": "dark"}, {}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):

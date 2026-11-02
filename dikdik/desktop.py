@@ -105,7 +105,7 @@ def run(server, link: str, data: Path, webview=None) -> None:
             for method in ("restore", "show"):
                 try:
                     getattr(main_window, method)()
-                except Exception:
+                except Exception:  # older pywebview builds lack this window method
                     pass
             if sys.platform == "win32":
                 try:
@@ -115,7 +115,7 @@ def run(server, link: str, data: Path, webview=None) -> None:
                     if hwnd:
                         user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
                         user32.SetForegroundWindow(hwnd)
-                except Exception:
+                except Exception:  # maximizing is cosmetic; the window is already open
                     pass
             if notifications:
                 notifications.start()

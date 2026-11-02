@@ -32,9 +32,11 @@ def main():
     shutil.copyfile(ROOT / "node_modules/highlight.js/LICENSE", WEB / "assets/LICENSE-highlight.js.txt")
     providers = WEB / "assets/providers"
     providers.mkdir(parents=True, exist_ok=True)
-    names = "openrouter openai anthropic gemini-color deepseek-color grok mistral-color groq cerebras-color together-color fireworks-color moonshot zai qwen-color perplexity-color ollama lmstudio azure-color".split()
+    names = "nebius openrouter openai anthropic gemini-color deepseek-color xai mistral-color groq cerebras-color together-color fireworks-color moonshot zai qwen-color perplexity-color ollama lmstudio azure-color".split()
     for name in names:
         shutil.copyfile(ROOT / "node_modules/@lobehub/icons-static-svg/icons" / (name + ".svg"), providers / (name + ".svg"))
+    xai = providers / "xai.svg"  # the package titles the xAI company mark "Grok"
+    xai.write_text(xai.read_text(encoding="utf-8").replace("<title>Grok</title>", "<title>xAI</title>"), encoding="utf-8", newline="\n")
     print(f"Bundled {len(definitions)} file/folder symbols and {len(names)} provider logos.")
 
 

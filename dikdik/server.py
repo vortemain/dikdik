@@ -6,6 +6,7 @@ import hmac
 import html
 import importlib.util
 import json
+import logging
 import os
 import platform
 import secrets
@@ -23,6 +24,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .engine import ApplyConflict, Engine, TERMINAL
+from .store import WORKSPACE_CLAUSES
 from . import __version__ as DIKDIK_VERSION
 from .control import IMAGE_TYPES, workspace_image, workspace_images
 from . import gitops
@@ -37,6 +39,8 @@ from .config import check_config_or_exit
 from .projects import Projects, check_location, pick_folder, list_folders
 from . import remote as remote_mode
 from . import git_accounts
+from . import logs
+from . import sql
 
 
 WEB = Path(__file__).parent / "web"
@@ -57,6 +61,8 @@ STATIC = {
        for path in (WEB / "assets").glob("*/*.svg") if path.is_file() and not path.is_symlink()},
 }
 SESSION_AGE = 30 * 24 * 3600
+PAIRING_AGE = 600  # seconds a device-link code stays valid
+PAIRING_FAILURES = 5  # wrong codes before every outstanding code is revoked
 PAGE_CSP = ("default-src 'self'; style-src 'self'; script-src 'self'; font-src 'self'; img-src 'self' data:; "
             "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 # An extension app is untrusted page content. `sandbox` gives it an opaque origin even
@@ -162,9 +168,12 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
     projects = Projects(engine, on_switch=wiring.wire, limit=remote.projects_root if remote else None)
     engine, routes, gateway = _Live(wiring, "engine"), _Live(wiring, "routes"), _Live(wiring, "gateway")
     expected = ("Bearer " + token).encode("utf-8")
+    logs.register_secret(token)
     started_at = time.monotonic()
-    # WP15: device-link pairing codes (short-lived, in-memory).
+    # WP15: device-link pairing codes (short-lived, in-memory). Only the signed-in owner
+    # mints one; redeeming it yields the owner token, so wrong guesses revoke them all.
     pairing_codes: dict[str, float] = {}
+    pairing_failures = {"count": 0}
     pairing_lock = threading.Lock()
     activity = {"last": time.monotonic()}
     server_state = ServerState(ready=not os.environ.get("DIKDIK_DORMANT", ""))
@@ -285,6 +294,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 self.reply(429, {"error": "Too many failed sign-ins; wait ten minutes"})
                 return
             if not isinstance(supplied, str) or not hmac.compare_digest(("Bearer " + supplied).encode("utf-8"), expected):
+                logs.log("sign_in_failed", logging.WARNING, client=client, route="/api/session")
                 if remote:
                     remote.record_failure(client)
                 self.reply(401, {"error": "That sign-in link is not valid for this server. Use the one printed in the Dikdik terminal."})
@@ -509,6 +519,19 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(*planning)
                     return
                 parts = path.split("/")
+                if len(parts) == 5 and parts[:3] == ["", "api", "tasks"] and parts[4] == "requirements":
+                    self.reply(200, engine.store.requirements(parts[3]))  # KeyError -> 404 below
+                    return
+                if path == "/api/visual-baselines":
+                    self.reply(200, {"baselines": engine.visual_baselines()})
+                    return
+                if path == "/api/visual-baselines/image":
+                    query = parse_qs(urlsplit(self.path).query)
+                    try:
+                        self.reply(200, engine.visual_image(query.get("view", [""])[0], query.get("state", ["accepted"])[0]), "image/png")
+                    except KeyError:
+                        self.reply(404, {"error": "No saved capture for that view"})
+                    return
                 if len(parts) == 4 and parts[:3] == ["", "api", "previews"]:
                     try:
                         self.reply(200, previews.get(parts[3], str(engine.root)), "text/html; charset=utf-8", csp=PREVIEW_CSP)
@@ -537,6 +560,8 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                             "event_retention_seconds": {"type": "integer", "minimum": 0, "maximum": 86400 * 30},
                             "permission_rules": {"type": "array", "items": {"type": "object"}},
                             "formatter": {"type": "object"},
+                            "local_limits": {"type": "object", "properties": {"memory_mb": {"type": "integer", "minimum": 0},
+                                                                             "processes": {"type": "integer", "minimum": 0}}},
                             "warming": {"type": "object"},
                         },
                         "defaults": {k: v for k, v in engine.app_settings().items()},
@@ -598,9 +623,9 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if path == "/api/tasks/count":
                     mine, mine_params = engine.store._mine()
                     with engine.store.connect() as db:
-                        total = db.execute(f"SELECT COUNT(*) FROM tasks WHERE {mine}", mine_params).fetchone()[0]
+                        total = db.execute(f"SELECT COUNT(*) FROM tasks WHERE {sql.clause(mine, WORKSPACE_CLAUSES)}", mine_params).fetchone()[0]
                         by_state = {row["state"]: row["count"] for row in
-                                    db.execute(f"SELECT state, COUNT(*) AS count FROM tasks WHERE {mine} GROUP BY state", mine_params)}
+                                    db.execute(f"SELECT state, COUNT(*) AS count FROM tasks WHERE {sql.clause(mine, WORKSPACE_CLAUSES)} GROUP BY state", mine_params)}
                     self.reply(200, {"total": total, "by_state": by_state})
                     return
                 if path == "/api/tasks/search":
@@ -608,7 +633,6 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     q = query.get("q", [""])[0]
                     state_filter = query.get("state", [""])[0]
                     with engine.store.connect() as db:
-                        sql = "SELECT id,created,state,request,title,pinned,archived,folder,tags FROM tasks"
                         mine, mine_params = engine.store._mine()
                         params: list = [*mine_params]
                         conditions = [mine]
@@ -618,9 +642,9 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                         if state_filter:
                             conditions.append("state=?")
                             params.append(state_filter)
-                        sql += " WHERE " + " AND ".join(conditions)
-                        sql += " ORDER BY pinned DESC, created DESC LIMIT 100"
-                        rows = db.execute(sql, params).fetchall()
+                        rows = db.execute("SELECT id,created,state,request,title,pinned,archived,folder,tags FROM tasks WHERE "
+                                          + sql.clauses(conditions, WORKSPACE_CLAUSES | {"title LIKE ?", "state=?"})
+                                          + " ORDER BY pinned DESC, created DESC LIMIT 100", params).fetchall()
                     tasks = [{"id": r["id"], "created": r["created"], "state": r["state"],
                               "title": r["title"] or "", "pinned": bool(r["pinned"]),
                               "archived": bool(r["archived"]), "folder": r["folder"] or "",
@@ -748,6 +772,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
             except ValueError as exc:
                 self.reply(400, {"error": str(exc)})
             except OSError:
+                logs.log("request_failed", logging.ERROR, exc_info=True, method="GET", path=urlsplit(self.path).path)
                 self.reply(500, {"error": "Repository or state unavailable"})
 
         def do_POST(self):
@@ -757,23 +782,9 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if self.same_origin():
                     self.session_request()
                 return
-            if path == "/api/pair":
-                import secrets as _secrets
-                code = _secrets.token_hex(3).upper()  # 6-char hex code
-                with pairing_lock:
-                    pairing_codes[code] = time.monotonic() + 600  # 10-minute expiry
-                self.reply(200, {"code": code, "expires_in": 600})
-                return
             if path == "/api/pair/verify":
-                length = int(self.headers.get("Content-Length", "0"))
-                body = json.loads(self.rfile.read(length)) if length else {}
-                code = str(body.get("code") or "").upper()
-                with pairing_lock:
-                    expiry = pairing_codes.pop(code, None)
-                if expiry is None or time.monotonic() > expiry:
-                    self.reply(401, {"error": "Invalid or expired pairing code"})
-                    return
-                self.reply(200, {"token": expected.decode("utf-8")[7:], "paired": True})
+                if self.same_origin():
+                    self.pair_verify()
                 return
             if not self.authorized():
                 return
@@ -785,6 +796,12 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if length > limit:
                     raise ValueError(f"Request must contain at most {limit} bytes")
                 body = json.loads(self.rfile.read(length)) if length else {}
+                if path == "/api/pair":
+                    self.pair_create()
+                    return
+                if path == "/api/visual-baselines/accept":
+                    self.reply(200, engine.accept_visual(body.get("view") if isinstance(body, dict) else None))
+                    return
                 if path == "/api/desktop/notifications/test":
                     if self.api_key is not None:
                         raise PermissionError("Use the desktop session to test native notifications")
@@ -1037,6 +1054,60 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
             except (ValueError, TypeError, TimeoutError) as exc:
                 self.reply(400, {"error": str(exc)})
 
+        def pair_create(self):
+            # A code redeems for the owner token, so an API key (even admin) may not mint one.
+            if self.api_key is not None:
+                self.reply(403, {"error": "Pair a device from the signed-in Dikdik session"})
+                return
+            code = secrets.token_hex(4).upper()
+            now = time.monotonic()
+            with pairing_lock:
+                for stale in [c for c, expiry in pairing_codes.items() if expiry < now]:
+                    del pairing_codes[stale]
+                if len(pairing_codes) >= 5:
+                    self.reply(429, {"error": "Too many pairing codes are outstanding; wait for one to expire"})
+                    return
+                pairing_codes[code] = now + PAIRING_AGE
+                pairing_failures["count"] = 0
+            self.reply(200, {"code": code, "expires_in": PAIRING_AGE})
+
+        def pair_verify(self):
+            client = self.client_address[0] if self.client_address else "?"
+            if remote and not remote.allow_sign_in_attempt(client):
+                self.refuse(429, {"error": "Too many failed sign-ins; wait ten minutes"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = -1
+            if not 0 < length <= 1024:
+                # refuse() drains a small unread body first: on Windows an unread body resets the
+                # connection and the client can lose the 400 before reading it.
+                self.refuse(400, {"error": "Request must contain 1–1024 bytes"})
+                return
+            try:
+                body = json.loads(self.rfile.read(length))
+            except (ValueError, TypeError, TimeoutError) as exc:
+                self.reply(400, {"error": str(exc)})
+                return
+            code = body.get("code") if isinstance(body, dict) else None
+            code = code.strip().upper() if isinstance(code, str) else ""
+            with pairing_lock:
+                expiry = pairing_codes.pop(code, None)
+                valid = expiry is not None and time.monotonic() <= expiry
+                if not valid:
+                    pairing_failures["count"] += 1
+                    if pairing_failures["count"] >= PAIRING_FAILURES:
+                        pairing_codes.clear()  # stop guessing: the owner mints a fresh code
+            if not valid:
+                logs.log("pairing_failed", logging.WARNING, client=client, revoked=not pairing_codes)
+                if remote:
+                    remote.record_failure(client)
+                self.reply(401, {"error": "Invalid or expired pairing code"})
+                return
+            logs.log("device_paired", client=client)
+            self.reply(200, {"token": token, "paired": True})
+
         def session_request(self):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -1153,7 +1224,7 @@ def early_exits(parser: argparse.ArgumentParser) -> None:
     if "--info" in argv:
         print(json.dumps({
             "version": DIKDIK_VERSION, "python": platform.python_version(),
-            "platform": platform.platform(), "docker": shutil.which("docker") is not None,
+            "platform": platform.platform(),
             "rust_indexer": importlib.util.find_spec("dikdik.dikdik_index") is not None
                             or importlib.util.find_spec("dikdik_index") is not None,
         }, indent=2))
@@ -1245,6 +1316,8 @@ def main(*, desktop: bool = False):
             parser.error(f"Port {args.port} is not available. Stop whatever is using it or pick another port.")
         raise
     url = remote.public_url if remote else f"http://127.0.0.1:{server.server_port}"
+    log_path = logs.configure(data)
+    logs.log("server_started", version=DIKDIK_VERSION, port=server.server_port, remote=bool(remote), indexer=INDEXER)
     # The token rides in the URL fragment, which browsers never send to a server.
     link = f"{url}/#token={token}"
     print(f"Dikdik is running at {url}\nProject: {root}"
@@ -1266,6 +1339,8 @@ def main(*, desktop: bool = False):
     finally:
         server.server_close()
         server.projects.engine.close()
+        logs.log("server_stopped")
+        logs.close(log_path)
 
 
 def last_project(data: Path) -> Path | None:

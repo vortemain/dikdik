@@ -28,8 +28,8 @@ describe("profile editor", () => {
 });
 
 describe("requests and events", () => {
-  const agent = { objective: "x", mode: "agent" as const, verification: "docker" as const, approveExecution: true, approveExternal: true, edits: "[]" };
-  test("sandbox secrets ride only on approved Docker agent runs", () => {
+  const agent = { objective: "x", mode: "agent" as const, verification: "local" as const, approveExecution: true, approveExternal: true, edits: "[]" };
+  test("command secrets ride only on approved agent runs on this computer", () => {
     expect(buildTaskRequest({ ...agent, approveSecrets: true }).approve_secrets).toBe(true);
     expect(buildTaskRequest({ ...agent, verification: "syntax", approveSecrets: true })).not.toHaveProperty("approve_secrets");
     expect(buildTaskRequest({ ...agent, approveSecrets: false })).not.toHaveProperty("approve_secrets");

@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from . import migrations
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_FILES, MAX_BYTES = 50, 512 * 1024
@@ -154,9 +155,9 @@ class SkillStore:
         self.cache = Path(data) / "marketplace-cache"
         self.store = store
         self.root.mkdir(parents=True, exist_ok=True)
-        with store.connect() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS marketplaces (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, source TEXT NOT NULL, "
-                       "repo_path TEXT, synced REAL, status TEXT, created REAL NOT NULL)")
+        migrations.ensure(store.path, "marketplaces", [(1, "skill marketplaces", migrations.script(
+            "CREATE TABLE IF NOT EXISTS marketplaces (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, source TEXT NOT NULL, "
+            "repo_path TEXT, synced REAL, status TEXT, created REAL NOT NULL);"))])
 
     # --- installed skills ------------------------------------------------------------
     def record(self, name: str) -> dict:

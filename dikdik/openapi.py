@@ -26,10 +26,10 @@ OPENAPI = {
             "SubmitRequest": {"type": "object", "properties": {
                 "objective": {"type": "string", "minLength": 1, "maxLength": 4000},
                 "mode": {"type": "string", "enum": ["offline", "model", "agent", "plan", "acp"]},
-                "verification": {"type": "string", "enum": ["syntax", "docker"]},
+                "verification": {"type": "string", "enum": ["syntax", "local"]},
                 "approve_external": {"type": "boolean"}, "approve_execution": {"type": "boolean"},
                 "approve_browser": {"type": "boolean"}, "approve_secrets": {"type": "boolean"},
-                "approve_host": {"type": "boolean", "description": "acp mode: the agent runs on this machine, outside Docker"},
+                "approve_host": {"type": "boolean", "description": "acp mode: the agent runs on this machine"},
                 "acp_agent": {"type": "string", "description": "acp mode: the ACP agent profile id"},
                 "edits": {"type": "array", "items": {"type": "object"}},
                 "model_profile": {"type": "string"}, "agent_profile": {"type": "string"},

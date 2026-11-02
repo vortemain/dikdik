@@ -10,6 +10,8 @@ import uuid
 
 from .model_catalog import approved_endpoints
 from .profiles import PROVIDERS, ApiError, _endpoint_valid
+from . import sql
+from . import migrations
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS connections (
@@ -29,8 +31,7 @@ def secret_ref(connection_id: str) -> str:
 class ConnectionStore:
     def __init__(self, store, secrets):
         self.store, self.secrets = store, secrets
-        with store.connect() as db:
-            db.execute(SCHEMA)
+        migrations.ensure(store.path, "connections", [(1, "provider connections", migrations.script(SCHEMA))])
 
     @staticmethod
     def _name(value) -> str:
@@ -80,7 +81,7 @@ class ConnectionStore:
             if db.execute("SELECT COUNT(*) FROM connections").fetchone()[0] >= MAX_CONNECTIONS:
                 raise ApiError(409, f"Provider connection limit reached ({MAX_CONNECTIONS}). Delete one before adding another")
         if key:
-            self.secrets.set_session(secret_ref(connection_id), key)
+            self.secrets.set(secret_ref(connection_id), key)  # sealed on disk, like every saved key
         with self.store.connect() as db:
             db.execute("INSERT INTO connections(id,name,provider,endpoint,created) VALUES(?,?,?,?,?)",
                        (connection_id, name, body["provider"], endpoint, time.time()))
@@ -102,10 +103,10 @@ class ConnectionStore:
                 raise ApiError(400, "Endpoint must be an http(s) loopback URL or an approved public provider URL")
             changes["endpoint"] = endpoint
         if body.get("api_key"):  # blank keeps the current key
-            self.secrets.set_session(secret_ref(connection_id), self._key(body["api_key"]))
+            self.secrets.set(secret_ref(connection_id), self._key(body["api_key"]))
         with self.store.connect() as db:
             for column, value in changes.items():
-                db.execute(f"UPDATE connections SET {column}=? WHERE id=?", (value, connection_id))
+                db.execute(f"UPDATE connections SET {sql.assign([column], ('name', 'endpoint'))} WHERE id=?", (value, connection_id))
         return {"id": connection_id, "rotated": bool(body.get("api_key"))}
 
     def delete(self, connection_id: str):

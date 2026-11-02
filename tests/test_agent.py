@@ -158,6 +158,24 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(tool_results[0]["id"], calls[0].id)
         self.assertEqual(tool_results[1]["id"], calls[1].id)
 
+    def test_parallel_reads_ask_each_confirmation_once(self):
+        # Regression: a batched read was confirmed before dispatch and again in order,
+        # so a guarded read (such as .env in Ask mode) prompted the user twice.
+        calls = [self.call("read_file", path="app.py"), self.call("read_file", path="tests/test_app.py")]
+        asked = []
+        def confirm(call):
+            asked.append(call.id)
+            return (call.id == calls[0].id, "User denied")
+        model = ScriptedModel([calls, [self.call("finish")]])
+        run_agent(self.original, "Read two files", model, self.verify,
+                  lambda kind, data: self.events.append((kind, data)), self.cancel,
+                  AgentBudget(max_model_calls=2, parallel_reads=True), confirm=confirm)
+        self.assertEqual(asked.count(calls[0].id), 1)
+        self.assertEqual(asked.count(calls[1].id), 1)
+        ends = {e["id"]: e for k, e in self.events if k == "tool" and e.get("phase") == "end"}
+        self.assertFalse(ends[calls[0].id].get("failed", False))
+        self.assertTrue(ends[calls[1].id]["failed"])  # the denial still applies
+
     def test_strict_arguments(self):
         bad = [self.call("read_file", path="app.py", max_lines=True),
                self.call("read_file", path="app.py", max_lines=201),

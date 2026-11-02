@@ -5,8 +5,8 @@ is the client: it sends `initialize`, `session/new` and `session/prompt`, receiv
 `session/update` notifications (message chunks, thoughts, tool calls, plans) and
 answers the agent's own requests for files and permission.
 
-The agent is a program on the host, outside Docker, so it never sees the real
-workspace. It runs in a throwaway copy with a minimal environment: file requests
+The agent is a program on the host and never sees the real workspace. It runs
+in a throwaway copy with a minimal environment: file requests
 are confined to that copy, and the engine turns whatever the copy holds at the end
 into an ordinary candidate diff that the user reviews and applies.
 """
@@ -99,7 +99,7 @@ class AcpSession:
         except subprocess.TimeoutExpired:
             pass
         if sys.platform == "win32":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True, check=False)
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True, check=False, timeout=30)
         else:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -265,7 +265,7 @@ class AcpSession:
         if self.on_permission is not None:
             try:
                 self.on_permission(params.get("toolCall") or {}, chosen)
-            except Exception:
+            except Exception:  # the permission display is informational; the protocol answer was already chosen
                 pass
         if chosen is None:
             return {"outcome": "cancelled"}

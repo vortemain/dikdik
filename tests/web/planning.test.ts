@@ -2,10 +2,10 @@ import { expect, test } from 'bun:test';
 import { buildTaskRequest, eventToMessages, modePolicy, parsePlan, taskChecklist, type TaskEvent } from '../../dikdik/web/contracts';
 
 test('planning narrows stale browser and execution approvals', () => {
-  const request = buildTaskRequest({ objective: 'Plan a change', mode: 'plan', verification: 'docker', approveExternal: true, approveExecution: true, approveBrowser: true, edits: '' });
+  const request = buildTaskRequest({ objective: 'Plan a change', mode: 'plan', verification: 'local', approveExternal: true, approveExecution: true, approveBrowser: true, edits: '' });
   expect(request).toMatchObject({ mode: 'plan', verification: 'syntax', approve_execution: false, approve_external: true });
   expect(request).not.toHaveProperty('approve_browser');
-  expect(modePolicy('plan', 'docker').locksVerification).toBe(true);
+  expect(modePolicy('plan', 'local').locksVerification).toBe(true);
 });
 
 test('plan parser validates task scope and revision counters', () => {

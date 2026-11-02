@@ -11,6 +11,7 @@ disable the automation and emit an `automation_disabled` event.
 The scheduler thread is started with the engine and joined on close().
 """
 
+import logging
 import json
 import subprocess
 import re
@@ -20,6 +21,9 @@ import uuid
 from pathlib import Path
 
 from .cron import next_after as cron_next_after, parse as parse_cron, timezone as cron_timezone
+from . import sql
+from . import migrations
+from . import logs
 
 MAX_CONSECUTIVE_FAILURES = 3
 MIN_INTERVAL = 60
@@ -89,13 +93,12 @@ def validate_run(body: dict) -> dict:
     verification = body.get("verification", "syntax")
     if mode not in {"model", "agent"}:
         raise ValueError("Scheduled runs use agent or single-proposal mode")
-    if verification not in {"syntax", "docker"}:
-        raise ValueError("Choose syntax or docker verification")
+    # Unattended runs never execute commands; they propose a syntax-checked candidate for review.
+    if verification != "syntax":
+        raise ValueError("Scheduled runs use syntax verification")
     if body.get("approve_external") is not True:
         raise ValueError("Approve sending code to your model provider for these scheduled runs")
-    if verification == "docker" and body.get("approve_execution") is not True:
-        raise ValueError("Approve running tests in Docker for these scheduled runs")
-    run = {"mode": mode, "verification": verification, "approve_external": True, "approve_execution": verification == "docker"}
+    run = {"mode": mode, "verification": verification, "approve_external": True, "approve_execution": False}
     profile = body.get("agent_profile")
     if profile not in (None, ""):
         if not isinstance(profile, str) or mode != "agent":
@@ -141,6 +144,38 @@ def next_after(schedule: dict, after: float) -> float:
     return candidate
 
 
+def _baseline(db) -> None:
+    migrations.script(_SCHEMA)(db)
+    # Added after the first release: the run request (mode + approvals). Old rows
+    # have none and stay paused until the user edits them and approves.
+    for column, statement in (
+            ("request", "ALTER TABLE automations ADD COLUMN request TEXT"),
+            ("repositories", "ALTER TABLE automations ADD COLUMN repositories TEXT"),
+            ("timeout_seconds", "ALTER TABLE automations ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 1800"),
+            ("source", "ALTER TABLE automations ADD COLUMN source TEXT NOT NULL DEFAULT 'custom'"),
+            ("event_cursor", "ALTER TABLE automations ADD COLUMN event_cursor TEXT"),
+            ("updated", "ALTER TABLE automations ADD COLUMN updated REAL")):
+        migrations.add_column(db, "automations", column, statement)
+    db.execute("UPDATE automations SET updated=created WHERE updated IS NULL")
+
+
+def _no_docker(db) -> None:
+    """The Docker sandbox was removed: saved runs that used it now propose a syntax-checked
+    candidate instead (never more execution than the user approved)."""
+    for automation_id, raw in db.execute("SELECT id,request FROM automations WHERE request IS NOT NULL").fetchall():
+        try:
+            run = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(run, dict) and run.get("verification") == "docker":
+            run.update(verification="syntax", approve_execution=False)
+            db.execute("UPDATE automations SET request=? WHERE id=?", (json.dumps(run), automation_id))
+
+
+STEPS = [(1, "automations, runs and drafts with request and timing columns", _baseline),
+         (2, "runs that used the removed Docker sandbox become syntax-checked", _no_docker)]
+
+
 class AutomationScheduler:
     def __init__(self, engine, poll_seconds: float = 1.0, clock=time.time):
         self.engine = engine
@@ -150,21 +185,7 @@ class AutomationScheduler:
         self.started_at = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        with self.store.connect() as db:
-            db.executescript(_SCHEMA)
-            # Added after the first release: the run request (mode + approvals). Old rows
-            # have none and stay paused until the user edits them and approves.
-            columns = {row["name"] for row in db.execute("PRAGMA table_info(automations)")}
-            migrations = (
-                ("request", "TEXT"), ("repositories", "TEXT"),
-                ("timeout_seconds", "INTEGER NOT NULL DEFAULT 1800"),
-                ("source", "TEXT NOT NULL DEFAULT 'custom'"), ("event_cursor", "TEXT"),
-                ("updated", "REAL"),
-            )
-            for name, kind in migrations:
-                if name not in columns:
-                    db.execute(f"ALTER TABLE automations ADD COLUMN {name} {kind}")
-            db.execute("UPDATE automations SET updated=created WHERE updated IS NULL")
+        migrations.ensure(self.store.path, "automations", STEPS)
 
     # --- lifecycle -----------------------------------------------------
     def start(self):
@@ -181,8 +202,8 @@ class AutomationScheduler:
         while not self._stop.wait(self.poll_seconds):
             try:
                 self.tick()
-            except Exception:
-                pass  # never kill the thread; the next tick retries
+            except Exception:  # never kill the thread; the next tick retries
+                logs.log("automation_tick_failed", logging.ERROR, exc_info=True)
 
     def _event_revision(self, schedule: dict) -> str | None:
         """Resolve a local Git event without invoking a shell or any hooks."""
@@ -289,7 +310,7 @@ class AutomationScheduler:
                 raise ValueError("An automation with this name already exists")
             for key in ("name", "objective"):
                 if key in fields:
-                    db.execute(f"UPDATE automations SET {key}=? WHERE id=?", (fields[key], automation_id))
+                    db.execute(f"UPDATE automations SET {sql.assign([key], ('name', 'objective'))} WHERE id=?", (fields[key], automation_id))
             if "enabled" in fields:
                 db.execute("UPDATE automations SET enabled=?, failures=CASE WHEN ? THEN 0 ELSE failures END WHERE id=?", (int(fields["enabled"]), int(fields["enabled"]), automation_id))
             if "run" in fields:

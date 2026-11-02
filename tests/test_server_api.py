@@ -310,36 +310,79 @@ class ServerApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(all(t["state"] == "completed" for t in data["tasks"]))
 
+    def test_requirements_route(self):
+        task = self.make_task()
+        status, body = self.call("GET", f"/api/tasks/{task}/requirements")
+        self.assertEqual((status, json.loads(body)), (200, {"revision": 0, "requirements": []}))
+        self.engine.store.event(task, "requirements", {"requirements": [
+            {"id": "REQ-1", "description": "x", "kind": "explicit", "priority": "must", "acceptance": [], "tests": []}]})
+        status, body = self.call("GET", f"/api/tasks/{task}/requirements")
+        self.assertEqual(json.loads(body)["requirements"][0]["id"], "REQ-1")
+        self.assertEqual(self.call("GET", "/api/tasks/missing/requirements")[0], 404)
+
     # --- WP15: device-link pairing -----------------------------------------------
-    def test_pairing_code_and_verify(self):
-        # The pairing endpoints are pre-auth: no Authorization header needed.
+    def anonymous(self, path, body, host=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
-        conn.request("POST", "/api/pair", body=json.dumps({}), headers={"Content-Type": "application/json"})
+        headers = {"Content-Type": "application/json"}
+        if host:  # what a DNS-rebinding page on another name would send
+            headers.update({"Host": host, "Origin": "http://" + host})
+        conn.request("POST", path, body=json.dumps(body), headers=headers)
         r = conn.getresponse()
-        pair_body = json.loads(r.read())
+        data = r.read()
         conn.close()
-        self.assertEqual(r.status, 200)
-        self.assertTrue(pair_body["code"])
+        return r.status, json.loads(data) if data else {}
+
+    def test_pairing_code_and_verify(self):
+        status, pair_body = self.call("POST", "/api/pair", {})
+        pair_body = json.loads(pair_body)
+        self.assertEqual(status, 200)
+        self.assertRegex(pair_body["code"], r"^[0-9A-F]{8}$")
         self.assertEqual(pair_body["expires_in"], 600)
 
-        # Verify the code to get a token
-        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
-        conn.request("POST", "/api/pair/verify", body=json.dumps({"code": pair_body["code"]}),
-                       headers={"Content-Type": "application/json"})
-        r = conn.getresponse()
-        verify_body = json.loads(r.read())
-        conn.close()
-        self.assertEqual(r.status, 200)
+        # The new device has no credentials yet; the code alone redeems once.
+        status, verify_body = self.anonymous("/api/pair/verify", {"code": pair_body["code"].lower()})
+        self.assertEqual(status, 200)
         self.assertTrue(verify_body["paired"])
         self.assertEqual(verify_body["token"], "test-token")
+        self.assertEqual(self.anonymous("/api/pair/verify", {"code": pair_body["code"]})[0], 401)
+        self.assertEqual(self.anonymous("/api/pair/verify", {"code": "BADCODE1"})[0], 401)
 
-        # An invalid code is rejected
+    def test_pairing_code_requires_the_signed_in_owner(self):
+        # Regression: minting was pre-auth, so anyone who reached the port got the owner token.
+        status, body = self.anonymous("/api/pair", {})
+        self.assertEqual(status, 401)
+        self.assertNotIn("code", body)
+        status, body = self.call("POST", "/api/keys", {"name": "ops", "scopes": ["admin"]})
+        key = json.loads(body)["token"]
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
-        conn.request("POST", "/api/pair/verify", body=json.dumps({"code": "BADCOD"}),
-                       headers={"Content-Type": "application/json"})
+        conn.request("POST", "/api/pair", body="{}", headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
         r = conn.getresponse()
+        r.read()
         conn.close()
-        self.assertEqual(r.status, 401)
+        self.assertEqual(r.status, 403)  # an API key must not escalate to the owner token
+
+    def test_pairing_verify_rejects_foreign_host(self):
+        code = json.loads(self.call("POST", "/api/pair", {})[1])["code"]
+        status, body = self.anonymous("/api/pair/verify", {"code": code}, host=f"attacker.example:{self.server.server_port}")
+        self.assertEqual(status, 403)
+        self.assertNotIn("token", body)
+        self.assertEqual(self.anonymous("/api/pair/verify", {"code": code})[0], 200)  # not consumed by the refusal
+
+    def test_pairing_codes_are_revoked_after_repeated_guesses(self):
+        code = json.loads(self.call("POST", "/api/pair", {})[1])["code"]
+        for guess in range(5):
+            self.assertEqual(self.anonymous("/api/pair/verify", {"code": f"0000000{guess}"})[0], 401)
+        self.assertEqual(self.anonymous("/api/pair/verify", {"code": code})[0], 401)
+        fresh = json.loads(self.call("POST", "/api/pair", {})[1])["code"]
+        self.assertEqual(self.anonymous("/api/pair/verify", {"code": fresh})[0], 200)
+
+    def test_pairing_verify_bounds_its_body(self):
+        self.assertEqual(self.anonymous("/api/pair/verify", {"code": "A" * 2000})[0], 400)
+        self.assertEqual(self.anonymous("/api/pair/verify", ["not", "an", "object"])[0], 401)
+        for _ in range(4):
+            self.call("POST", "/api/pair", {})
+        self.assertEqual(self.call("POST", "/api/pair", {})[0], 200)
+        self.assertEqual(self.call("POST", "/api/pair", {})[0], 429)  # at most five outstanding
 
     # --- WP16: agent-driven browser tools in agent_info -------------------------
     def test_agent_info_includes_browser_action_tools(self):

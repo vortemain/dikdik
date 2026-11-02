@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from . import migrations
 
 
 NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
@@ -14,14 +15,13 @@ SEGMENT = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 class AutomationGitSync:
     def __init__(self, engine, automations):
         self.engine, self.store, self.automations = engine, engine.store, automations
-        with self.store.connect() as db:
-            db.executescript("""
+        migrations.ensure(self.store.path, "automation_git_sync", [(1, "automation Git sync state", migrations.script("""
                 CREATE TABLE IF NOT EXISTS automation_git_sync (
                     id INTEGER PRIMARY KEY CHECK(id=1), repository TEXT NOT NULL,
                     directory TEXT NOT NULL, branch TEXT NOT NULL, remote TEXT NOT NULL,
                     last_manifest TEXT, last_revision TEXT, updated REAL NOT NULL
                 );
-            """)
+            """))])
 
     def _git(self, repository: Path, *args: str, check=True):
         try:

@@ -34,7 +34,7 @@ export function contextLabel(tokens: number | null): string {
 
 export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider?: () => string | null }): () => Promise<void> {
   const { request, make, message } = deps;
-  let providers: CatalogProvider[] = [], selected = "", current = "", query = "", generation = 0;
+  let providers: CatalogProvider[] = [], selected = "", current = "", currentModel = "", currentProvider = "", query = "", generation = 0;
   let researchReady = false;
   const live = new Map<string, LiveModel[]>();
   const loading = new Set<string>(), errors = new Map<string, string>();
@@ -52,12 +52,13 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
     providers = catalog.order.map(id => catalog.providers[id]!).filter(Boolean);
     generation++; live.clear(); loading.clear(); errors.clear();
     if (root.dataset.selectedProvider) { selected = root.dataset.selectedProvider; delete root.dataset.selectedProvider; }
-    current = model.configured ? `${model.model ?? ""}${model.profile ? ` · ${model.profile}` : ""}` : "";
+    current = model.configured ? `${model.model ?? ""}${model.provider_name ? ` · ${model.provider_name}` : ""}` : "";
+    currentModel = model.configured ? model.model ?? "" : "";
+    currentProvider = model.configured ? model.provider_name ?? "" : "";
     if (!selected && !current) selected = catalog.default_provider;
     const wanted = deps.takeProvider?.();
     if (wanted && providers.some(p => p.id === wanted)) { selected = wanted; query = ""; }
     render();
-    if (wanted) setTimeout(reveal, 50);
     const provider = providers.find(p => p.id === selected);
     if (provider) void fetchModels(provider);
   }
@@ -90,26 +91,38 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
     const text = make("span", "provider-model-text");
     text.append(make("strong", "", id));
     if (detail) text.append(make("small", "", detail));
-    const useButton = button(!supported ? "Not chat" : provider.connection || provider.no_key ? "Use" : "Connect first", "ghost small", () => {
+    const inUse = supported && id === currentModel && !!(provider.connection || provider.no_key);
+    const useButton = button(!supported ? "Not chat" : inUse ? "In use" : provider.connection || provider.no_key ? "Use" : "Connect first", inUse ? "small in-use" : "ghost small", () => {
       if (provider.connection || provider.no_key) void use(provider, id); else root.querySelector<HTMLInputElement>(".provider-connect input")?.focus();
     });
-    useButton.disabled = !supported;
+    useButton.disabled = !supported || inUse;
+    if (inUse) row.classList.add("is-current");
     row.append(providerIcon(provider.id), text, useButton);
     return row;
   }
 
   function detail(provider: CatalogProvider): HTMLElement {
-    const box = make("section", "provider-detail");
+    const box = make("section", "provider-detail provider-focus");
+    const connected = !!(provider.key_set || provider.no_key);
     const head = make("div", "provider-detail-head");
-    head.append(avatar(provider), make("strong", "", provider.name), make("span", provider.connection ? "state ok" : "state", provider.key_set || provider.no_key ? "Connected" : "Key required"));
-    box.append(head, make("p", "muted", provider.blurb + (provider.base ? ` · ${provider.base}` : "")));
-    if (provider.free_notice) box.append(make("p", "provider-free-note", provider.free_notice));
+    const title = make("div", "provider-detail-title");
+    title.append(make("strong", "", provider.name), make("small", "", provider.blurb));
+    head.append(avatar(provider), title, make("span", provider.key_set ? "state ok" : "state", provider.key_set ? "Connected" : provider.no_key ? "No key needed" : "Key required"));
+    box.append(backButton(), head);
+    if (connected && currentModel && currentProvider === provider.name) {
+      const using = make("p", "provider-in-use");
+      using.append("In use: ", make("code", "", currentModel));
+      box.append(using);
+    }
+    // Notes about the provider come after the key, so the first thing below the name is what to do.
+    const notes: HTMLElement[] = [];
     if (provider.default_model) {
       const recommended = make("div", "provider-recommended");
       recommended.append(providerIcon(provider.id), make("div", "", "Default · Nemotron 3.5 Lightning"), make("code", "", provider.default_model));
       if (provider.connection) recommended.append(button("Use as default", "primary small", () => { void use(provider, provider.default_model!); }));
-      box.append(recommended);
+      notes.push(recommended);
     }
+    if (provider.free_notice) notes.push(make("p", "provider-free-note", provider.free_notice));
     // Connect, or replace the key.
     const form = make("form", "provider-connect");
     const key = make("input") as HTMLInputElement;
@@ -119,11 +132,12 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
     endpoint.placeholder = "https://my-resource.openai.azure.com/openai/v1"; endpoint.hidden = provider.kind !== "azure" || !!provider.connection;
     const submit = make("button", "primary small", provider.connection ? "Replace key" : provider.default_model ? "Connect & use default" : "Connect") as HTMLButtonElement; submit.type = "submit";
     form.append(key, endpoint, submit);
-    box.append(make("p", "muted", "New keys stay in this running Dikdik process for up to 8 hours. Re-enter after restart. They are not saved to settings or exported to commands."));
-    if (provider.connection && provider.key_set) box.append(button("Disconnect key", "ghost small", () => {
-      void request(`/api/model-catalog/${encodeURIComponent(provider.id)}/disconnect`, "POST").then(() => load()).catch(fail);
-    }));
-    if (provider.key_help) { const link = make("a", "", provider.no_key ? "Download" : "Get a key") as HTMLAnchorElement; link.href = provider.key_help; link.target = "_blank"; link.rel = "noopener noreferrer"; form.append(link); }
+    const keyNote = make("p", "muted", "Saved encrypted on this computer; stays connected after a restart. Never shown again or passed to commands.");
+    if (provider.key_help) {
+      const link = make("a", "", provider.no_key ? "Download" : "Get a key ↗") as HTMLAnchorElement;
+      link.href = provider.key_help; link.target = "_blank"; link.rel = "noopener noreferrer";
+      keyNote.append(" ", link);
+    }
     form.addEventListener("submit", async event => {
       event.preventDefault();
       if (!key.value.trim() && !provider.no_key && !provider.connection) { message(`Paste your ${provider.name} API key.`, true); return; }
@@ -137,9 +151,29 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
         live.delete(provider.id); errors.delete(provider.id);
         message(provider.connection ? `${provider.name} key replaced.` : provider.default_model ? "NVIDIA connected. Nemotron 3.5 Lightning is now your default." : `${provider.name} connected. Pick a model below.`);
         deps.changed?.(); await load();
+        root.querySelector<HTMLInputElement>(".provider-search")?.focus();  // next step: pick a model
       } catch (error) { fail(error); submit.disabled = false; }
     });
-    box.append(form);
+    if (connected && provider.connection) {
+      // Connected: the models come first; the key is one click away.
+      const keyBox = make("details", "provider-key-box");
+      keyBox.append(make("summary", "", "Replace or disconnect key"), form, keyNote,
+        button("Disconnect key", "ghost small", () => {
+          void request(`/api/model-catalog/${encodeURIComponent(provider.id)}/disconnect`, "POST").then(() => load()).catch(fail);
+        }));
+      box.append(keyBox);
+    } else if (!provider.no_key) {
+      const step = make("div", "provider-key-step");
+      step.append(make("label", "provider-step-label", `1 · Paste your ${provider.name} API key`), form, keyNote);
+      box.append(step);
+      setTimeout(() => { if (document.activeElement === document.body || !document.activeElement) key.focus(); }, 0);
+    }
+    box.append(...notes);
+    if (!connected) {
+      // Nothing to choose until the key is in: one line instead of an empty list and disabled buttons.
+      box.append(make("p", "provider-step-next", "2 · Choose a model. The models your account can use appear here as soon as you connect."));
+      return box;
+    }
     // Models: suggestions, then the provider's own list on request.
     const list = make("ul", "provider-models");
     const models = live.get(provider.id);
@@ -162,7 +196,8 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
       }
     };
     const tools = make("div", "provider-models-head");
-    tools.append(make("strong", "", models ? `${models.length} models from ${provider.name}` : loading.has(provider.id) ? "Loading model directory…" : "Suggested model IDs"), search);
+    const heading = models ? `${models.length} models from ${provider.name}` : loading.has(provider.id) ? "Loading model directory…" : "Suggested models";
+    tools.append(make("strong", "", connected || provider.no_key ? heading : `2 · Choose a model · ${heading.toLowerCase()}`), search);
     const loadAll = button(loading.has(provider.id) ? "Loading…" : models ? "Refresh list" : "Load all models", "ghost small", () => { void fetchModels(provider, true); });
     loadAll.disabled = !!provider.models_unavailable || loading.has(provider.id) || (!provider.connection && !provider.public_models && !provider.no_key);
     tools.append(loadAll);
@@ -173,6 +208,14 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
     custom.addEventListener("submit", event => { event.preventDefault(); if (typed.value.trim() && provider.connection) void use(provider, typed.value.trim()); else if (!provider.connection) message(`Connect ${provider.name} first.`, true); });
     paint();
     const note = provider.models_unavailable || errors.get(provider.id) || (models ? "Live model directory from this provider. Model access and tool support depend on your account." : "Suggestions are not the full catalog. Connect this provider to load the models available to your account.");
+    const nothingListed = !models && !provider.models.length && !loading.has(provider.id);
+    if (nothingListed) {
+      // The provider publishes no model list: typing the name is the way, so lead with it.
+      typed.placeholder = "Model name, e.g. from the provider's docs";
+      box.append(make("strong", "provider-step-label", "Choose a model"), custom,
+        make("p", "provider-load-note", `${provider.name} did not list its models${errors.has(provider.id) ? ` (${errors.get(provider.id)})` : ""}. Type the exact model name to use it.`));
+      return box;
+    }
     box.append(tools, make("p", errors.has(provider.id) ? "provider-load-note error-text" : "provider-load-note", note), list, footer, custom);
     return box;
   }
@@ -205,15 +248,26 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
     return box;
   }
 
-  /** The chosen provider's panel opens below the grid; bring it into view. */
-  function reveal(): void {
-    const panel = root.querySelector?.(".provider-detail") as HTMLElement | null;
-    panel?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  function backButton(): HTMLElement {
+    return button("← All providers", "ghost small provider-back", () => { selected = ""; query = ""; render(); toTop(); });
+  }
+
+  /** Each view starts at its top: opening a provider never leaves its form below the fold. */
+  function toTop(): void {
+    let node: HTMLElement | null = root;
+    while (node && !(node.scrollHeight > node.clientHeight && /(auto|scroll)/.test(getComputedStyle(node).overflowY))) node = node.parentElement;
+    node?.scrollTo?.({ top: 0 });
+  }
+
+  function open(id: string): void {
+    selected = id; query = ""; render(); toTop();
+    const provider = providers.find(p => p.id === id);
+    if (provider) void fetchModels(provider);
   }
 
   function researchPanel(): HTMLElement {
-    const box = make("section", "provider-detail");
-    box.append(make("strong", "", `Tavily web research · ${researchReady ? "Connected for this session" : "Not connected"}`),
+    const box = make("section", "provider-detail provider-research");
+    box.append(make("strong", "", `Web research (optional) · Tavily · ${researchReady ? "Connected for this session" : "Not connected"}`),
       make("p", "muted", "Search current documentation with source links. Enable web browsing for a task to let the agent search. Public queries go to Tavily. Your key stays in memory for up to 8 hours; provider limits apply."));
     const form = make("form", "provider-connect");
     const key = make("input") as HTMLInputElement;
@@ -233,26 +287,36 @@ export function providersPane(root: HTMLElement, deps: PaneDeps & { takeProvider
   }
 
   function render(): void {
+    const chosen = providers.find(p => p.id === selected);
+    root.dataset.view = chosen || selected === "custom" ? "provider" : "list";
+    if (chosen) { root.replaceChildren(detail(chosen)); return; }
+    if (selected === "custom") { const form = customForm(); form.prepend(backButton()); root.replaceChildren(form); return; }
     const head = make("div", "providers-head");
-    head.append(make("p", "lead", current ? `Dikdik is using ${current}.` : "Connect a provider and pick a model to start."));
+    head.append(make("p", "lead", current ? "In use" : "Connect a provider, then pick a model."));
+    const using = providers.find(p => p.name === currentProvider);
+    if (current) {
+      const line = using ? button(current, "providers-current", () => open(using.id)) : make("p", "providers-current", current);
+      if (using) line.title = `Open ${using.name}`;
+      head.append(line);
+    }
     const grid = make("div", "provider-grid");
-    for (const provider of providers) {
+    const connectedFirst = [...providers].sort((a, b) => Number(!!b.key_set) - Number(!!a.key_set));
+    for (const provider of connectedFirst) {
       const card = make("button", "provider-card") as HTMLButtonElement;
-      card.type = "button"; card.setAttribute("aria-pressed", String(provider.id === selected));
+      card.type = "button";
       const text = make("span", "provider-card-text");
-      text.append(make("strong", "", provider.name), make("small", "", provider.key_set || provider.no_key ? "Connected" : provider.blurb));
+      text.append(make("strong", "", provider.name), make("small", "", provider.key_set ? "Connected" : provider.blurb));
       card.append(avatar(provider), text);
-      if (provider.key_set || provider.no_key) card.dataset.connected = "true";
-      card.onclick = () => { selected = selected === provider.id ? "" : provider.id; query = ""; render(); reveal(); if (selected) void fetchModels(provider); };
+      if (provider.key_set) card.dataset.connected = "true";
+      card.onclick = () => open(provider.id);
       grid.append(card);
     }
     const plus = make("button", "provider-card provider-add") as HTMLButtonElement;
-    plus.type = "button"; plus.setAttribute("aria-pressed", String(selected === "custom"));
+    plus.type = "button";
     plus.append(make("span", "provider-avatar", "+"), make("span", "provider-card-text", "Custom provider"));
-    plus.onclick = () => { selected = selected === "custom" ? "" : "custom"; render(); reveal(); };
+    plus.onclick = () => { selected = "custom"; render(); toTop(); };
     grid.append(plus);
-    const chosen = providers.find(p => p.id === selected);
-    root.replaceChildren(head, researchPanel(), grid, ...(chosen ? [detail(chosen)] : selected === "custom" ? [customForm()] : []));
+    root.replaceChildren(head, grid, researchPanel());
   }
 
   return async () => { try { await load(); } catch (error) { fail(error); } };

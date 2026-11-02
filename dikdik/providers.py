@@ -380,7 +380,7 @@ def usage_breakdown(data: dict) -> dict:
     for name in ("cost_usd", "cost"):
         cost = usage.get(name)
         if isinstance(cost, (int, float)) and not isinstance(cost, bool) and 0 <= cost < float("inf"):
-            result["reported_cost"] = float(cost)
+            result["reported_cost"] = float(cost)  # dikdik-scan: ignore[I18N003] provider-reported estimate, display only
             break
     return result
 

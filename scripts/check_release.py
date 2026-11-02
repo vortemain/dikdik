@@ -56,7 +56,7 @@ def check_release(directory, tag=None):
     crate = tomllib.loads((ROOT / "crates/dikdik-index/Cargo.toml").read_text(encoding="utf-8"))
     if crate["package"]["version"] != version or crate["package"]["license"] != "MIT":
         raise ValueError("Rust crate version/license differs from release metadata")
-    if project["license"] != "MIT" or json.loads((ROOT / "package.json").read_text())["license"] != "MIT":
+    if project["license"] != "MIT" or json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["license"] != "MIT":
         raise ValueError("Project manifests must declare MIT")
 
     wheel = directory / f"dikdik-{version}-py3-none-any.whl"
@@ -64,7 +64,7 @@ def check_release(directory, tag=None):
     if set(directory.glob("*.whl")) != {wheel} or set(directory.glob("*.tar.gz")) != {source}:
         raise ValueError("Expected exactly one portable wheel and one source distribution")
     required = {p.relative_to(ROOT).as_posix() for p in (ROOT / "dikdik").rglob("*.py") if "__pycache__" not in p.parts}
-    for folder in ("web", "skills", "browser_runtime"):
+    for folder in ("web", "skills"):
         required.update(p.relative_to(ROOT).as_posix() for p in (ROOT / "dikdik" / folder).rglob("*")
                         if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc")
     with zipfile.ZipFile(wheel) as archive:

@@ -53,18 +53,10 @@ The private frontend package declares MIT for original Dikdik source. Installing
 build tools does not relicense those tools or their dependencies under Dikdik's
 license.
 
-## Optional container images
+## Optional hosting image
 
-The repository includes Dockerfiles and browser-runtime configuration; release
-downloads do not bundle container images. Operators build or download images
-separately and retain the notices applicable to their contents.
-
-The optional browser image uses `playwright-core` 1.64.1 (Apache-2.0) and the
-Microsoft Playwright `v1.64.1-noble` base image. Chromium, Ubuntu, Node.js, and
-other image components retain their own terms. The Python runtime image likewise
-contains separately licensed software. Review those components and image notices
-before redistributing an image.
-
-See the [Playwright license](https://github.com/microsoft/playwright/blob/main/LICENSE)
-and [image documentation](https://playwright.dev/docs/docker) for those components,
-and [Security](SECURITY.md) for deployment and image-review considerations.
+Dikdik does not use container images at runtime (the Docker test runner and browser
+image were removed on 2026-11-02). The repository keeps one `Dockerfile` for hosting
+on a server; release downloads do not bundle an image. Its `python:3.13-slim` base
+contains separately licensed software; review its notices before redistributing an
+image, and see [Security](SECURITY.md) for deployment considerations.

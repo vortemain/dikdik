@@ -31,10 +31,15 @@ an OpenAI-compatible gateway (/v1/models, /v1/chat/completions,
 keyed and with consent explicit per request.
 The parity audit (docs/PARITY.md) moved from 89 to 425 fully matched OpenHands sub-features
 of 1,749. One live model run is recorded (OpenRouter, GLM 5.2: the example bug fixed
-for $0.0028); live-Docker runs are still not recorded.
+for $0.0028). A first build-from-scratch run (OpenRouter GLM-5.2, 2026-11-02) built a notes API and a to-do CLI from an
+empty folder that passed every hidden check. The to-do web app first failed on a Dikdik bug (every `preview_app`
+crashed; fixed, F-017); rerun after the fix, it completed and passed its hidden Chromium checks too. Then every
+benchmark task ran 3 times with GLM-5.2: 23 of 24 succeeded (96%, $2.87), including three `parallel_edit` runs;
+the one failure exposed F-020 (fixed), after which todo-web went 3 of 3.
 
-Test status (2026-10-28): Python **563 passed, 3 skipped** (566 run); Bun
-**116 passed / 558 assertions**; Rust **15 passed**; strict TypeScript check and build passed.
+Test status (2026-11-02, measured; see `docs/ENGINEERING_ASSESSMENT.md`): Python **1060 passed,
+5 skipped** (1065 run, under branch coverage, 84%); branch coverage **83%** (measured at 980 tests); Bun **168 passed / 16,624 assertions**; Rust **16 passed**;
+strict TypeScript check and build passed. Counts below this line are historical.
 
 ## Completed
 
@@ -128,7 +133,7 @@ Test status (2026-10-28): Python **563 passed, 3 skipped** (566 run); Bun
 
 ## Test status
 
-- Python: **521 passed, 3 skipped** (524 run). ACP agents now run in a throwaway
+- Historical (before 2026-10-28): Python **521 passed, 3 skipped** (524 run). ACP agents now run in a throwaway
   copy (stand-in agent only), apps open sandboxed, backend checks are real. A full review of the Phase D–F
   commits found and fixed ten defects, two of them data-losing; see `docs/VERIFICATION.md`.
 - Bun: **105 passed / 490 assertions**; strict TypeScript check and browser build passed.

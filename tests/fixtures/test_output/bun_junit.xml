@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="2" assertions="2" failures="1" skipped="0" time="0.0148803">
+  <testsuite name="calc.test.ts" file="calc.test.ts" tests="2" assertions="2" failures="1" skipped="0" time="0.0053444" hostname="">
+    <testsuite name="calc" file="calc.test.ts" line="2" tests="2" assertions="2" failures="1" skipped="0" time="0" hostname="">
+      <testcase name="adds numbers" classname="calc" time="0.000035" file="calc.test.ts" line="3" assertions="1" />
+      <testcase name="subtracts" classname="calc" time="0.000415" file="calc.test.ts" line="4" assertions="1">
+        <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 1&#10;Received: 0&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 1&#10;Received: 0&#10;&#10;</failure>
+      </testcase>
+    </testsuite>
+  </testsuite>
+</testsuites>

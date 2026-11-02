@@ -30,7 +30,7 @@ dikdik-desktop = "dikdik.desktop:main"
 include-package-data = false
 
 [tool.setuptools.package-data]
-dikdik = ["web/*", "web/fonts/*", "web/assets/*", "web/assets/files/*", "web/assets/providers/*", "web/assets/brands/*", "browser_runtime/*", "dikdik_index*", "skills/*/SKILL.md"]
+dikdik = ["web/*", "web/fonts/*", "web/assets/*", "web/assets/files/*", "web/assets/providers/*", "web/assets/brands/*", "dikdik_index*", "skills/*/SKILL.md"]
 
 [tool.setuptools.exclude-package-data]
 dikdik = ["*.pyd", "*.so", "*.dll", "*.dylib"]
@@ -38,3 +38,12 @@ dikdik = ["*.pyd", "*.so", "*.dll", "*.dylib"]
 [tool.setuptools.packages.find]
 include = ["dikdik", "dikdik.*"]
 namespaces = false
+
+[tool.coverage.run]
+branch = true
+source = ["dikdik"]
+omit = ["dikdik/web/*", "dikdik/skills/*"]
+
+[tool.coverage.report]
+skip_empty = true
+fail_under = 80  # measured 83% (Windows, Python 3.13, desktop extras); CI on Linux may differ slightly

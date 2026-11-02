@@ -1,7 +1,7 @@
 """Browse with the browser already on this computer (Edge or Chrome), headless.
 
-Used when Docker is not running, in keeping with local mode. Two things keep it
-safe for an agent to use:
+Used when Playwright's Chromium is not installed. Two things keep it safe for an
+agent to use:
 
 - **A fresh profile every time.** The browser starts with an empty temporary
   profile: none of the user's cookies, logins, extensions or history.
@@ -199,7 +199,7 @@ def page_text(markup: str) -> tuple[str, str]:
     parser = _Text()
     try:
         parser.feed(markup)
-    except Exception:
+    except Exception:  # malformed page markup: keep the text parsed so far
         pass
     lines = [" ".join(line.split()) for line in "".join(parser.parts).splitlines()]
     return " ".join(parser.title.split())[:300], "\n".join(line for line in lines if line)[:TEXT_LIMIT]
@@ -223,7 +223,7 @@ def _run(argv: list[str], cancel, timeout: float) -> subprocess.CompletedProcess
     while process.poll() is None:
         if (cancel is not None and cancel.is_set()) or time.monotonic() > deadline:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True, check=False)
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True, check=False, timeout=30)
             else:
                 process.kill()
             process.wait(timeout=10)

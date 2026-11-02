@@ -10,12 +10,13 @@ server.py ── Engine (one worker + cancellation flag)
                  ├── agent.py + agent_provider.py: original bounded tool/repair loop
                  ├── store.py: SQLite tasks + ordered events, atomic transitions
                  ├── bash_service.py: durable task-scoped command/events API
-                 ├── browser_service.py: isolated browser capture + scoped screenshots
+                 ├── browser_service.py: fresh-profile browser capture + scoped screenshots
                  ├── planning.py: separate read-only planners + review/progress metadata
-                 └── runners.py + sandbox.py: fixed Docker shell/test runners
-                          │ read-only candidate mount, no source mount
-                          ▼
-                    restricted container
+                 ├── runners.py: which test suites and declared checks a project has
+                 └── local_exec.py: commands and tests on this computer (local mode only)
+                          │ project folder, user's rights, time/output limits,
+                          ▼ process-tree supervision, secret redaction
+                    this computer (no container; Docker was removed 2026-11-02)
 ```
 
 `locking.py` holds the exclusive data-directory OS lock. `web/` contains the
@@ -36,8 +37,53 @@ for workspace binding and workspace browser enablement.
 Additive `plans` and `task_progress` tables own planner/code links, revisioned plan
 content and reported checklist state. Private PLAN.md artifacts are mirrors of the
 SQLite content; no cross-filesystem/DB atomicity is claimed.
-Schema is created idempotently at startup; there is no existing schema to migrate.
-Future schema changes require explicit migrations before wider release.
+The core schema (`tasks`, `events`, `settings`, `requirements`) is versioned in SQLite's
+`PRAGMA user_version` by `dikdik/migrations.py`: each migration and its version bump commit in
+one transaction, an existing database is copied to `state.sqlite3.bak-v<old>` before it is
+upgraded, and a database from a newer Dikdik is refused instead of opened. Every module that
+owns tables (profiles, automations, MCP servers, connections, planning, terminal history, ...)
+versions them through `migrations.ensure(path, module, steps)`, recorded in `schema_versions`,
+with the same atomic-step, refusal and pre-upgrade-backup guarantees. Their first step is an
+idempotent baseline (literal `ALTER TABLE` statements guarded by `migrations.add_column`) so
+databases from before versioning are adopted without loss.
+
+SQL text never contains formatted values. Identifiers and fixed WHERE fragments that cannot be
+`?` parameters go through `dikdik/sql.py`, which accepts only explicit allowlists (or the real
+columns of a table, read with `pragma_table_info(?)`); the scanner's PY008 rule is a blocking
+HIGH for anything else.
+
+Agent turns also carry engineering evidence (`dikdik/engineering.py`): requirements the
+model records with the tests that prove them, a deterministic security scan of changed files
+(`dikdik/security_scan.py`) and a computed `result.release_gate` (APPROVED,
+APPROVED_WITH_DOCUMENTED_RISK, BLOCKED or REJECTED). `GET /api/tasks/{id}/requirements`
+returns the latest recorded list. Requirement evidence comes from per-test outcomes: unittest
+`-v`, pytest, cargo, go and bun/jest text, and JUnit XML (local `bun test` writes one to a temp
+file outside the project). The gate also covers:
+
+- `quality_check`: reliability (timeouts, silently ignored errors), i18n (naive timestamps,
+  platform encodings, money as floats) and privacy (credentials or personal data in logs) rules
+  on changed production files, plus static HTML accessibility (`dikdik/accessibility.py`).
+- `preview_app`: an in-browser WCAG 2.2 subset (`accessibility.AUDIT`: names, labels, lang,
+  title, duplicate ids, heading order, computed contrast, target size, visible focus). Serious
+  failures fail the preview; moderate ones are reported for review.
+- `architecture_map` / `impacted_tests` / `record_decision` (`dikdik/architecture.py`): the import graph,
+  cycles and change impact, and numbered ADRs under `docs/adr/`.
+- `load_test` (`dikdik/loadtest.py`) and `repeat_command`: concurrency against the project's own loopback
+  server, and nondeterminism detection.
+- `dast_scan` (`dikdik/dast.py`): GET-only crawl and dynamic security checks of the project's running server;
+  a `dynamic_security` gate.
+- `fault_test` (`dikdik/faults.py`): the app reaches one dependency through a switchable loopback fault proxy
+  (latency, reset, early close, partition, down); a `resilience` gate.
+- Visual regression (`dikdik/visual.py`): `preview_app` compares each capture with the owner-accepted baseline
+  (`visual_baselines` table; `GET /api/visual-baselines`, `/image`, `POST /accept`); a `visual` gate.
+- `parallel_edit` (`dikdik/parallel.py`): 2-4 writer agents with disjoint file ownership run concurrently on
+  copies of the candidate; the coordinator merges by ownership and verifies once.
+- Traces: `dikdik/tracing.py` turns agent events into OTLP spans when `DIKDIK_OTEL_ENDPOINT` is set.
+- Operations: `python -m dikdik.backup`, `python -m dikdik.sbom`, `python -m dikdik.architecture`.
+- `measure_performance`: repeated wall-time runs of a read-only command with min/median/p95/max,
+  an explicit p95 budget and a per-project baseline (`engineering.Baselines`), offered only with
+  execution approval and confirmed like `run_command`. Operational diagnostics go to redacted JSON lines in
+`<data>/logs/dikdik.jsonl` (`dikdik/logs.py`); no route serves them.
 
 States: `queued → running → completed | failed | blocked | cancelled`.
 `draft` is an initialized conversation awaiting its first approved turn, not a
@@ -50,10 +96,10 @@ snapshot. Events have global monotonically increasing sequence IDs. No exact
 filesystem/DB transaction, pause/resume or automatic task replay is promised.
 
 Flow: validate permissions → inspect source → record plan → propose edits →
-validate → generate diff and isolated artifact → parse Python syntax → optionally
-execute Docker tests → record truthful checks/outcome. Cancellation is cooperative
-between steps and actively monitored during Docker execution. A running model
-request may delay cancellation. Exceptions cause failure, not synthetic success.
+validate → generate diff and isolated artifact → parse Python syntax → record
+truthful checks/outcome. Tests run only in local mode, on this computer.
+Cancellation is cooperative between steps and actively monitored while a command
+runs. A running model request may delay cancellation. Exceptions cause failure, not synthetic success.
 
 `completed` means the selected workflow ended, **not necessarily test-verified**.
 `result.tests_verified` is true only after a successful container runner and no
@@ -83,8 +129,8 @@ POST JSON bodies are limited to 262144 bytes; chunked transfer is unsupported.
 | `POST /api/tasks` | task request below | 202 `{id}` |
 | `GET /api/tasks/{id}` | — | id, created, state, request, result, events |
 | `POST /api/tasks/{id}/cancel` | `{}` | `{requested: boolean}` |
-| `POST /api/tasks/{id}/bash/execute` | command, optional image/timeout/cwd | final output after the Docker command exits |
-| `POST /api/tasks/{id}/bash/start` | command, optional image/timeout/cwd | 202 command identity before completion |
+| `POST /api/tasks/{id}/bash/execute` | command, optional timeout/cwd (local-mode tasks only) | final output after the command exits |
+| `POST /api/tasks/{id}/bash/start` | command, optional timeout/cwd (local-mode tasks only) | 202 command identity before completion |
 | `POST /api/tasks/{id}/bash/commands/{command}/stop` | `{}` | whether cancellation was requested |
 | `GET /api/tasks/{id}/bash/events` | query: after, limit, kind, command_id | ordered task-scoped command/output page |
 | `GET /api/tasks/{id}/bash/events/{event}` | — | one event or 404 |
@@ -117,11 +163,11 @@ Task request:
 ```
 
 `objective`: nonblank string, max 4000 characters. `mode`: offline, model or agent.
-`verification`: syntax or docker. Offline requires 1–20 exact replacement objects.
-Model requires approval and server-side provider configuration; it ignores edits
-as a proposal source. Docker and external approvals must be literal JSON `true`.
-Agent mode accepts an objective with no edits, requires disclosure approval, and
-supports syntax-only or explicitly approved Docker verification. Plan mode requires
+`verification`: syntax or local (`docker` is refused). Offline requires 1–20 exact
+replacement objects. Model requires approval and server-side provider configuration;
+it ignores edits as a proposal source. Execution and external approvals must be
+literal JSON `true`. Agent mode accepts an objective with no edits, requires
+disclosure approval, and supports syntax-only or explicitly approved local work. Plan mode requires
 disclosure but forbids execution approval and uses only read-only inspection plus
 private plan/progress tools. Agent mode uses original in-memory tools and candidate-
 specific completion gating, with counters stored in `result.agent`. Every edit

@@ -29,7 +29,7 @@ OP_PONG = 0xA
 
 
 def accept_key(key: str) -> str:
-    return base64.b64encode(hashlib.sha1((key + MAGIC).encode()).digest()).decode()
+    return base64.b64encode(hashlib.sha1((key + MAGIC).encode()).digest()).decode()  # dikdik-scan: ignore[PY009] RFC 6455 mandates SHA-1 here
 
 
 def read_frame(sock) -> tuple[int, bytes] | None:

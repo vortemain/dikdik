@@ -6,6 +6,7 @@ import time
 from urllib.parse import urlsplit
 
 from .agent import _tool
+from . import migrations
 
 
 WRITE_PLAN = _tool('write_plan', 'Write the reviewable PLAN.md artifact without implementing it or granting permission.', {'content': {'type': 'string'}}, ['content'])
@@ -17,12 +18,11 @@ TASK_TRACKER = _tool('task_tracker', 'Replace up to 50 reported checklist steps.
 class Planning:
     def __init__(self, engine):
         self.engine, self.store = engine, engine.store
-        with self.store.connect() as db:
-            db.executescript('''
+        migrations.ensure(self.store.path, "planning", [(1, "plans and task progress", migrations.script('''
                 CREATE TABLE IF NOT EXISTS plans (task_id TEXT PRIMARY KEY, planner_id TEXT NOT NULL UNIQUE,
                     content TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 0, built_revision INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS task_progress (task_id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, items TEXT NOT NULL DEFAULT '[]');
-            ''')
+            '''))])
 
     def ensure(self, task):
         # Caller holds the engine lock, coordinating creation with task deletion.

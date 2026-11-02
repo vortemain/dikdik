@@ -44,8 +44,8 @@ test("observationText formats each tool's output", () => {
   expect(observationText("finish", { completed: true })).toBe("Finished");
   expect(observationText("run_command", { status: "failed", exit_code: 2, output: "boom", changed_files: ["a.py"], rejected_changes: ["tests/test_a.py"] }))
     .toBe("exit 2 · failed\nKept changes: a.py\nRejected changes: tests/test_a.py\n\nboom");
-  expect(observationText("run_command", { status: "blocked", exit_code: null, error: "Docker CLI unavailable", changed_files: [], rejected_changes: [] }))
-    .toBe("exit – · blocked\nDocker CLI unavailable");
+  expect(observationText("run_command", { status: "blocked", exit_code: null, error: "Could not start bash", changed_files: [], rejected_changes: [] }))
+    .toBe("exit – · blocked\nCould not start bash");
   expect(observationText("read_file", { truncated: true, preview: "{\"lines\"" })).toBe("{\"lines\"\n…(truncated)");
   expect(observationText("unknown", { a: 1 })).toBe("{\n  \"a\": 1\n}");
 });

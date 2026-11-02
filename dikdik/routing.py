@@ -12,6 +12,8 @@ import re
 import time
 import uuid
 from typing import Callable
+from . import sql
+from . import migrations
 
 STRATEGIES = {
     "first_turn": "The first message of a conversation goes to the strong model; follow-ups to the fast one",
@@ -34,15 +36,19 @@ CREATE TABLE IF NOT EXISTS routers (
 FIELDS = ("name", "strategy", "strong_profile_id", "fast_profile_id", "threshold", "prompt_template", "model_table")
 
 
+def _baseline(db) -> None:
+    db.execute(SCHEMA)
+    migrations.add_column(db, "routers", "prompt_template", "ALTER TABLE routers ADD COLUMN prompt_template TEXT")
+    migrations.add_column(db, "routers", "model_table", "ALTER TABLE routers ADD COLUMN model_table TEXT")
+
+
+STEPS = [(1, "routers with classifier prompt and model table", _baseline)]
+
+
 class RouterStore:
     def __init__(self, store):
         self.store = store
-        with store.connect() as db:
-            db.execute(SCHEMA)
-            columns = {row["name"] for row in db.execute("PRAGMA table_info(routers)")}
-            for name in ("prompt_template", "model_table"):
-                if name not in columns:
-                    db.execute(f"ALTER TABLE routers ADD COLUMN {name} TEXT")
+        migrations.ensure(store.path, "routers", STEPS)
 
     def _profiles(self) -> dict[str, str]:
         with self.store.connect() as db:
@@ -125,7 +131,7 @@ class RouterStore:
                 raise ValueError(f"Router limit reached ({MAX_ROUTERS}). Delete one before adding another")
             if db.execute("SELECT 1 FROM routers WHERE name=?", (fields["name"],)).fetchone():
                 raise ValueError("A router with that name already exists")
-            db.execute(f"INSERT INTO routers(id,{','.join(fields)},created) VALUES(?,{','.join('?' * len(fields))},?)",
+            db.execute(f"INSERT INTO routers(id,{sql.columns(fields, FIELDS)},created) VALUES(?,{sql.marks(len(fields))},?)",
                        (router_id, *fields.values(), time.time()))
         return {"id": router_id}
 
@@ -135,7 +141,7 @@ class RouterStore:
         with self.store.connect() as db:
             if db.execute("SELECT 1 FROM routers WHERE name=? AND id<>?", (fields["name"], router_id)).fetchone():
                 raise ValueError("A router with that name already exists")
-            db.execute(f"UPDATE routers SET {', '.join(f'{k}=?' for k in fields)} WHERE id=?", (*fields.values(), router_id))
+            db.execute(f"UPDATE routers SET {sql.assign(fields, FIELDS)} WHERE id=?", (*fields.values(), router_id))
         return {"id": router_id}
 
     def delete(self, router_id: str):

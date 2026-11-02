@@ -36,7 +36,10 @@ Open the sign-in link it prints (it uses your public URL) once per browser.
 Model keys go in Settings → API keys, exactly as on your computer. Git uses the
 server's own credentials (an SSH key or `gh auth login` on the server).
 
-## Behind a reverse proxy, or with Docker
+## Behind a reverse proxy, or in a container
+
+The `Dockerfile` only packages Dikdik for hosting. Dikdik itself never calls Docker:
+commands and tests run inside the container like on any computer.
 
 ```bash
 docker build -t dikdik .

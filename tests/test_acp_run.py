@@ -80,7 +80,7 @@ class AcpRunTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.engine.submit({"objective": "x", "mode": "agent", "verification": "syntax", "approve_external": True, "approve_host": True})
         with self.assertRaises(ValueError):
-            self.run_task(agent_id, verification="docker", approve_execution=True)
+            self.run_task(agent_id, verification="local", approve_execution=True)
 
     def test_cancel_stops_the_agent(self):
         task = self.run_task(self.agent("hang"))

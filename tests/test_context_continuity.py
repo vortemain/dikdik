@@ -1,7 +1,9 @@
 """Long investigations must retain useful facts and reach implementation safely."""
 
+import hashlib
 import json
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -244,3 +246,44 @@ class ContextContinuityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProvenanceAndRevalidationTests(unittest.TestCase):
+    """Remembered observations say when they were made and are rechecked against current files."""
+
+    def messages(self):
+        from dikdik.context_memory import encoded
+        return [{"role": "system", "content": "s"},
+                {"role": "assistant", "tool_calls": [{"id": "r1", "function": {"name": "read_file", "arguments": encoded({"path": "app.py"})}},
+                                                     {"id": "s1", "function": {"name": "search_text", "arguments": encoded({"query": "TODO"})}}]},
+                {"role": "tool", "tool_call_id": "r1", "content": encoded({"path": "app.py", "content": "value = 1\n"})},
+                {"role": "tool", "tool_call_id": "s1", "content": encoded({"matches": [{"path": "app.py", "line": 1}]})}]
+
+    def test_observations_record_provenance_time_and_file_hash(self):
+        from dikdik.context_memory import _memory
+        before = time.time()
+        memory = _memory(self.messages(), {}, {"app.py": "value = 1\n"})
+        read = next(o for o in memory["observations"] if o["tool"] == "read_file")
+        self.assertEqual(read["provenance"], "tool_observation")
+        self.assertGreaterEqual(read["established"], round(before, 3) - 0.001)
+        self.assertEqual(read["file_sha256"], hashlib.sha256(b"value = 1\n").hexdigest())
+        self.assertEqual(memory["provenance"]["reported_plan"], "agent_reported_unverified")
+
+    def test_revalidation_against_current_files(self):
+        from dikdik.context_memory import _memory, revalidate
+        observations = _memory(self.messages(), {}, {"app.py": "value = 1\n"})["observations"]
+        self.assertEqual(revalidate(observations, {"app.py": "value = 1\n"}), {"current": 1, "stale": 0, "missing": 0, "unverifiable": 1})
+        self.assertFalse(next(o for o in observations if o["tool"] == "read_file")["may_be_stale"])
+        self.assertEqual(revalidate(observations, {"app.py": "value = 2\n"})["stale"], 1)  # the user edited it meanwhile
+        self.assertEqual(revalidate(observations, {})["missing"], 1)
+        search = next(o for o in observations if o["tool"] == "search_text")
+        self.assertEqual((search["validity"], search["may_be_stale"]), ("unverifiable", True))
+
+    def test_resume_recovery_revalidates(self):
+        from dikdik.context_memory import observations_from_events
+        events = [{"kind": "agent_tool", "data": {"phase": "start", "id": "r1", "name": "read_file", "arguments": {"path": "app.py"}}},
+                  {"kind": "agent_tool", "data": {"phase": "end", "id": "r1", "failed": False,
+                                                  "observation": {"path": "app.py", "content": "value = 1\n"}}}]
+        recovered = observations_from_events(events, {"app.py": "value = 1\n"})
+        self.assertEqual(recovered[0]["validity"], "current")
+        self.assertNotIn("validity", observations_from_events(events)[0])  # no files: nothing claimed either way

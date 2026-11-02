@@ -116,6 +116,8 @@ cost guarantee when metadata is missing or dishonest.
 
 ## ADR-006: Isolated browser with a public-resource relay
 
+*Superseded by ADR-007: the container worker was removed.*
+
 The optional browser uses Playwright **1.64.1** and its matching Chromium image
 only inside an operator-built `dikdik-browser:1` container. Browser rendering
 requires an actual browser engine; a Python HTML renderer would not provide
@@ -139,3 +141,24 @@ sandbox is disabled, and live browser/container security remains a release gate.
 workers to be disabled; the worker also blocks WebSockets. Direct traffic stays
 blocked by Docker even if a browser API bypasses interception. No image was built
 or downloaded during this increment because the Docker daemon was unavailable.
+
+## ADR-007: No Docker in Dikdik (2026-11-02)
+
+The owner decided Dikdik should not use Docker. Removed: the Docker test and shell
+runners (`dikdik/sandbox.py` and the container half of `dikdik/runners.py`), the
+`docker` verification mode, the `dikdik-browser:1` worker image, the Docker variant
+of the GitHub MCP preset, `scripts/sandbox_acceptance.py` and the CI `sandbox` job.
+
+Tests and commands now run only in local mode, on this computer, under the
+permission mode, time and output limits and process-tree supervision; approved
+secrets are redacted from local command output (previously only container output
+was). Classic mode keeps an isolated candidate but runs nothing: syntax checks only.
+Scheduled runs are syntax-only; saved runs that used Docker are migrated to that,
+never upgraded to local execution. Requests that ask for `docker` are refused with
+a message naming the alternatives. Browser captures use Playwright's Chromium or the
+computer's own Edge/Chrome with a fresh profile and the public-only proxy.
+
+Consequence: there is no isolated way to execute an untrusted repository's code.
+Recognizing Dockerfiles in a user's project (syntax highlighting, file icons and the
+INF security rules) is analysis, not execution, and stays. The root `Dockerfile`
+stays for self-hosting Dikdik on a server (`docs/CLOUD.md`); it is never used by Dikdik itself.

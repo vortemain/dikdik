@@ -24,7 +24,7 @@ from .model_discovery import discover_models
 NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 PROVIDERS = {
     "nebius": {"name": "Nebius Token Factory", "kind": "openai", "base": "https://api.tokenfactory.nebius.com/v1",
-               "key_help": "https://tokenfactory.nebius.com/", "blurb": "Open models on Nebius · session-only API key",
+               "key_help": "https://tokenfactory.nebius.com/", "blurb": "Open models on Nebius",
                "models": [], "free_notice": "Choose an NVIDIA Nemotron model from the live catalog. Provider credits and limits apply; hosted inference is not unlimited or automatically free."},
     "nvidia": {"name": "NVIDIA", "kind": "openai", "base": "https://integrate.api.nvidia.com/v1", "key_help": "https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b",
                "blurb": "Free developer endpoints · NVIDIA API key required", "default_model": NVIDIA_DEFAULT_MODEL, "public_models": True,
@@ -42,7 +42,7 @@ PROVIDERS = {
                "key_help": "https://aistudio.google.com/apikey", "blurb": "Gemini models", "models": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]},
     "deepseek": {"name": "DeepSeek", "kind": "openai", "base": "https://api.deepseek.com/v1", "key_help": "https://platform.deepseek.com/api_keys",
                  "blurb": "DeepSeek chat and reasoning", "models": ["deepseek-chat", "deepseek-reasoner"]},
-    "xai": {"name": "xAI", "kind": "openai", "base": "https://api.x.ai/v1", "key_help": "https://console.x.ai", "blurb": "Grok models",
+    "xai": {"name": "xAI", "kind": "openai", "base": "https://api.x.ai/v1", "key_help": "https://console.x.ai", "blurb": "xAI models",
             "models": ["grok-4", "grok-code-fast-1", "grok-3-mini"]},
     "mistral": {"name": "Mistral", "kind": "openai", "base": "https://api.mistral.ai/v1", "key_help": "https://console.mistral.ai/api-keys",
                 "blurb": "Mistral and Codestral", "models": ["mistral-large-latest", "codestral-latest", "devstral-medium-latest", "mistral-small-latest"]},

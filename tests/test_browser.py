@@ -1,6 +1,5 @@
 import base64
 import http.client
-import io
 import json
 import os
 import socket
@@ -17,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from dikdik.agent import ModelResponse, ToolCall
 from dikdik.browser_network import fetch_public, public_url, resolve_public
-from dikdik.browser_service import BrowserService, browser_command, capture, screenshot_bytes
+from dikdik.browser_service import BrowserService
 from dikdik.engine import Engine
 from dikdik.server import make_server
 
@@ -126,47 +125,14 @@ class PublicNetworkTests(unittest.TestCase):
         self.assertNotIn('set-cookie', result['headers'])
 
 
-class BrowserRunnerTests(unittest.TestCase):
-    def test_container_has_no_network_mounts_or_host_credentials(self):
-        command = browser_command('dikdik-' + 'a' * 32)
-        for flag in ('--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--user=65534:65534', '--pull=never'):
-            self.assertIn(flag, command)
-        self.assertNotIn('--mount', command)
-        self.assertNotIn('--privileged', command)
-        self.assertIn('timeout', command)
-
-    def test_screenshot_rejects_malformed_base64_or_oversize_dimensions(self):
-        self.assertEqual(screenshot_bytes(base64.b64encode(PNG).decode()), PNG)
-        for value in ['<svg onload=alert(1)>', '%%%%', base64.b64encode(PNG[:16] + struct.pack('>II', 1000000, 1000000) + PNG[24:]).decode()]:
-            with self.assertRaises(ValueError):
-                screenshot_bytes(value)
-
-    def test_protocol_fetches_through_relay_and_returns_screenshot(self):
-        frames = [{'kind': 'ready'}, {'kind': 'request', 'id': 1, 'url': 'https://example.com/'},
-                  {'kind': 'result', 'url': 'https://example.com/', 'title': 'Example', 'text': 'safe', 'png': base64.b64encode(PNG).decode()}]
-        proc = MagicMock()
-        proc.stdout = io.BytesIO(('\n'.join(json.dumps(frame) for frame in frames) + '\n').encode())
-        proc.stdin = io.BytesIO()
-        proc.poll.return_value = None
-        with patch('subprocess.Popen', return_value=proc), patch('dikdik.browser_service.cleanup_container', return_value=None), \
-                patch('dikdik.browser_service.fetch_public', return_value={'status': 200, 'headers': {}, 'body': ''}) as fetch:
-            result = capture('https://example.com/', threading.Event(), name='dikdik-' + 'a' * 32)
-        self.assertEqual((result['status'], result['png']), ('passed', PNG))
-        fetch.assert_called_once()
-        proc.kill.assert_called_once()
-
-    def test_missing_docker_is_blocked_without_network_access(self):
-        with patch('subprocess.Popen', side_effect=FileNotFoundError), patch('dikdik.browser_service.fetch_public') as fetch:
-            self.assertEqual(capture('https://example.com/', threading.Event(), name='dikdik-' + 'a' * 32)['status'], 'blocked')
-        fetch.assert_not_called()
-
-
 class BrowserServiceTests(unittest.TestCase):
     def setUp(self):
-        # These cases cover the Docker runtime; hide any Edge or Chrome on this machine.
-        no_host = patch("dikdik.host_browser.find_browser", return_value=None)
-        no_host.start()
-        self.addCleanup(no_host.stop)
+        # These cases cover the computer's own browser; a stand-in replaces any Edge or Chrome here, and
+        # the interactive Playwright runtime, which takes precedence when desktop extras are installed, is hidden.
+        for hidden in (patch("dikdik.host_browser.find_browser", return_value="C:/Browsers/msedge.exe"),
+                       patch("dikdik.browser_service.interactive_available", return_value=False)):
+            hidden.start()
+            self.addCleanup(hidden.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         base = Path(self.temp.name)
@@ -178,7 +144,7 @@ class BrowserServiceTests(unittest.TestCase):
         self.task = self.engine.store.create({'objective': 'browser fixture'})
 
     def test_separate_boolean_approvals_are_required(self):
-        with patch('dikdik.browser_service.capture') as run:
+        with patch('dikdik.host_browser.capture') as run:
             for approval in [{}, {'approve_execution': True}, {'approve_browser': True}, {'approve_execution': True, 'approve_browser': 'true'}]:
                 with self.subTest(approval=approval), self.assertRaises(PermissionError):
                     self.engine.browser.visit(self.task, 'https://example.com/', approval)
@@ -186,7 +152,7 @@ class BrowserServiceTests(unittest.TestCase):
 
     def test_durable_screenshot_is_scoped_and_deleted_with_task(self):
         other = self.engine.store.create({'objective': 'other'})
-        with patch('dikdik.browser_service.capture', side_effect=captured):
+        with patch('dikdik.host_browser.capture', side_effect=captured):
             result = self.engine.browser.visit(self.task, 'https://example.com/', APPROVAL)
         snapshot = result['screenshot'].split('/')[-1]
         self.assertEqual(self.engine.browser.screenshot(self.task, snapshot), PNG)
@@ -200,7 +166,7 @@ class BrowserServiceTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT COUNT(*) FROM browser_snapshots').fetchone()[0], 0)
 
     def test_screenshot_retention_bounds_private_storage(self):
-        with patch('dikdik.browser_service.capture', side_effect=captured):
+        with patch('dikdik.host_browser.capture', side_effect=captured):
             first = self.engine.browser.visit(self.task, 'https://example.com/', APPROVAL)['screenshot'].split('/')[-1]
             for _ in range(10):
                 self.engine.browser.visit(self.task, 'https://example.com/', APPROVAL)
@@ -214,23 +180,26 @@ class BrowserServiceTests(unittest.TestCase):
         self.engine.browser.close()
         self.engine.browser = BrowserService(self.engine)
         self.assertFalse(self.engine.browser.enabled())
-        with patch('dikdik.browser_service.capture') as run, self.assertRaisesRegex(PermissionError, 'disabled'):
+        with patch('dikdik.host_browser.capture') as run, self.assertRaisesRegex(PermissionError, 'disabled'):
             self.engine.browser.visit(self.task, 'https://example.com/', APPROVAL)
         run.assert_not_called()
 
-    def test_discovery_probes_only_docker_image_and_respects_disable(self):
-        with patch('dikdik.browser_service.subprocess.run', return_value=MagicMock(returncode=0, stdout=b'1\n')) as probe:
-            catalog = self.engine.browser.route('GET', '/api/tools/catalog')[1]['tools']
-            browser = next(tool for tool in catalog if tool['name'] == 'browse_url')
-            self.assertTrue(browser['usable'])
-            self.assertEqual(browser['approval_required'], ['approve_execution', 'approve_browser'])
-            self.engine.browser.configure({'enabled': False})
-            catalog = self.engine.browser.route('GET', '/api/tools/catalog')[1]['tools']
-            self.assertFalse(next(tool for tool in catalog if tool['name'] == 'browse_url')['usable'])
-            self.assertNotIn('browse_url', self.engine.browser.route('GET', '/server_info')[1]['usable_tools'])
-            self.assertIn('browse_url', self.engine.browser.route('GET', '/api/tools/')[1])
-        self.assertEqual(probe.call_count, 1)
-        self.assertEqual(probe.call_args.args[0][:3], ['docker', 'image', 'inspect'])
+    def test_discovery_reports_the_computer_browser_and_respects_disable(self):
+        info = self.engine.browser.info()
+        self.assertEqual((info['availability'], info['runtime'], info['browser']), ('host_ready', 'this computer', 'msedge.exe'))
+        catalog = self.engine.browser.route('GET', '/api/tools/catalog')[1]['tools']
+        browser = next(tool for tool in catalog if tool['name'] == 'browse_url')
+        self.assertTrue(browser['usable'])
+        self.assertEqual(browser['approval_required'], ['approve_execution', 'approve_browser'])
+        self.engine.browser.configure({'enabled': False})
+        catalog = self.engine.browser.route('GET', '/api/tools/catalog')[1]['tools']
+        self.assertFalse(next(tool for tool in catalog if tool['name'] == 'browse_url')['usable'])
+        self.assertNotIn('browse_url', self.engine.browser.route('GET', '/server_info')[1]['usable_tools'])
+        self.assertIn('browse_url', self.engine.browser.route('GET', '/api/tools/')[1])
+        self.engine.browser.configure({'enabled': True})
+        with patch("dikdik.host_browser.find_browser", return_value=None):
+            self.assertEqual(self.engine.browser.info()['availability'], 'unavailable')
+            self.assertEqual(self.engine.browser.visit(self.task, 'https://example.com/', APPROVAL)['status'], 'blocked')
 
     def test_cancel_and_task_deletion_boundary(self):
         entered = threading.Event()
@@ -240,7 +209,7 @@ class BrowserServiceTests(unittest.TestCase):
             cancel.wait(3)
             return {'status': 'cancelled', 'error': 'cancelled'}
         result = []
-        with patch('dikdik.browser_service.capture', side_effect=waiting):
+        with patch('dikdik.host_browser.capture', side_effect=waiting):
             worker = threading.Thread(target=lambda: result.append(self.engine.browser.visit(self.task, 'https://example.com/', APPROVAL, parent_cancel)))
             worker.start()
             self.assertTrue(entered.wait(2))
@@ -253,11 +222,9 @@ class BrowserServiceTests(unittest.TestCase):
         self.assertFalse(self.engine.browser.stop(self.task)['stop_requested'])
 
     def test_restart_marks_unfinished_capture_interrupted(self):
-        self.engine.store.event(self.task, 'browser_started', {'url': 'https://example.com/', 'container': 'dikdik-' + 'a' * 32})
+        self.engine.store.event(self.task, 'browser_started', {'url': 'https://example.com/', 'runtime': 'this computer'})
         self.engine.browser.close()
-        with patch('dikdik.browser_service.cleanup_container', return_value=None) as cleanup:
-            self.engine.browser = BrowserService(self.engine)
-        cleanup.assert_called_once_with('dikdik-' + 'a' * 32)
+        self.engine.browser = BrowserService(self.engine)
         self.assertEqual(self.engine.store.get(self.task)['events'][-1]['data']['status'], 'interrupted')
 
     def test_agent_tool_requires_task_consent_and_respects_profile(self):
@@ -272,7 +239,7 @@ class BrowserServiceTests(unittest.TestCase):
             with self.subTest(allow=allow, consent=consent):
                 profile = self.engine.agents.create({'name': uuid.uuid4().hex, 'allow_browser': allow})
                 model = Model()
-                with patch('dikdik.engine.CompatibleAgentModel', return_value=model), patch('dikdik.browser_service.capture', side_effect=captured):
+                with patch('dikdik.engine.CompatibleAgentModel', return_value=model), patch('dikdik.host_browser.capture', side_effect=captured):
                     task = self.engine.submit({'objective': 'Browse', 'mode': 'agent', 'verification': 'syntax', 'approve_external': True, 'approve_execution': consent, 'approve_browser': consent, 'agent_profile': profile['id']})
                     for _ in range(600):
                         if not self.engine.busy(task):
@@ -303,7 +270,7 @@ class BrowserHTTPTests(unittest.TestCase):
         for method, path in [('GET', '/api/browser'), ('GET', prefix), ('POST', prefix), ('PATCH', '/api/browser')]:
             self.assertEqual(call(method, path, {}, token='wrong')[0], 401)
         self.assertEqual(call('POST', prefix, {'url': 'https://example.com/'})[0], 403)
-        with patch('dikdik.browser_service.capture', side_effect=captured):
+        with patch('dikdik.host_browser.capture', side_effect=captured):
             status, _, body = call('POST', prefix, {'url': 'https://example.com/', **APPROVAL})
         self.assertEqual(status, 200)
         screenshot = json.loads(body)['screenshot']
@@ -313,12 +280,3 @@ class BrowserHTTPTests(unittest.TestCase):
         self.assertEqual(call('GET', screenshot.replace(self.task, other))[0], 404)
         self.assertEqual(call('PATCH', '/api/browser', {'enabled': False})[0], 200)
         self.assertEqual(call('POST', prefix, {'url': 'https://example.com/', **APPROVAL})[0], 403)
-
-
-@unittest.skipUnless(os.environ.get('DIKDIK_RUN_BROWSER') == '1', 'Live Docker browser and public network access require DIKDIK_RUN_BROWSER=1')
-class LiveBrowserTests(unittest.TestCase):
-    def test_real_container_captures_public_page(self):
-        result = capture('https://example.com/', threading.Event(), name='dikdik-' + uuid.uuid4().hex)
-        self.assertEqual(result['status'], 'passed', result)
-        self.assertIn('Example', result['title'])
-        self.assertGreater(len(result['png']), 100)

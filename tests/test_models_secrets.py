@@ -12,7 +12,8 @@ from dikdik.agent import ModelResponse
 from dikdik.engine import Engine, TERMINAL
 from dikdik.profiles import ApiError
 from dikdik.routing import choose
-from dikdik.runners import Redactor, container_command
+from dikdik import local_exec
+from dikdik.local_exec import Redactor
 from dikdik.server_routes import build_routes
 
 AGENT = {"mode": "agent", "verification": "syntax", "approve_external": True}
@@ -230,10 +231,14 @@ class SecretTests(Base):
         self.assertEqual(out, "token=[redacted TOKEN] done")
         self.assertEqual(redactor.clean("a s3cr3t-value b"), "a [redacted TOKEN] b")
 
-    def test_values_never_reach_the_docker_command_line(self):
-        command = container_command(Path("/w"), "n", "img", ["true"], env_names=("GITHUB_TOKEN",))
-        self.assertIn("--env=GITHUB_TOKEN", command)
-        self.assertFalse(any("third-value" in part for part in command))
+    def test_local_command_output_never_shows_the_value(self):
+        chunks = []
+        result = local_exec.run(self.engine.root, 'echo "token=$DIKDIK_TEST_SECRET"', threading.Event(), timeout=30,
+                                on_chunk=chunks.append, env={"DIKDIK_TEST_SECRET": "third-value-42"})
+        self.assertEqual(result["status"], "passed", result["output"])
+        self.assertIn("token=[redacted DIKDIK_TEST_SECRET]", result["output"])
+        for text in (result["output"], "".join(chunks)):
+            self.assertNotIn("third-value-42", text)
 
     def test_sandbox_secrets_need_task_approval(self):
         self.engine.models.secrets.set("gh", b"value-123")
@@ -263,9 +268,9 @@ class SecretRequestTests(Base):
                 model_inputs.append(json.dumps(messages))
                 return self.replies.pop(0)
 
-        def shell(_workdir, _files, _command, cancel, **kwargs):
+        def shell(_root, _command, cancel, **kwargs):
             seen_env.update(kwargs.get("env") or {})
-            return {"status": "passed", "exit_code": 0, "output": "[redacted GH_TOKEN]\n", "changed": {}}
+            return {"status": "passed", "exit_code": 0, "output": "[redacted GH_TOKEN]\n"}
 
         def answer():
             deadline = time.time() + 10
@@ -277,8 +282,9 @@ class SecretRequestTests(Base):
                 time.sleep(0.05)
 
         with patch.dict(os.environ, {"DIKDIK_MODEL_URL": "https://provider.example/v1/chat/completions", "DIKDIK_MODEL": "m", "DIKDIK_API_KEY": "k"}), \
-                patch("dikdik.engine.CompatibleAgentModel", Model), patch("dikdik.engine.run_shell", side_effect=shell):
-            task = self.engine.submit({"objective": "Use the API", "mode": "agent", "verification": "docker", "approve_external": True, "approve_execution": True})
+                patch("dikdik.engine.CompatibleAgentModel", Model), patch("dikdik.engine.local_exec.run", side_effect=shell):
+            task = self.engine.submit({"objective": "Use the API", "mode": "agent", "verification": "local", "approve_external": True,
+                                       "approve_execution": True, "confirmation": "never"})
             helper = threading.Thread(target=answer)
             helper.start()
             data = self.idle(task)
@@ -294,7 +300,7 @@ class SecretRequestTests(Base):
         with self.assertRaises(KeyError):
             self.engine.answer_secret(task, {"id": "nope", "value": "x"})
 
-    def test_requests_need_docker_approval_and_a_valid_name(self):
+    def test_requests_need_execution_approval_and_a_valid_name(self):
         from dikdik.control import SecretRequests
         requests = SecretRequests()
         with self.assertRaises(ValueError):

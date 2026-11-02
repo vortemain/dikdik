@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import threading
 from urllib.parse import urlsplit
+from . import sql
 
 
 KINDS = {"completed", "failed", "blocked", "paused", "confirmation_requested", "question_requested", "secret_requested"}
@@ -130,10 +131,9 @@ class DesktopNotifications:
         store = engine.store
         with store.connect() as db:
             high = db.execute("SELECT COALESCE(MAX(seq),0) FROM events").fetchone()[0]
-            placeholders = ",".join("?" for _ in KINDS)
             rows = db.execute(f"SELECT e.seq,e.task_id,e.kind,e.data,t.state,t.title,t.request,t.result,t.workspace "
                               f"FROM events e JOIN tasks t ON t.id=e.task_id WHERE e.seq>? AND e.seq<=? "
-                              f"AND e.kind IN ({placeholders}) AND t.workspace=? ORDER BY e.seq LIMIT 100",
+                              f"AND e.kind IN ({sql.marks(len(KINDS))}) AND t.workspace=? ORDER BY e.seq LIMIT 100",
                               (self._cursor, high, *sorted(KINDS), store.workspace)).fetchall()
             events = []
             for row in rows:

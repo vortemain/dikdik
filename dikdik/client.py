@@ -10,8 +10,8 @@
     python -m dikdik.client ask "Fix the failing test" --share-code
     python -m dikdik.client tasks | show <id> | apply <id> --yes
 
-Sharing code with the model provider and running tests in Docker are explicit
-arguments, exactly like the approvals in the app. Standard library only.
+Sharing code with the model provider and running commands and tests on this computer
+are explicit arguments, exactly like the approvals in the app. Standard library only.
 """
 
 import argparse
@@ -66,7 +66,7 @@ class DikdikClient:
     # --- tasks ----------------------------------------------------------------
     @staticmethod
     def _request(objective, mode, verification, share_code, run_tests, edits, agent_profile):
-        request = {"objective": objective, "mode": mode, "verification": "docker" if run_tests else verification,
+        request = {"objective": objective, "mode": mode, "verification": "local" if run_tests else verification,
                    "approve_external": bool(share_code), "approve_execution": bool(run_tests)}
         if edits is not None:
             request["edits"] = edits
@@ -234,7 +234,8 @@ def main(argv: list[str] | None = None, out=sys.stdout) -> int:
     ask.add_argument("--mode", choices=["agent", "model"], default="agent")
     ask.add_argument("--agent-profile")
     ask.add_argument("--share-code", action="store_true", help="Approve sending code and the objective to your model provider")
-    ask.add_argument("--run-tests", action="store_true", help="Approve running the tests in the Docker sandbox")
+    ask.add_argument("--run-tests", action="store_true",
+                     help="Approve running commands and tests on this computer; the agent edits your files directly")
     ask.add_argument("--no-follow", action="store_true")
     commands.add_parser("tasks", help="List recent tasks")
     show = commands.add_parser("show", help="Print a task's conversation and diff")
