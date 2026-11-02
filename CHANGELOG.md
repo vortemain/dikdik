@@ -1,6 +1,17 @@
 # Changelog
 
-## 0.3.4 — 2026-11-02
+## 0.3.5 — 2026-11-02
+
+The v0.3.4 tag failed its release checks and was never published; 0.3.5 contains everything
+listed under 0.3.4 below, plus:
+- Fault testing: the proxy's `down` mode shuts its listener down before closing it, so Linux
+  refuses new connections immediately instead of completing the handshake and resetting them.
+- `question_answered` is recorded in the agent's thread before it continues, so it always
+  precedes what the agent does next (it could previously land after the task completed).
+- `planning.plans` routes its workspace clause through `sql.clause` (security gate PY008).
+- The benchmark's `git archive` export has a timeout; a failing preview browser close is logged.
+
+## 0.3.4 — 2026-11-02 (not published)
 
 Providers and model screens:
 - Nebius shows its real logo, and xAI its own mark instead of the Grok logo ("xAI models").

@@ -30,14 +30,14 @@ Dikdik brings the conversation, editor, terminal, browser, and change review int
 **34 bundled skills · 6 lifecycle events · Checkpoints and Undo · Your choice of models**
 
 > [!NOTE]
-> **v0.3.4 is a developer preview.** See the [release notes](https://github.com/vortemain/dikdik/releases/tag/v0.3.4) for downloads and validation, and [Security](SECURITY.md) for operating boundaries.
+> **v0.3.5 is a developer preview.** See the [release notes](https://github.com/vortemain/dikdik/releases/tag/v0.3.5) for downloads and validation, and [Security](SECURITY.md) for operating boundaries.
 
 ## Quick start
 
 ### 1. Install a release
 
 Download the **Windows setup `.exe`**, **macOS `.dmg`**, or **Linux amd64 `.deb`**
-from [Dikdik v0.3.4](https://github.com/vortemain/dikdik/releases/tag/v0.3.4).
+from [Dikdik v0.3.5](https://github.com/vortemain/dikdik/releases/tag/v0.3.5).
 Desktop bundles include Python and Chromium. Windows requires WebView2;
 Linux packages target Ubuntu 24.04 or newer compatible Debian systems.
 These are unsigned developer previews; macOS builds are not notarized.
@@ -48,7 +48,7 @@ For the Python command-line and browser interface:
 Requires **Python 3.13 or newer**. Download the wheel and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/vortemain/dikdik/releases), verify its checksum, then install:
 
 ```bash
-python -m pip install ./dikdik-0.3.4-py3-none-any.whl
+python -m pip install ./dikdik-0.3.5-py3-none-any.whl
 dikdik --version
 dikdik /path/to/your-project
 ```
@@ -64,7 +64,7 @@ Dikdik opens its browser interface at **http://127.0.0.1:8787** and signs you in
 Python users can also install the optional desktop support:
 
 ```powershell
-python -m pip install "./dikdik-0.3.4-py3-none-any.whl[desktop]"
+python -m pip install "./dikdik-0.3.5-py3-none-any.whl[desktop]"
 dikdik-desktop C:\Projects\my-app
 ```
 
