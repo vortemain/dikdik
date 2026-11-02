@@ -1,3 +1,3 @@
 """DIKDIK: observable, bounded engineering workflows."""
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
