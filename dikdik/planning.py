@@ -6,7 +6,8 @@ import time
 from urllib.parse import urlsplit
 
 from .agent import _tool
-from . import migrations
+from . import migrations, sql
+from .store import WORKSPACE_CLAUSES
 
 
 WRITE_PLAN = _tool('write_plan', 'Write the reviewable PLAN.md artifact without implementing it or granting permission.', {'content': {'type': 'string'}}, ['content'])
@@ -104,7 +105,7 @@ class Planning:
                 'SELECT p.task_id, p.planner_id, p.content, p.revision, p.built_revision, t.request, t.title, t.state AS task_state,'
                 ' c.state AS planner_state, t.archived AS archived,'
                 ' (SELECT MAX(time) FROM events WHERE task_id IN (p.task_id, p.planner_id)) AS updated'
-                f' FROM plans p JOIN tasks t ON t.id = p.task_id JOIN tasks c ON c.id = p.planner_id WHERE {where}'
+                f' FROM plans p JOIN tasks t ON t.id = p.task_id JOIN tasks c ON c.id = p.planner_id WHERE {sql.clause(where, WORKSPACE_CLAUSES)}'
                 ' ORDER BY updated DESC LIMIT 200', params).fetchall()
         return [{'task_id': row['task_id'], 'planner_id': row['planner_id'], 'content': row['content'],
                  'revision': row['revision'], 'built_revision': row['built_revision'],

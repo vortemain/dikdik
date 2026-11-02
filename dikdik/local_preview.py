@@ -1,12 +1,13 @@
 """Supervised project preview on one ephemeral loopback port, with real browser evidence."""
 import hashlib
 import json
+import logging
 import re
 import socket
 import time
 from urllib.parse import urlsplit
 
-from . import accessibility
+from . import accessibility, logs
 from .host_browser import PREVIEW_HOST, connect_loopback
 from .interactive_browser import BrowserSessions, available
 from .local_exec import BackgroundShells
@@ -182,6 +183,6 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
         try:
             sessions.close()
         except Exception:
-            pass
+            logs.log("preview_browser_close_failed", logging.WARNING, exc_info=True)
         finally:
             shells.close()

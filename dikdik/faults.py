@@ -73,7 +73,7 @@ class FaultProxy:
                 self._listener = None
             stale = list(self._open) if mode in {"reset", "close", "blackhole", "down"} else []
         if mode == "down" and listener is not None:
-            listener.close()
+            _stop_listening(listener)
         if previous == "down" and mode != "down":
             self._listen()
         for sock in stale:  # a new fault also breaks connections the application is reusing
@@ -178,7 +178,7 @@ class FaultProxy:
             listener, self._listener = self._listener, None
             sockets = list(self._open)
         if listener is not None:
-            listener.close()
+            _stop_listening(listener)
         for sock in sockets:
             self._abort(sock)
         self._thread.join(2)
@@ -231,6 +231,16 @@ def _request(port: int, path: str, timeout: float) -> dict:
         return {"status": 0, "error": type(exc).__name__, "ms": round((time.perf_counter() - started) * 1000, 1)}
     finally:
         conn.close()
+
+
+def _stop_listening(listener: socket.socket) -> None:
+    """Refuse new connections now. On Linux a bare close() waits for the accept loop's poll to
+    return, and the kernel meanwhile completes handshakes it then resets, instead of refusing."""
+    try:
+        listener.shutdown(socket.SHUT_RDWR)
+    except OSError:  # Windows: a listening socket is not connected; close() alone refuses there
+        pass
+    listener.close()
 
 
 def _degraded_ok(status: int, accepted: set[int]) -> bool:

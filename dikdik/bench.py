@@ -176,7 +176,7 @@ def export_project(source: Path, ref: str | None, target: Path) -> None:
         return
     archive = target.parent / "export.zip"
     subprocess.run(["git", "-C", str(source), "archive", "--format=zip", "-o", str(archive), ref],
-                   check=True, capture_output=True)
+                   check=True, capture_output=True, timeout=120)
     with zipfile.ZipFile(archive) as bundle:
         bundle.extractall(target)
     archive.unlink()

@@ -660,7 +660,6 @@ class Engine:
             raise ValueError("Say which question you are answering")
         self.store.status(task)
         self.question_requests.answer(task, body["id"], body.get("answer") or "")
-        self.store.event(task, "question_answered", {"id": body["id"], "answer": str(body.get("answer") or "")[:2000]})
         return True
 
     def _ask_question(self, task, arguments, stop):
@@ -676,6 +675,8 @@ class Engine:
         self.store.event(task, "question_requested", {"id": request_id, "question": question.strip()[:2000],
                                                         "choices": choices or []})
         answer = self.question_requests.wait(task, request_id, stop)
+        if answer is not None:  # recorded here, before the agent continues, so it precedes what the agent does next
+            self.store.event(task, "question_answered", {"id": request_id, "answer": answer[:2000]})
         if answer is None:
             return {"status": "skipped", "question": question.strip()[:200], "note": "The user skipped this question. Proceed with your best judgment."}
         return {"status": "answered", "question": question.strip()[:200], "answer": answer[:8000]}
