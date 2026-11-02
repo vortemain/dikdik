@@ -1,7 +1,7 @@
 import { browserHistory, browserView, displayUrl, buildTaskRequest, commandActivity, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parsePlans, parseVerification, planStatus, planTitle, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
 import { attachmentList, confirmationForRunMode, contextUsage, costProjection, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
-import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, BrowserPage, ChatMessage, ChecklistItem, Mode, SlashCommand, TaskRequest, DiffReview, PlanSummary, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
+import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, BrowserPage, ChatMessage, ChecklistItem, FileStatus, Mode, SlashCommand, TaskRequest, DiffReview, PlanSummary, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
 import { keysPane, modelsPane, when, type ModelProfile } from "./models-pane";
 import { modelPicker } from "./model-picker";
@@ -13,7 +13,7 @@ import { mcpPane } from "./mcp-pane";
 import { boundedFilePreview, detectLanguage, fileFacts, highlight, highlightLines, languageLabel, supportedLanguages, projectStack, type Token } from "./highlight";
 import { providersPane } from "./providers-pane";
 import { fileIcon, folderIcon, providerIcon, providerId, refreshFileIcons, vscodeLogo, dikdikLogo } from "./icons";
-import { fileTree, organiseTasks, parentFolders, parseTags, rankCommands, splitDiff, workspacePath } from "./organise";
+import { fileTree, organiseTasks, parentFolders, parseTags, rankCommands, splitDiff, toolFileChanges, workspacePath, type LiveChange } from "./organise";
 import { renderRichText } from './rich-text';
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
@@ -61,6 +61,11 @@ let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsEleme
 let showAllMessages = false, projectFileSet = new Set<string>();
 const expandedDirs = new Set<string>();
 let openTabs: string[] = [], fileText = "", filePreview = false;
+// Files the selected conversation's agent wrote during this view, so the Explorer and an open
+// editor follow it live (the turn's diff replaces them when the run ends).
+const liveChanges = new Map<string, LiveChange>();
+const liveFilesPending = new Set<string>();
+let liveFilesTimer: ReturnType<typeof setTimeout> | null = null;
 const languageModes = new Map<string, string>();
 let projectImages: string[] = [], pinnedTabs = new Set<string>(), tabsRestored = false;
 let diffMode = "diff", diffNewKey = "", reviewShortened = false, reviewDirect = false;
@@ -1157,7 +1162,8 @@ function renderReview(taskId: string, state: string, result: unknown): void {
   el("toggle-canvas").hidden = !review.diff;
   if (review.diff && canvasAutoOpened !== taskId && isTerminal(state)) {
     canvasAutoOpened = taskId;
-    if (wide("(min-width: 1101px)")) openCanvas("changes");
+    // Show the diff when the side panel is closed; never pull someone away from the tab they are watching.
+    if (wide("(min-width: 1101px)") && el("canvas").hidden) openCanvas("changes");
   }
 }
 
@@ -1186,6 +1192,39 @@ function openCanvas(tab: string): void {
   if (tab === "usage") renderUsage();
 }
 function changedPaths(): Set<string> { return new Set(review.files.map(file => file.path)); }
+/** VS Code-style decoration per path: the turn's diff, else what the agent wrote while running. */
+function fileStatuses(): Map<string, FileStatus> {
+  const statuses = new Map<string, FileStatus>(liveChanges);
+  for (const file of review.files) statuses.set(file.path, file.status);
+  return statuses;
+}
+/** Record what a finished tool call wrote and refresh the Explorer and open file shortly after. */
+function followAgentFiles(record: TaskEvent): void {
+  const touched = toolFileChanges(record.kind, record.data);
+  if (!touched.length) return;
+  for (const { path, status } of touched) {
+    liveChanges.set(path, liveChanges.get(path) === "added" || !projectFileSet.has(path) ? "added" : status);
+    for (const folder of parentFolders(path)) expandedDirs.add(folder);
+  }
+  for (const { path } of touched) liveFilesPending.add(path);
+  const latest = touched[touched.length - 1]!.path;
+  if (liveFilesTimer !== null) return;
+  const task = selected;
+  liveFilesTimer = setTimeout(() => {
+    liveFilesTimer = null;
+    const pending = new Set(liveFilesPending); liveFilesPending.clear();
+    void (async () => {
+      await project().catch(() => undefined);
+      if (task !== selected || canvasTab !== "files" || el("canvas").hidden) return;
+      renderFileList();
+      // Like an editor following the agent: reload the open file it changed, or open its latest file.
+      // Auto and Ask write the project folder itself; only Classic keeps changes in a copy.
+      const version = (path: string) => runMode() === "classic" && selected && !projectFileSet.has(path) ? "candidate" : "workspace";
+      if (openFile && pending.has(openFile)) await showFile(openFile, version(openFile));
+      else if (!openFile) await showFile(latest, version(latest));
+    })();
+  }, 250);
+}
 
 let terminalHistoryIndex = -1, terminalDraft = "", terminalSubmitting = false, terminalsRestored = false;
 let terminalRenderer: TerminalRenderer | null = null, terminalCopyText = "", terminalRenderedTask: string | null = null;
@@ -1919,7 +1958,8 @@ el("browser-enabled").addEventListener("change", async () => {
 function renderFileList(): void {
   const query = ((el("file-search") as HTMLInputElement).value ?? "").trim().toLowerCase();
   const changed = changedPaths();
-  const all = [...new Set([...review.files.filter(f => f.status === "added").map(f => f.path), ...projectFiles, ...projectImages])].sort();
+  const added = [...fileStatuses()].filter(([, status]) => status === "added").map(([path]) => path);
+  const all = [...new Set([...added, ...projectFiles, ...projectImages])].sort();
   const matches = all.filter(path => !query || path.toLowerCase().includes(query));
   if (!query) {
     el("file-list").replaceChildren(...treeRows(all, changed));
@@ -1947,8 +1987,7 @@ async function showFile(path: string, version: string): Promise<void> {
     const query = `/api/files/content?path=${encodeURIComponent(path)}${version === "candidate" && selected ? `&task=${encodeURIComponent(selected)}` : ""}`;
     const data = await api<{ path: string; version: string; text: string; indexed?: boolean; truncated?: boolean; bytes?: number }>(query);
     openFile = path; fileVersion = data.version; fileText = data.text;
-    fileReadNotice = data.indexed === false ? "Agent tools can read and search this file on demand." : "";
-    if (data.truncated) fileReadNotice += " Showing the first 4 MB. Open in VS Code for the full file.";
+    fileReadNotice = data.truncated ? "Showing the first 4 MB. Open in VS Code for the full file." : "";
     rememberTab(path);
     for (const folder of parentFolders(path)) expandedDirs.add(folder);
     el("file-name").replaceChildren(...path.split("/").flatMap((part, index, parts) =>
@@ -2175,9 +2214,13 @@ function resetConversation(): void {
   renderPlanner(); renderChecklist();
   el("working").hidden = true;
   el("toggle-canvas").hidden = true;
-  setCanvas(false);
+  // Files, Terminal and Browser belong to the project, not the conversation: keep them open
+  // (like an editor's side bar) so a new task's files can be watched as they are written.
+  if (el("canvas").hidden || !PROJECT_PANELS.has(canvasTab)) setCanvas(false);
+  else if (canvasTab === "files") renderFileList();
   button("cancel").disabled = true;
 }
+const PROJECT_PANELS = new Set(["files", "terminal", "browser"]);
 function setUrl(task: string | null): void {
   const loc = globalThis.location;
   if (!loc || typeof globalThis.history?.replaceState !== "function") return;
@@ -2206,6 +2249,7 @@ function selectTask(id: string): void {
   stopStream();
   viewEpoch++;
   selected = id; watching = true; selectedState = "";
+  liveChanges.clear(); liveFilesPending.clear();
   resetConversation();
   const summary = lastTasks.find(task => task.id === id);
   el("chat-title").textContent = summary ? conversationLabel(summary) : "Loading…";
@@ -2342,7 +2386,7 @@ async function project(): Promise<void> {
   el("project-picker-name").textContent = data.name;
   el("topbar-project-name").textContent = data.name;
   el("explorer-project").textContent = data.name;
-  el("explorer-stack").replaceChildren(...projectStack(projectFiles).map(name => make("span", "stack-chip", name)));
+  el("explorer-project").title = [data.name, ...projectStack(projectFiles)].join(" · ");
   el("topbar-project").title = `${data.name} · ${summary}. Switch, open, clone or create a project`;
   projectTrusted = (data as Project & { trusted?: boolean }).trusted === true;
   applyRunMode();
@@ -2625,6 +2669,7 @@ function startStream(id: string): void {
     liveSeq = record.seq;
     liveEvents.push(record);
     if (record.kind === "agent_message" || record.kind === "agent_tool") { replyPaint.cancel(); pendingReply = ""; showLiveReply(""); }
+    followAgentFiles(record);
     streamPaint.schedule();
     if (record.kind === "terminal_command" || record.kind === "terminal_output" || isTerminal(record.kind)) terminalPaint.schedule();
     if (record.kind === "browser_started") autoOpenBrowser([record]);
@@ -3826,6 +3871,8 @@ el("files-toggle-explorer").addEventListener("click", () => {
   el("files-toggle-explorer").setAttribute("aria-pressed", String(!hidden));
 });
 function treeRows(paths: string[], changed: Set<string>): HTMLElement[] {
+  const statuses = fileStatuses();
+  const changedDirs = new Set([...statuses.keys()].flatMap(parentFolders));
   return fileTree(paths, expandedDirs).map(row => {
     const item = make("button", row.dir ? "tree-row tree-dir" : "tree-row");
     item.type = "button";
@@ -3838,11 +3885,13 @@ function treeRows(paths: string[], changed: Set<string>): HTMLElement[] {
       const chevron = icon("chevron"); chevron.setAttribute("class", "i tree-chevron");
       const folder = folderIcon(row.path, row.open);
       item.append(chevron, folder, make("span", "tree-name", row.name));
+      if (changedDirs.has(row.path)) item.dataset.status = "contains";
       item.onclick = () => { if (expandedDirs.has(row.path)) expandedDirs.delete(row.path); else expandedDirs.add(row.path); renderFileList(); };
     } else {
       item.setAttribute("aria-selected", String(row.path === openFile));
       item.append(fileBadge(row.path), make("span", "tree-name", row.name));
-      if (changed.has(row.path)) item.dataset.changed = "true";
+      const status = statuses.get(row.path);
+      if (status) { item.dataset.status = status; item.title = `${row.path} · ${fileStatusLabel(status)}`; }
       item.onclick = () => { void showFile(row.path, changed.has(row.path) && selected ? "candidate" : "workspace"); };
     }
     return item;
@@ -4812,53 +4861,139 @@ async function loadGitAccounts(): Promise<void> {
 Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps, git: loadGitAccounts });
 
 // --- desktop self-update --------------------------------------------------
-let updateAvailable: { latest: string; url: string } | null = null;
+interface UpdateInfo {
+  current: string; latest: string; available: boolean; url?: string; notes?: string; install?: string;
+  can_install?: boolean; pip_command?: string; asset?: { size?: number } | null; error?: string;
+}
+interface UpdateStatus {
+  state: string; done?: number; total?: number; latest?: string; error?: string; cancelled?: boolean;
+  previous?: { ok: boolean; from: string; to: string; url: string };
+}
+const UPDATE_BUSY = new Set(["downloading", "verifying", "installing", "restarting"]);
+// What happens once the download is verified, in each platform's own terms.
+const UPDATE_INSTALL_NOTE: Record<string, string> = {
+  windows: "Dikdik will close, install the update silently and reopen in a few seconds.",
+  macos: "Dikdik will close, replace itself and reopen.",
+  linux: "Enter your password in the system dialog; Dikdik then reopens.",
+};
+let updateInfo: UpdateInfo | null = null, updateState: UpdateStatus = { state: "idle" }, updateConfirm = false;
+let updatePoll: ReturnType<typeof setTimeout> | null = null, updateChecking = false;
 const updateEl = (id: string): HTMLElement | null => document.getElementById(id);
-function showUpdateAvailable(latest: string, url: string): void {
-  updateAvailable = { latest, url };
-  const indicator = updateEl("sidebar-update") as HTMLButtonElement | null;
-  if (indicator) { indicator.hidden = false; indicator.title = `Dikdik ${latest} is available — click to update`; }
-  const action = updateEl("update-action") as HTMLButtonElement | null;
-  if (action) { action.textContent = `Download & install ${latest}`; action.disabled = false; }
-  const detail = updateEl("update-detail"); if (detail) detail.textContent = "A newer release is available.";
-  const notes = updateEl("update-notes") as HTMLAnchorElement | null;
-  if (notes) { notes.hidden = !url; if (url) notes.href = url; }
-}
-async function loadUpdateCheck(): Promise<void> {
-  try {
-    const info = await api<{ current: string; latest: string; available: boolean; url?: string; error?: string }>("/api/desktop/update/check");
-    const version = updateEl("update-version");
-    if (version) version.textContent = info.current ?? "";
-    if (info.available && info.latest) {
-      showUpdateAvailable(info.latest, info.url ?? "");
-    } else {
-      const action = updateEl("update-action") as HTMLButtonElement | null;
-      if (action) action.disabled = false;
-      const detail = updateEl("update-detail");
-      if (detail) detail.textContent = info.error ? "Could not check for updates right now." : "You’re on the latest release.";
-    }
-  } catch {
-    const detail = updateEl("update-detail"); if (detail) detail.textContent = "Could not check for updates right now.";
+const megabytes = (bytes = 0) => `${(bytes / 1048576).toFixed(bytes >= 104857600 ? 0 : 1)} MB`;
+function runningTaskCount(): number { return lastTasks.filter(task => task.state === "running" || task.state === "queued").length; }
+
+function renderUpdate(): void {
+  const info = updateInfo, state = updateState.state, busy = UPDATE_BUSY.has(state);
+  const action = updateEl("update-action") as HTMLButtonElement | null, detail = updateEl("update-detail");
+  const version = updateEl("update-version"); if (version) version.textContent = info?.current ?? updateState.latest ?? "";
+  const progress = updateEl("update-progress"), bar = updateEl("update-bar") as HTMLProgressElement | null;
+  const cancel = updateEl("update-cancel"), indicator = updateEl("sidebar-update") as HTMLButtonElement | null;
+  const latest = updateState.latest || info?.latest || "";
+  const percent = updateState.total ? Math.min(100, Math.round((updateState.done ?? 0) * 100 / updateState.total)) : 0;
+  if (progress) progress.hidden = state !== "downloading" && state !== "verifying";
+  if (bar) { if (state === "verifying") bar.removeAttribute?.("value"); else bar.value = percent; }
+  const text = updateEl("update-progress-text");
+  if (text) text.textContent = state === "verifying" ? "Checking the download…" : updateState.total ? `${megabytes(updateState.done)} of ${megabytes(updateState.total)} · ${percent}%` : megabytes(updateState.done);
+  if (cancel) cancel.hidden = state !== "downloading";
+  const pip = updateEl("update-pip");
+  if (pip) pip.hidden = !(info?.available && info.pip_command);
+  const pipCommand = updateEl("update-pip-command"); if (pipCommand) pipCommand.textContent = info?.pip_command ?? "";
+  const notesBox = updateEl("update-notes-box") as HTMLDetailsElement | null;
+  if (notesBox) notesBox.hidden = !(info?.available && (info.notes || info.url));
+  const notesTitle = updateEl("update-notes-title"); if (notesTitle) notesTitle.textContent = `What’s new in ${latest}`;
+  const notesBody = updateEl("update-notes-body");
+  if (notesBody && info?.notes && notesBody.dataset.version !== latest) { notesBody.dataset.version = latest; notesBody.replaceChildren(richText(info.notes)); }
+  const notesLink = updateEl("update-notes") as HTMLAnchorElement | null;
+  if (notesLink) { notesLink.hidden = !info?.url; if (info?.url) notesLink.href = info.url; }
+  if (indicator) {
+    indicator.hidden = !(info?.available || busy);
+    const label = indicator.querySelector?.("span:not(.update-dot)");
+    if (label) label.textContent = state === "downloading" ? `Updating ${percent}%` : busy ? "Updating…" : "Update";
+    indicator.title = busy ? `Installing Dikdik ${latest}` : `Dikdik ${latest} is available — click to update`;
+  }
+  if (!action || !detail) return;
+  action.hidden = state === "downloading" || state === "verifying";
+  action.disabled = busy || updateChecking;
+  if (state === "installing" || state === "restarting") {
+    action.textContent = state === "restarting" ? "Restarting…" : "Installing…";
+    detail.textContent = state === "restarting" ? `Restarting into Dikdik ${latest}…` : UPDATE_INSTALL_NOTE[info?.install ?? ""] ?? "Installing…";
+  } else if (state === "downloading" || state === "verifying") {
+    detail.textContent = `Downloading Dikdik ${latest}. You can keep working.`;
+  } else if (state === "failed") {
+    action.textContent = "Try again";
+    detail.textContent = `The update didn’t install: ${updateState.error ?? "unknown error"} You’re still on ${info?.current ?? "this version"}.`;
+  } else if (updateChecking) {
+    action.textContent = "Checking…"; detail.textContent = "Looking for a newer release…";
+  } else if (!info) {
+    action.textContent = "Check for updates";
+  } else if (info.error) {
+    action.textContent = "Check again"; detail.textContent = "Couldn’t reach GitHub to check for updates.";
+  } else if (!info.available) {
+    action.textContent = "Check for updates"; detail.textContent = "You’re on the latest release.";
+  } else if (info.pip_command) {
+    action.textContent = "Copy upgrade command"; detail.textContent = `Dikdik ${latest} is available. This copy runs from Python; upgrade it with pip, then restart Dikdik.`;
+  } else if (!info.can_install) {
+    action.textContent = "Open download page"; detail.textContent = `Dikdik ${latest} is available. Download it from the release page.`;
+  } else {
+    const running = runningTaskCount();
+    const size = info.asset?.size ? ` (${megabytes(info.asset.size)})` : "";
+    action.textContent = updateConfirm ? `Restart and pause ${running} task${running === 1 ? "" : "s"}` : `Install ${latest}`;
+    detail.textContent = updateConfirm ? `${running} running task${running === 1 ? "" : "s"} will pause and can be resumed after the restart.`
+      : `Dikdik ${latest}${size} is ready to download. ${UPDATE_INSTALL_NOTE[info.install ?? ""] ?? ""}`;
   }
 }
-async function applyUpdate(): Promise<void> {
-  if (!updateAvailable) return;
-  const action = updateEl("update-action") as HTMLButtonElement | null;
-  if (action) { action.disabled = true; action.textContent = "Installing…"; }
-  const detail = updateEl("update-detail");
-  if (detail) detail.textContent = "Downloading and installing. Dikdik will restart.";
+async function loadUpdateCheck(force = false): Promise<void> {
+  if (updateChecking || UPDATE_BUSY.has(updateState.state)) return;
+  updateChecking = true; renderUpdate();
+  try { updateInfo = await api<UpdateInfo>(`/api/desktop/update/check${force ? "?force=1" : ""}`); }
+  catch { updateInfo = { current: updateInfo?.current ?? "", latest: "", available: false, error: "unreachable" }; }
+  finally { updateChecking = false; }
+  if (updateState.state === "failed" || updateState.cancelled) updateState = { state: "idle" };
+  renderUpdate();
+}
+async function pollUpdate(): Promise<void> {
+  if (updatePoll !== null) { clearTimeout(updatePoll); updatePoll = null; }
+  try { updateState = await api<UpdateStatus>("/api/desktop/update/status"); }
+  catch { if (updateState.state === "restarting") return; }  // the old window is closing
+  renderUpdate();
+  if (UPDATE_BUSY.has(updateState.state)) updatePoll = setTimeout(() => void pollUpdate(), updateState.state === "downloading" ? 400 : 1000);
+}
+async function startUpdate(): Promise<void> {
+  if (!updateInfo?.can_install) return;
+  if (runningTaskCount() && !updateConfirm) { updateConfirm = true; renderUpdate(); return; }
+  updateConfirm = false;
   try {
-    const reply = await api<{ ok: boolean; restarting?: boolean; error?: string; latest?: string }>("/api/desktop/update/apply", {});
-    if (!reply.ok) throw new Error(reply.error || "The update could not be installed.");
-    if (detail) detail.textContent = "Restarting…";
+    const reply = await api<UpdateStatus & { ok: boolean }>("/api/desktop/update/apply", {});
+    if (!reply.ok) throw new Error(reply.error || "The update could not start.");
+    updateState = reply;
+    void pollUpdate();
   } catch (error) {
-    if (action) { action.disabled = false; action.textContent = "Retry"; }
-    const text = error instanceof Error ? error.message : "The update could not be installed.";
-    if (detail) detail.textContent = text;
-    message(text, true);
+    updateState = { state: "failed", error: error instanceof Error ? error.message : "The update could not start." };
+    renderUpdate();
   }
 }
-const updateActionBtn = updateEl("update-action");
-if (updateActionBtn) updateActionBtn.addEventListener("click", () => { if (updateAvailable) void applyUpdate(); else void loadUpdateCheck(); });
-const sidebarUpdateBtn = updateEl("sidebar-update");
-if (sidebarUpdateBtn) sidebarUpdateBtn.addEventListener("click", () => openSettings("general", true));
+/** After a restart, say once whether the update took effect. */
+async function reportPreviousUpdate(): Promise<void> {
+  const state = await api<UpdateStatus>("/api/desktop/update/status").catch(() => null);
+  if (!state?.previous) return;
+  const { ok, from, to } = state.previous;
+  message(ok ? `Dikdik updated to ${to}. Open Settings → General for what’s new.` : `The update to ${to} didn’t finish; you’re still on ${from}. Try again from Settings.`, !ok);
+  void request("/api/desktop/update/dismiss", "POST", {}).catch(() => undefined);
+}
+updateEl("update-action")?.addEventListener("click", () => {
+  if (updateState.state === "failed") { updateState = { state: "idle" }; void loadUpdateCheck(true); return; }
+  if (updateInfo?.available && updateInfo.pip_command) { void copyText(updateInfo.pip_command, updateEl("update-pip-copy") as HTMLButtonElement); return; }
+  if (updateInfo?.available && !updateInfo.can_install && updateInfo.url) { globalThis.open?.(updateInfo.url, "_blank", "noopener"); return; }
+  if (updateInfo?.can_install) void startUpdate(); else void loadUpdateCheck(true);
+});
+updateEl("update-cancel")?.addEventListener("click", () => { void request<UpdateStatus>("/api/desktop/update/cancel", "POST", {}).then(state => { updateState = state; renderUpdate(); }).catch(() => undefined); });
+updateEl("update-pip-copy")?.addEventListener("click", () => { if (updateInfo?.pip_command) void copyText(updateInfo.pip_command, updateEl("update-pip-copy") as HTMLButtonElement); });
+updateEl("sidebar-update")?.addEventListener("click", () => { openSettings("general", true); updateEl("update-row")?.scrollIntoView?.({ block: "center" }); });
+void reportPreviousUpdate();
+void pollUpdate();
+// Look again every six hours while Dikdik stays open.
+const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000;
+function scheduleUpdateCheck(): void {
+  setTimeout(() => { if (!document.hidden) void loadUpdateCheck(true); scheduleUpdateCheck(); }, UPDATE_RECHECK_MS);
+}
+scheduleUpdateCheck();

@@ -22,6 +22,7 @@ Behaviour (keyed on words in the latest user message):
 - "SLOW": slow read_file calls, so Pause/Stop can be clicked mid-run
   (alternating two files, which Dikdik's stuck detector stops after 6 calls);
 - "SECRET": asks for a DEMO_TOKEN secret with request_secret (needs command approval in the task);
+- "FILES": creates three files and edits one, a delay apart (the Explorer follows live);
 - "MARKDOWN": a reply with a table, an alert, a quote and a file path, plus
   provider "reasoning_content" (shown as a Thinking row);
 - an attached image: says it sees an image;
@@ -36,6 +37,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MARKDOWN = ("Here is what I found in `calculator.py:2`.\n\n| File | Lines |\n|:--|--:|\n| calculator.py | 3 |\n"
             "| test_calculator.py | 7 |\n\n> [!WARNING]\n> The tests do not cover negative numbers.\n\n> A plain quote.")
+# "FILES": new files one at a time, then an edit, so the Explorer can be watched following the agent.
+FILES = [("src/app/page.tsx", "export default function Page() {\n  return <main>Tasks</main>;\n}\n"),
+         ("src/lib/todos.ts", "export type Todo = { id: string; title: string; done: boolean };\n"),
+         ("src/app/globals.css", "main { padding: 2rem; }\n")]
 
 
 def reply(content, calls=None, reasoning=None):
@@ -105,6 +110,16 @@ def make_handler(expected_key: str, log_path: str | None, delay: float):
                 data = reply("Checking it.", [call("run_tests", {}, n)])
             elif "SECRET" in objective and "request_secret" in tools and "request_secret" not in done:
                 data = reply("I need a token for this.", [call("request_secret", {"name": "DEMO_TOKEN", "reason": "To call the demo API"}, n)])
+            elif "FILES" in objective and done.count("create_file") < len(FILES):
+                time.sleep(delay)
+                path, text = FILES[done.count("create_file")]
+                data = reply(f"Writing {path}.", [call("create_file", {"path": path, "content": text}, n)])
+            elif "FILES" in objective and "edit_file" not in done:
+                time.sleep(delay)
+                data = reply("Adding the done state.", [call("edit_file", {"path": "src/app/page.tsx", "before": "  return <main>",
+                                                                          "after": "  const done = 0;\n  return <main>"}, n)])
+            elif "FILES" in objective:
+                data = reply("Wrote the page, the store and the styles.")
             elif "MARKDOWN" in objective:
                 data = reply(MARKDOWN, reasoning="The user wants a summary. I will list the files with their sizes.")
             elif has_image:

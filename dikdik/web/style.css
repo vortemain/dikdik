@@ -31,6 +31,7 @@
   --warn-soft: #fbf2e0;
   --ok: #2f7a4f;
   --ok-soft: #e7f3ec;
+  --git-added: #2b7a3b; --git-modified: #895503; --git-deleted: #ad0707;  /* VS Code light */
   --code-bg: #f6f6f4;
   --code-head: #efefec;
   --diff-add: #e6f4ea;
@@ -87,6 +88,7 @@
   --warn-soft: #362c18;
   --ok: #7cc29b;
   --ok-soft: #1f3329;
+  --git-added: #73c991; --git-modified: #e2c08d; --git-deleted: #c74e39;  /* VS Code dark */
   --code-bg: #1e1e1d;
   --code-head: #262625;
   --diff-add: #1b3324;
@@ -108,6 +110,7 @@
     --line: #2f2f2d; --line-strong: #3d3d3a; --ink: #ececea; --ink-2: #d4d4d1; --muted: #a3a39f; --faint: #7d7d79;
     --accent: #7cc29b; --accent-soft: #1f3329; --primary: #ececea; --primary-ink: #161615; --primary-hover: #ffffff;
     --danger: #f0857c; --danger-soft: #3a2220; --warn: #e0b45c; --warn-soft: #362c18; --ok: #7cc29b; --ok-soft: #1f3329;
+    --git-added: #73c991; --git-modified: #e2c08d; --git-deleted: #c74e39;
     --code-bg: #1e1e1d; --code-head: #262625;
     --diff-add: #1b3324; --diff-add-ink: #8fd6a8; --diff-del: #3b201e; --diff-del-ink: #f2a09a; --diff-hunk: #222a40; --diff-hunk-ink: #9fb0ec;
     --tok-keyword: #f08ab8; --tok-string: #9dd49a; --tok-comment: #85857f; --tok-number: #f2b36a; --tok-fn: #8fb4f5; --tok-type: #c9a6f2; --tok-builtin: #f29b85; --tok-attr: #7fcbe0; --tok-meta: #e0cf6a; --tok-tag: #8fb4f5;
@@ -714,9 +717,6 @@ button.providers-current:hover { color: var(--accent); }
 .explorer-project { display: flex; align-items: center; gap: 4px; padding: 4px 12px 0; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
 .explorer-project .i { width: 12px; height: 12px; transform: rotate(90deg); color: var(--muted); }
 .explorer-project strong { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.explorer-stack { display: flex; gap: 4px; flex-wrap: wrap; padding: 4px 12px 0; }
-.explorer-stack:empty { display: none; }
-.stack-chip { font-size: 10.5px; padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 .explorer .file-search { margin: 8px 10px 4px; }
 @container (min-width: 720px) {
   .files-grid { flex-direction: row; }
@@ -727,7 +727,17 @@ button.providers-current:hover { color: var(--accent); }
 .file-tree .tree-row { border-radius: 4px; padding-top: 3px; padding-bottom: 3px; }
 .file-tree .tree-row[aria-selected="true"] { background: var(--accent-soft); color: var(--ink); box-shadow: inset 1px 0 0 var(--accent); }
 .file-tree .tree-folder { color: #c09553 !important; }
-.file-tree .tree-row[data-changed]::after { content: "M"; margin-left: auto; font: 700 10.5px var(--sans); color: var(--warn); }
+/* Source-control decorations, as in VS Code: colored name, letter at the right, dot on folders. */
+.file-tree .tree-row[data-status]::after { margin-left: auto; padding-left: 6px; font: 700 10.5px var(--sans); }
+.file-tree .tree-row[data-status="added"] .tree-name, .file-tree .tree-row[data-status="added"]::after { color: var(--git-added); }
+.file-tree .tree-row[data-status="added"]::after { content: "U"; }
+.file-tree .tree-row[data-status="modified"] .tree-name, .file-tree .tree-row[data-status="modified"]::after { color: var(--git-modified); }
+.file-tree .tree-row[data-status="modified"]::after { content: "M"; }
+.file-tree .tree-row[data-status="deleted"] .tree-name { color: var(--git-deleted); text-decoration: line-through; }
+.file-tree .tree-row[data-status="deleted"]::after { content: "D"; color: var(--git-deleted); }
+.file-tree .tree-row[data-status="contains"] .tree-name { color: var(--git-modified); }
+.file-tree .tree-row[data-status="contains"]::after { content: "\25CF"; font-size: 8px; color: var(--git-modified); }
+.file-search-result[data-changed]::after { content: "M"; margin-left: auto; font: 700 10.5px var(--sans); color: var(--git-modified); }
 .file-badge { background: none !important; min-width: 16px; height: auto; padding: 0; font-size: 9.5px; font-weight: 800; color: var(--muted); }
 .file-badge.badge-py { color: #4b8bbe; } .file-badge.badge-ts { color: #3178c6; } .file-badge.badge-js { color: #cbb534; }
 .file-badge.badge-json { color: #cbb534; } .file-badge.badge-md { color: #519aba; } .file-badge.badge-rs { color: #dea584; }
@@ -994,8 +1004,10 @@ pre.numbered .ln::before { content: attr(data-n); position: absolute; left: 0; w
 dialog { padding: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); }
 dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
 .settings { width: min(880px, calc(100vw - 32px)); height: min(640px, calc(100dvh - 48px)); }
-.settings[open] { display: grid; grid-template-columns: 210px minmax(0, 1fr); }
-.settings-nav { background: var(--sidebar); border-right: 1px solid var(--line); padding: 16px 10px; display: flex; flex-direction: column; gap: 1px; }
+/* One scroll area: the pane. The dialog never scrolls itself (a stray absolutely positioned child
+   used to make it scroll and slide both columns up, leaving blank space below). */
+.settings[open] { display: grid; grid-template-columns: 210px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+.settings-nav { background: var(--sidebar); border-right: 1px solid var(--line); padding: 16px 10px; display: flex; flex-direction: column; gap: 1px; min-height: 0; overflow-y: auto; }
 .settings-nav h2 { font-size: 15px; font-weight: 600; padding: 4px 10px 14px; }
 .settings-tab { justify-content: flex-start; gap: 10px; border: 0; background: transparent; padding: 7px 10px; font-weight: 400; font-size: 14px; color: var(--ink-2); }
 .settings-tab:hover:not(:disabled) { background: var(--hover); }
@@ -1003,7 +1015,7 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
 .settings-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .settings-head { height: 56px; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 28px; border-bottom: 1px solid var(--line); }
 .settings-head h3 { font-size: 16px; font-weight: 600; }
-.settings-pane { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 28px 32px; }
+.settings-pane { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; position: relative; padding: 20px 28px 32px; }
 .settings-pane > .lead { font-size: 14px; color: var(--muted); line-height: 1.6; margin-bottom: 8px; max-width: 60ch; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 0; border-bottom: 1px solid var(--line); }
 .setting-row:last-child { border-bottom: 0; }
@@ -1519,5 +1531,21 @@ body.run-simple .classic-only { display: none !important; }
 .update-indicator .update-dot { position: absolute; top: 9px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 var(--accent); animation: update-pulse 1.6s ease-out infinite; }
 @keyframes update-pulse { 0% { box-shadow: 0 0 0 0 rgba(31, 61, 49, 0.5); } 70% { box-shadow: 0 0 0 6px rgba(31, 61, 49, 0); } 100% { box-shadow: 0 0 0 0 rgba(31, 61, 49, 0); } }
 @media (prefers-reduced-motion: reduce) { .update-indicator .update-dot { animation: none; } }
+/* Settings → General → Updates: status, progress, notes and the platform's next step. */
+.update-row { align-items: flex-start; }
+.update-main { min-width: 0; flex: 1; display: grid; gap: 8px; }
+.update-main p { overflow-wrap: anywhere; }
+.update-actions { display: flex; gap: 6px; flex: 0 0 auto; align-items: center; }
+.update-progress { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.update-progress progress { flex: 1; max-width: 320px; height: 6px; appearance: none; border: 0; border-radius: 999px; overflow: hidden; background: var(--surface-3); }
+.update-progress progress::-webkit-progress-bar { background: var(--surface-3); }
+.update-progress progress::-webkit-progress-value { background: var(--accent); border-radius: 999px; transition: width .3s ease; }
+.update-progress progress::-moz-progress-bar { background: var(--accent); }
+.update-pip { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.update-pip code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 12px var(--mono); padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
+.update-notes summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
+.update-notes-body { max-height: 240px; overflow-y: auto; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.update-notes a { font-size: 12.5px; }
+.update-row [hidden] { display: none; }  /* outranks the display rules above */
 
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { alertKind, fileTree, fuzzyScore, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, workspacePath } from "../../dikdik/web/organise";
+import { alertKind, fileTree, fuzzyScore, organiseTasks, parentFolders, parseTable, parseTags, rankCommands, splitDiff, toolFileChanges, workspacePath } from "../../dikdik/web/organise";
 import type { TaskSummary } from "../../dikdik/web/contracts";
 
 const now = 1_000_000;
@@ -118,4 +118,21 @@ test("status filter keeps running or needs-you conversations", () => {
   expect(organiseTasks(list, { ...base, scope: "attention" }).recent.map(t => t.id)).toEqual(["b", "d"]);
   expect(organiseTasks(list, { ...base, scope: "all" }).recent).toHaveLength(4);
   expect(organiseTasks(list, { ...base, scope: "running", selected: "c" }).recent.map(t => t.id)).toEqual(["a", "c"]);
+});
+
+describe("live file changes from agent tools", () => {
+  const end = (observation: unknown, failed = false) => ({ phase: "end", name: "x", failed, observation });
+  test("created, rewritten, edited and command changes are reported once each", () => {
+    expect(toolFileChanges("agent_tool", end({ created: "src/app/page.tsx" }))).toEqual([{ path: "src/app/page.tsx", status: "added" }]);
+    expect(toolFileChanges("agent_tool", end({ edited: "styles.css" }))).toEqual([{ path: "styles.css", status: "modified" }]);
+    expect(toolFileChanges("agent_tool", end({ rewritten: "a.ts", changed_files: ["a.ts", "prisma\\schema.prisma"] })))
+      .toEqual([{ path: "a.ts", status: "modified" }, { path: "prisma/schema.prisma", status: "modified" }]);
+    expect(toolFileChanges("agent_parallel_edit", { phase: "end", changed_files: ["b.ts"] })).toEqual([{ path: "b.ts", status: "modified" }]);
+  });
+  test("starts, failures and other events change nothing", () => {
+    expect(toolFileChanges("agent_tool", { phase: "start", name: "create_file", arguments: { path: "a" } })).toEqual([]);
+    expect(toolFileChanges("agent_tool", end({ created: "a" }, true))).toEqual([]);
+    expect(toolFileChanges("agent_message", end({ created: "a" }))).toEqual([]);
+    expect(toolFileChanges("agent_tool", null)).toEqual([]);
+  });
 });

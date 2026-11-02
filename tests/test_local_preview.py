@@ -29,7 +29,7 @@ class PreviewTests(unittest.TestCase):
 
     def test_invalid_command_and_foreign_paths_do_not_start_processes(self):
         with patch('dikdik.local_preview.BackgroundShells') as shells:
-            for command, path in [('npm run dev', '/'), ('serve --port {port}', '//example.com'),
+            for command, path in [('node server.js', '/'), ('serve --port {port}', '//example.com'),
                                   ('serve --port {port}', '/\\example.com')]:
                 with self.assertRaises(ValueError):
                     preview(Path('.'), command, threading.Event(), path=path)

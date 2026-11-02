@@ -32,6 +32,7 @@ skill ids or copied bodies.
 | planning | Break the chosen task into concrete ordered work. |
 | research-first | Inspect the repository and callers before proposing a change. |
 | spec-to-ship | Coordinate the existing specification-to-delivery workflow. |
+| new-app | Build a new app on a modern stack (Next.js, Prisma with PostgreSQL) with its full feature set; always loaded for an empty project. |
 | test-driven-development | Develop behavior with focused regression tests. |
 | debugging | Diagnose the cause of an observed defect. |
 | code-review | Inspect a change for actionable correctness/maintenance issues. |

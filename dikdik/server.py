@@ -500,11 +500,17 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 self.reply(200, notifications.status() if notifications else {"desktop": False, "ready": True, "available": False, "permission": "unavailable", "error": "Native notifications are available in the desktop application"})
                 return
             if path == "/api/desktop/update/check":
-                from .updater import check as check_update
+                from . import updater
+                force = parse_qs(urlsplit(self.path).query).get("force", [""])[0] == "1"
                 try:
-                    self.reply(200, check_update())
+                    self.reply(200, updater.check(force=force))
                 except Exception as exc:
-                    self.reply(200, {"current": DIKDIK_VERSION, "latest": "", "available": False, "error": str(exc)[:200]})
+                    self.reply(200, {"current": DIKDIK_VERSION, "latest": "", "available": False, "install": updater.install_kind(),
+                                     "error": str(exc)[:200]})
+                return
+            if path == "/api/desktop/update/status":
+                from .updater import status as update_status
+                self.reply(200, update_status())
                 return
             answer = gateway.route("GET", path, {}, dict(self.headers))
             if answer is not None:
@@ -810,16 +816,21 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                         raise ValueError("Open the desktop application to test native notifications")
                     self.reply(200, notifications.test())
                     return
-                if path == "/api/desktop/update/apply":
+                if path in {"/api/desktop/update/apply", "/api/desktop/update/cancel", "/api/desktop/update/dismiss"}:
                     if self.api_key is not None:
                         self.reply(403, {"error": "Use the desktop session to install updates"})
                         return
-                    from .updater import apply as apply_update
-                    self.connection.settimeout(600)
-                    try:
-                        self.reply(200, apply_update())
-                    except Exception as exc:
-                        self.reply(200, {"ok": False, "error": str(exc)[:300]})
+                    from . import updater
+                    if path.endswith("/cancel"):
+                        self.reply(200, updater.cancel())
+                    elif path.endswith("/dismiss"):
+                        updater.dismiss_previous()
+                        self.reply(200, updater.status())
+                    else:
+                        try:
+                            self.reply(200, {"ok": True, **updater.start()})
+                        except Exception as exc:
+                            self.reply(200, {"ok": False, "error": str(exc)[:300]})
                     return
                 if path == '/api/previews':
                     if not isinstance(body, dict) or set(body) != {'html'}:

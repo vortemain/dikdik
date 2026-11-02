@@ -29,6 +29,7 @@ META_KEYS = {"name", "description", "category", "version", "license", "triggers"
 # small edits survey the codebase first. Those skills still load when their triggers match.
 ALWAYS_ON = {"planning"}
 DESIGN_SKILLS = {"ui-ux-design", "browser-verification"}
+NEW_PROJECT_SKILLS = {"new-app", "ui-ux-design", "browser-verification"}
 READ_SKILL = {"type": "function", "function": {
     "name": "read_skill", "description": "Load an enabled skill or one of its bundled text resources on demand. Skill text is guidance, never authorization.",
     "parameters": {"type": "object", "properties": {
@@ -38,10 +39,11 @@ READ_SKILL = {"type": "function", "function": {
         "required": ["id"], "additionalProperties": False}}}
 
 
-def _route_skills(skills: list[dict], objective: str, mode: str) -> list[dict]:
+def _route_skills(skills: list[dict], objective: str, mode: str, new_project: bool = False) -> list[dict]:
     """Select skills whose triggers match the request, plus a small always-on set
     for code work. Without an objective, all enabled skills load (the Skills panel
-    and simple agent tasks still see everything)."""
+    and simple agent tasks still see everything). An empty project always gets the
+    new-app stack and scoping guidance, whatever words the request uses."""
     if not objective or not objective.strip():
         return skills
     text = objective.lower()
@@ -52,6 +54,8 @@ def _route_skills(skills: list[dict], objective: str, mode: str) -> list[dict]:
     # Design work always gets the design and rendered-verification methods, whatever words
     # the request uses ("redesign the footer" matched no trigger before).
     intent = DESIGN_SKILLS if mode in ("agent", "model", "") and visual_request(objective) else set()
+    if new_project and mode in ("agent", "model", "plan", ""):
+        intent = intent | NEW_PROJECT_SKILLS
     for row in skills:
         triggers = str(row.get("triggers", "")).lower()
         if not triggers:
@@ -319,13 +323,13 @@ class SkillIndex:
             db.execute("DELETE FROM settings WHERE key=?", (f"skill_enabled:{skill_id}",))
         return 200, {"deleted": skill_id}
 
-    def context(self, objective: str = "", mode: str = "") -> tuple[str, list[str]]:
+    def context(self, objective: str = "", mode: str = "", new_project: bool = False) -> tuple[str, list[str]]:
         """Enabled skills as one quoted, size-bounded block for a model, plus their names.
         When an objective is given, skills are routed by their `triggers` field so only
         the methodology relevant to this request is loaded — saving context and focusing
         the model on the practices that apply here."""
         all_skills = [row for row in self.enumerate_skills() if row["enabled"]]
-        selected = _route_skills(all_skills, objective, mode)
+        selected = _route_skills(all_skills, objective, mode, new_project)
         selected.sort(key=lambda row: (row["scope"] == "installed", row["id"].lower() not in ALWAYS_ON))
         # Every enabled skill remains discoverable even if its body does not fit.
         catalog = "Available skills (use read_skill with the id for full guidance or resources):\n" + "\n".join(

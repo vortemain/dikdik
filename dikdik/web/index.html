@@ -315,7 +315,6 @@
         <aside class="explorer" aria-label="Explorer">
           <div class="explorer-head"><span>Explorer</span><button id="explorer-collapse" class="ghost icon" type="button" title="Collapse folders" aria-label="Collapse folders"><svg class="i"><use href="#i-list"/></svg></button></div>
           <div class="explorer-project"><svg class="i"><use href="#i-chevron"/></svg><strong id="explorer-project">—</strong></div>
-          <div id="explorer-stack" class="explorer-stack"></div>
           <label class="file-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Find a file</span><input id="file-search" type="search" placeholder="Search files by name" autocomplete="off"></label>
           <div id="file-list" class="file-list file-tree" role="tree" aria-label="Workspace files"></div>
         </aside>
@@ -444,7 +443,16 @@
         <div class="setting-row"><div><h4>Desktop notifications</h4><p>Native alerts for finished tasks, failures, approvals and questions. Click an alert to open its task.</p></div><select id="notification-mode" aria-label="Desktop notifications"><option value="background">When I’m away from the task</option><option value="all">Always</option><option value="off">Off</option></select></div>
         <div class="setting-row"><div><h4>Task titles in notifications</h4><p>Include the task title and project name. Otherwise, alerts use generic text.</p></div><label class="check"><input id="notification-previews" type="checkbox">Show titles</label></div>
         <div class="setting-row"><div><h4>Notification delivery</h4><p id="notification-status" role="status">Checking desktop notification support…</p></div><button id="notification-test" class="small" type="button" disabled>Send test notification</button></div>
-        <div class="setting-row"><div><h4>Updates</h4><p>Installed Dikdik <span id="update-version">—</span>. <span id="update-detail">Click to check for a newer release.</span> <a id="update-notes" class="ghost" target="_blank" rel="noopener noreferrer" hidden>Release notes</a></p></div><button id="update-action" class="small" type="button">Check for updates</button></div>
+        <div id="update-row" class="setting-row update-row">
+          <div class="update-main">
+            <h4>Updates</h4>
+            <p>Installed Dikdik <span id="update-version">—</span>. <span id="update-detail" role="status">Click to check for a newer release.</span></p>
+            <div id="update-progress" class="update-progress" hidden><progress id="update-bar" max="100" value="0" aria-label="Update download"></progress><span id="update-progress-text"></span></div>
+            <div id="update-pip" class="update-pip" hidden><code id="update-pip-command"></code><button id="update-pip-copy" class="ghost small" type="button">Copy</button></div>
+            <details id="update-notes-box" class="update-notes" hidden><summary id="update-notes-title">What’s new</summary><div id="update-notes-body" class="update-notes-body"></div><a id="update-notes" target="_blank" rel="noopener noreferrer">Full release notes</a></details>
+          </div>
+          <div class="update-actions"><button id="update-cancel" class="ghost small" type="button" hidden>Cancel</button><button id="update-action" class="small" type="button">Check for updates</button></div>
+        </div>
         <div class="setting-row setting-stack"><div><h4>Git identity</h4><p>Name and email for commits made from the Git tab. Leave blank to use your Git configuration.</p></div>
           <form id="git-identity" class="inline-form"><label class="sr-only" for="git-name">Git name</label><input id="git-name" maxlength="100" placeholder="Your Name"><label class="sr-only" for="git-email">Git email</label><input id="git-email" type="email" maxlength="254" placeholder="you@example.com"><button id="git-save" class="small" type="submit" disabled>Save</button></form></div>
         <div class="setting-row"><div><h4>Conversation titles</h4><p>After the first finished turn, name the conversation with a short model-written title. Only conversations that already share content with a model are titled.</p></div><select id="title-model" aria-label="Title model"><option value="auto">The conversation’s model</option><option value="off">Off — use my first message</option></select></div>

@@ -15,6 +15,13 @@ SolidCompression=yes
 WizardStyle=modern
 SetupIconFile=..\dikdik\web\icon.ico
 UninstallDisplayIcon={app}\Dikdik.exe
+; Updates: close whatever still holds Dikdik's files (the app, its browser or a preview server),
+; never reopen them from the installer (the updater opens the new Dikdik itself) and never
+; run two installers at once.
+CloseApplications=force
+CloseApplicationsFilter=*.exe,*.dll,*.pyd
+RestartApplications=no
+SetupMutex=DikdikSetup
 
 [Files]
 Source: "..\dist\desktop\Dikdik\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

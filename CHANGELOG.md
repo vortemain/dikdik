@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.3.6 — 2026-11-02
+
+Building a new app from a prompt:
+- An empty project (or a request for a website, mobile app, API, desktop app, CLI and the like)
+  gets the new `new-app` skill. The agent first works out who uses the product, on what, its data,
+  integrations and realtime/offline/SEO needs, then chooses the architecture from them: Astro for
+  content sites, Next.js or Vite + React for web apps, Expo for mobile, Hono, FastAPI or Go for
+  APIs, Tauri for desktop, Go/Rust/Python for CLIs, Python with uv for data and AI. The user's or
+  the project's stack always wins, and the reason for the choice is stated.
+- Missing database or service credentials no longer mean fake code: real engines that need no
+  setup (PGlite for PostgreSQL, SQLite, mongodb-memory-server, redis-memory-server), local adapters
+  for email, storage and payments behind the production interfaces, network-edge mocks in tests
+  only, migrations, seed data and an `.env.example`, so going live is configuration only.
+- The project's lockfile picks the package manager; with none, bun when installed (then pnpm,
+  then npm; uv for Python). A bare `bun run dev`, `pnpm dev` or `yarn dev` preview gets the port.
+- The agent is told which runtimes and package managers are installed (Node, bun, pnpm, uv, Go,
+  Rust, Java, .NET, Flutter, ...), which of PostgreSQL, MySQL, MongoDB and Redis are listening,
+  and whether the project's .env sets DATABASE_URL (only its scheme is read). Tool presence is
+  cached for ten minutes and the port probes run in parallel (about 0.3 s per run).
+- Preview no longer loops: `path: "."` or a file name means the page path, a static site needs no
+  command (Dikdik's Python serves it instead of `npx http-server`), `http.server 5173` and a bare
+  `npm run dev` get the assigned port, and errors say what each field is.
+- `run_command` refuses servers sent to the background (`&`, nohup, Start-Process): it waited for
+  them until its time limit, about a minute a try, and each retry picked another port.
+
+Desktop updates:
+- Fixed on Windows: the updater ran the Inno Setup installer with NSIS's `/S` (so the wizard
+  opened), relaunched the old app after one second while files were being replaced, and deleted
+  the installer from a temporary folder while it ran. It now waits for Dikdik to exit, installs
+  with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS` and reopens the installed
+  copy; the installer closes processes still holding Dikdik's files and never runs twice at once.
+- macOS keeps the app's symlinks and signature (ditto instead of a plain copy), updates the
+  bundle where it actually lives, clears quarantine, and falls back to opening the disk image.
+- Linux installs with `pkexec apt-get install` (dependencies resolved, system password dialog).
+- A Python install gets the pip command for the new wheel instead of a desktop installer.
+- The download runs in the background with progress and Cancel; the checksum is required; the
+  release notes show in Settings; running tasks are confirmed before restarting; the sidebar
+  shows progress; the next launch says whether the update took effect; checks repeat every six
+  hours and are reused for 15 minutes.
+
+Settings:
+- The dialog no longer scrolls as a whole (a hidden screen-reader label stretched it), which
+  slid both columns up and left blank space; only the section scrolls.
+
+Files panel:
+- Local runs write each create and edit to the folder immediately, so the Files panel and the
+  user's editor follow the agent; the Explorer shows new files, reveals them and reloads (or
+  opens) the file being written while the run is still going.
+- VS Code source-control decorations: U (added), M (modified), D (deleted) with their colors, and a
+  dot on folders that contain changes. The stack chips and the "read on demand" note are gone.
+- Files, Terminal and Browser stay open across new tasks, and a finished run no longer pulls the
+  panel away from the tab being watched.
+
 ## 0.3.5 — 2026-11-02
 
 The v0.3.4 tag failed its release checks and was never published; 0.3.5 contains everything

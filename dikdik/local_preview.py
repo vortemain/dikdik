@@ -2,9 +2,13 @@
 import hashlib
 import json
 import logging
+import os
 import re
+import shlex
 import socket
+import sys
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import accessibility, logs
@@ -15,6 +19,39 @@ from .local_exec import BackgroundShells
 # Cold starts of SSR dev servers (Vite, Nitro, Next) optimise dependencies first and
 # can take far longer than a static server; giving up early failed real projects.
 READY_SECONDS = 90
+# A plain HTML/CSS/JS project needs no dev server of its own: Dikdik's Python serves it, so the
+# preview neither downloads one (npx http-server) nor depends on what is on PATH.
+STATIC_SERVER = ("python" if os.name == "nt" else shlex.quote(sys.executable)) + " -m http.server {port} --bind 127.0.0.1"
+# "open http://...", "start", a bare URL: attempts to show the page rather than serve it.
+OPENER = re.compile(r"^\s*(?:(?:open|start|xdg-open|explorer(?:\.exe)?)\b|https?://)", re.I)
+
+
+def server_command(root, command):
+    """The command that serves the project on {port}. A static site may omit it; a literal port
+    (--port 3000, -p 8080, http.server 5173) becomes the assigned one."""
+    if (command is None or (isinstance(command, str) and (not command.strip() or OPENER.match(command)))) \
+            and (Path(root) / "index.html").is_file():
+        return STATIC_SERVER
+    if isinstance(command, str) and "{port}" not in command:
+        command = re.sub(r"(?<!\S)(--port[= ]|-p |-l |PORT=)\d{2,5}\b", lambda m: m.group(1) + "{port}", command, count=1)
+        command = re.sub(r"(-m\s+http\.server\s+)\d{2,5}\b", lambda m: m.group(1) + "{port}", command, count=1)
+        if "{port}" not in command and re.search(r"-m\s+http\.server\s*$", command):
+            command += " {port}"
+        # Next.js, Vite, Astro and Nuxt all take --port; only npm needs "--" to pass it through.
+        if "{port}" not in command and re.fullmatch(r"\s*npm\s+run\s+dev\s*", command):
+            command = command.strip() + " -- --port {port}"
+        elif "{port}" not in command and re.fullmatch(r"\s*(?:bun|pnpm|yarn)\s+(?:run\s+)?dev\s*", command):
+            command = command.strip() + " --port {port}"
+    return command
+
+
+def page_path(path):
+    """The URL path to open. Models often pass the project folder (".", "./") or a file name."""
+    if path is None or (isinstance(path, str) and path.strip() in ("", ".", "./")):
+        return "/"
+    if isinstance(path, str) and not path.startswith("/") and "://" not in path and "\\" not in path:
+        return "/" + path.removeprefix("./")
+    return path
 
 
 def _visible(value):
@@ -52,13 +89,13 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
     ``inspect`` reports exact computed styles and boxes for up to eight selectors at both widths;
     ``visual(view, png)``, when given, compares each capture with the accepted baseline for
     that view (``path#label``; interaction results also key on the actions performed)."""
-    if isinstance(command, str) and "{port}" not in command:
-        # A literal port flag (serve -l 5173, --port 3000, -p 8080) becomes the assigned port.
-        command = re.sub(r"(?<!\S)(--port[= ]|-p |-l |PORT=)\d{2,5}\b", lambda m: m.group(1) + "{port}", command, count=1)
+    command, path = server_command(root, command), page_path(path)
     if not isinstance(command, str) or "{port}" not in command or len(command) > 4000:
-        raise ValueError("Use {port} in the project's server command, for example npm run dev -- --host 127.0.0.1 --port {port}")
+        raise ValueError("command is the command that starts the project's dev server, with {port} for the port Dikdik "
+                         "assigns, for example npm run dev -- --host 127.0.0.1 --port {port}. preview_app starts and "
+                         "stops it; do not start a server yourself. A static site with index.html needs no command.")
     if not isinstance(path, str) or not path.startswith("/") or path.startswith("//") or "\\" in path or any(ord(c) < 32 for c in path) or urlsplit(path).netloc:
-        raise ValueError("Preview path must stay on the project's preview origin")
+        raise ValueError("path is the page's URL path on the preview server, such as / or /about")
     if not isinstance(expect_text, str) or len(expect_text) > 2000:
         raise ValueError("Expected text must contain at most 2000 characters")
     actions = [] if actions is None else actions

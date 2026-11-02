@@ -106,6 +106,33 @@ include Python and Chromium; their installers still require native OS testing
 and signing before publication. If desktop support is unavailable,
 `dikdik FOLDER` runs the browser interface.
 
+## Updates
+
+Dikdik checks the published GitHub releases when Settings loads and every six
+hours (a result is reused for 15 minutes). A newer release shows an **Update**
+button in the sidebar and, in Settings → General → Updates, its size, what will
+happen on this platform and the release notes. Installing downloads in the
+background with progress and Cancel, verifies the file against the release's
+`SHA256SUMS.txt` (a release without it is never installed), then hands over to
+a small helper that waits for Dikdik to exit:
+
+- **Windows:** the Inno Setup installer runs with `/VERYSILENT /SUPPRESSMSGBOXES
+  /NORESTART /CLOSEAPPLICATIONS`, so no wizard opens and no file is in use; the
+  installer closes anything still holding Dikdik's files, and Dikdik reopens from
+  the same folder.
+- **macOS:** the new `Dikdik.app` is copied from the disk image with `ditto`
+  (symlinks and signature intact) next to the running bundle, swapped in,
+  de-quarantined and opened. If Dikdik's folder is not writable by this user, the
+  disk image is opened for a manual drag instead.
+- **Linux:** `pkexec apt-get install` installs the .deb (the system asks for the
+  administrator password and resolves dependencies), then Dikdik reopens from
+  `/opt/dikdik`. Without pkexec the package opens in the software installer.
+- **Python installs** (pip or source) are never replaced by a desktop installer;
+  Settings shows the `pip install --upgrade` command for the new wheel.
+
+Running tasks pause and can be resumed after the restart; Dikdik asks first when
+any are running. The next launch says whether the update took effect.
+
 ## Native notifications
 
 General settings offers background task notifications, all task notifications,

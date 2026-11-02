@@ -32,9 +32,9 @@ class SkillDisclosureTests(unittest.TestCase):
             time.sleep(0.02)
         return self.engine.store.get(task)
 
-    def test_all_34_bundles_are_distinct_and_discoverable(self):
+    def test_all_35_bundles_are_distinct_and_discoverable(self):
         files = sorted(_bundled_skills_dir().glob("*/SKILL.md"))
-        self.assertEqual(len(files), 34)
+        self.assertEqual(len(files), 35)
         bodies = set()
         catalog, _ = self.skills.context()
         for file in files:

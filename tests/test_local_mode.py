@@ -340,6 +340,28 @@ class LocalModeTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.engine.poll_background("nonexistent")
 
+    def test_each_edit_reaches_the_folder_before_any_command(self):
+        # The Files panel and the user's editor follow the agent live; nothing waits for a command or check.
+        on_disk = {}
+        def look(seen, messages):
+            if seen == 2:
+                on_disk["calc"] = self.calc()
+                on_disk["new"] = (self.root / "notes.md").read_text(encoding="utf-8") if (self.root / "notes.md").exists() else None
+            if seen == 3:
+                on_disk["new"] = (self.root / "notes.md").read_text(encoding="utf-8")
+        script = Script([call(1, "edit_file", **FIX), call(2, "create_file", path="notes.md", content="# Notes\n"),
+                         ModelResponse("Done.", [])], hook=look)
+        _, state = self.run_task(script, confirmation="never")
+        self.assertIn("a + b", on_disk["calc"])
+        self.assertEqual(on_disk["new"], "# Notes\n")
+
+    def test_a_server_sent_to_the_background_is_refused_with_the_preview_route(self):
+        script = Script([call(1, "run_command", command=f'"{PY}" -m http.server 34306 &'), ModelResponse("Ok.", [])])
+        _, state = self.run_task(script, confirmation="never")
+        ended = [e["data"] for e in state["events"] if e["kind"] == "agent_tool" and e["data"].get("phase") == "end"]
+        self.assertTrue(ended[0]["failed"])
+        self.assertIn("preview_app", ended[0]["observation"]["error"])
+
     def test_files_a_command_creates_stay_the_agents_to_edit(self):
         # Found by a live benchmark run: the "new files only" policy refused a file the agent's own command had
         # just created (it now existed), and once read it counted as a protected pre-existing test.

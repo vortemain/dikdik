@@ -36,7 +36,7 @@ class BundledSkillsTests(unittest.TestCase):
         engine = self.make_engine()
         rows = {row["id"]: row for row in engine.skills.enumerate_skills()}
         for name in ("brainstorming", "planning", "test-driven-development", "debugging", "code-review",
-                     "research-first", "security-review", "ui-ux-design", "document-creation", "spec-to-ship"):
+                     "research-first", "security-review", "ui-ux-design", "document-creation", "spec-to-ship", "new-app"):
             with self.subTest(name=name):
                 self.assertIn(name, rows, f"{name} should be bundled")
                 self.assertTrue(rows[name]["description"], f"{name} needs a description")

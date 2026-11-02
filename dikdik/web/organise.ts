@@ -116,6 +116,25 @@ export function fileTree(paths: readonly string[], expanded: ReadonlySet<string>
   walk(root, "", 0);
   return rows;
 }
+export type LiveChange = "added" | "modified";
+/** Files a finished agent tool call wrote ("created", "rewritten", "edited", "changed_files"),
+ *  so the Explorer and an open editor follow the agent while it works instead of after the run. */
+export function toolFileChanges(kind: string, data: unknown): { path: string; status: LiveChange }[] {
+  if ((kind !== "agent_tool" && kind !== "agent_parallel_edit") || !data || typeof data !== "object") return [];
+  const record = data as Record<string, unknown>;
+  if (record.phase !== "end" || record.failed === true) return [];
+  const result = (kind === "agent_tool" ? record.observation : record) as Record<string, unknown> | undefined;
+  if (!result || typeof result !== "object") return [];
+  const found: { path: string; status: LiveChange }[] = [];
+  const add = (path: unknown, status: LiveChange) => {
+    if (typeof path === "string" && path && !found.some(item => item.path === path)) found.push({ path: path.replace(/\\/g, "/"), status });
+  };
+  add(result.created, "added");
+  add(result.rewritten, "modified");
+  add(result.edited, "modified");
+  if (Array.isArray(result.changed_files)) for (const path of result.changed_files) add(path, "modified");
+  return found;
+}
 /** Every parent folder of a path, so opening a file reveals it in the tree. */
 export function parentFolders(path: string): string[] {
   const parts = path.split("/");

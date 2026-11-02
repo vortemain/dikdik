@@ -68,6 +68,7 @@ RESUMABLE = {"paused", "failed", "cancelled", "interrupted", "blocked"}
 LET_GO_GRACE = 2.0  # seconds a finished task's worker may still take to release; its deletion waits this long
 STOP_GRACE = 10.0   # seconds a running task gets to stop before its deletion reports back instead of deleting
 POLICIES = {"never", "risky", "ask", "always"}
+NEW_PROJECT_FILES = re.compile(r"(?i)(readme|licen[cs]e|copying)(\.[a-z]+)?|\.git(ignore|attributes)|\.editorconfig")
 HOSTED_CONTEXT_LIMIT = 320 * 1024  # working context bytes for hosted models (~80K tokens)
 LOCAL_CONTEXT_LIMIT = 128 * 1024   # local servers often run small context windows
 APP_DEFAULTS = {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": True, "router": "",
@@ -1313,10 +1314,12 @@ class Engine:
         with self.lock:
             return task in self.active or bool(self.pending.get(task))
 
-    def _skills(self, task, objective="", mode=""):
-        """Enabled skills for the model, routed by the request, recorded so the conversation shows which were used."""
+    def _skills(self, task, objective="", mode="", files=None):
+        """Enabled skills for the model, routed by the request, recorded so the conversation shows which were used.
+        With the project's files, an empty project (at most a README, licence or ignore file) also gets new-app guidance."""
+        new_project = files is not None and all(NEW_PROJECT_FILES.fullmatch(Path(path).name) for path in files)
         try:
-            guidance, names = self.skills.context(objective, mode)
+            guidance, names = self.skills.context(objective, mode, new_project)
         except OSError:
             return ""
         if names:
@@ -1567,7 +1570,7 @@ class Engine:
                 self._acp_workflow(task, request, original, cancel, started, files)
                 return
             profile = self._profile(request)
-            guidance = self._skills(task, request.get("objective", ""), request.get("mode", "")) if profile is None or profile["use_skills"] else ""
+            guidance = self._skills(task, request.get("objective", ""), request.get("mode", ""), original) if profile is None or profile["use_skills"] else ""
             model_id = self._model_for(task, request, profile)
             edits, provider = propose(request, files, lambda: self.models.resolve(model_id or None), guidance, cancel)
             self.store.event(task, "proposal", provider)
@@ -1700,12 +1703,22 @@ class Engine:
             writes.write({path: text for path, text in files.items() if path not in refreshed})
             return refreshed
 
+        def write_now(files):
+            """Each create or edit reaches the folder at once, as in an editor, so the Files panel and
+            the user's own editor see it while the agent works. A file changed outside the agent is
+            left alone here; the next command, check or preview reports it (sync)."""
+            try:
+                writes.write(files)
+            except OSError:
+                logs.log("local_write_deferred", logging.WARNING, exc_info=True)
+
         def outside_note(refreshed):
             return (f"Changed outside the agent meanwhile, so not overwritten: {', '.join(sorted(refreshed)[:10])}. "
                     "Your copy of these files now matches the folder; read them again and reapply your change if it is still needed.")
 
         def local_shell(files, command, timeout):
             local_exec.check_project_search(command)
+            local_exec.check_background(command)
             local_exec.check_command_scope(command, self.root)
             refreshed = sync(files)
             if refreshed:
@@ -1767,7 +1780,7 @@ class Engine:
 
         profile = self._profile(request)
         model_id = self._model_for(task, request, profile)
-        guidance = self._skills(task, request.get("objective", ""), request.get("mode", "")) if profile is None or profile["use_skills"] else ""
+        guidance = self._skills(task, request.get("objective", ""), request.get("mode", ""), original) if profile is None or profile["use_skills"] else ""
         notes = [{"role": "user", "content": f"Instructions from the user's agent profile “{profile['name']}”:\n{profile['instructions']}"}] if profile and profile["instructions"] else []
         orientation = project_outline(original, facts.load()) if local and not request.get("resume") else ""
         if orientation:
@@ -1803,8 +1816,8 @@ class Engine:
         load_test_app = server_check("load_test", loadtest.run)
 
         def preview_app(files, arguments):
-            local_exec.check_project_search(arguments.get("command", ""))
-            local_exec.check_command_scope(arguments.get("command", ""), self.root)
+            local_exec.check_project_search(arguments.get("command") or "")
+            local_exec.check_command_scope(arguments.get("command") or "", self.root)
             refreshed = sync(files)
             if refreshed:
                 return {"status": "failed", "error": outside_note(refreshed)}
@@ -2022,7 +2035,7 @@ class Engine:
                 creation_policy=lambda path: can_create_file(self.root, path, existing_ok=path in turn_created),
                 start=files, history=history,
                 shell=local_shell if local and (profile is None or profile["allow_shell"]) else None,
-                shell_tool=LOCAL_SHELL_TOOL if local else None,
+                shell_tool=LOCAL_SHELL_TOOL if local else None, on_write=write_now if local else None,
                 extra_tools=extra_tools, extra_call=extra_call if extra_tools else None,
                 pause=pause, confirm=confirm, checkpoint=checkpoint, resume=resume, images=request.get("images"),
                 delegate=delegate, subagents=subagents,
@@ -2043,7 +2056,7 @@ class Engine:
                 dast_scan=server_check("dast", dast.run) if local and (profile is None or profile["allow_shell"]) else None,
                 fault_test=server_check("fault_test", faults.run) if local and (profile is None or profile["allow_shell"]) else None,
                 parallel_writer=parallel_writer if local else None,
-                shell_note=local_exec.describe_shell() if local else "",
+                shell_note=local_exec.describe_shell() + "; " + local_exec.describe_toolchain(self.root) if local else "",
             )
             tracer.finish(outcome.state, **{"dikdik.tests_verified": outcome.tests_verified,
                                             "dikdik.release_decision": (outcome.release_gate or {}).get("decision")})

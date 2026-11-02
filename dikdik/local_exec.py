@@ -14,6 +14,7 @@ import codecs
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import tempfile
 import sys
@@ -41,6 +42,22 @@ def check_project_search(command: str) -> None:
         raise ValueError("Do not search the entire computer for a project file. Use list_files with query set to the filename "
                          "or run find . -name 'filename' inside the project. "
                          "If it is not found, ask the user to open the correct project instead of scanning filesystem roots.")
+
+
+# A lone & (not &&, 2>&1, &> or |&), nohup, setsid, disown, Start-Process or start /b.
+BACKGROUND = re.compile(r"(?<![&>|])&(?![&>])|(?:^|[;&|(]\s*)(?:nohup|setsid|disown|Start-Process|start\s+/b)\b", re.I)
+
+
+def check_background(command: str) -> None:
+    """run_command waits for everything it starts, so a server sent to the background keeps it
+    running until its time limit, and the next attempt picks another port. Refuse it up front."""
+    unquoted = re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", "''", command)
+    if BACKGROUND.search(unquoted):
+        raise ValueError("Do not start servers or other background processes with run_command: it waits for them, "
+                         "so the command runs until its time limit. To see the app, call preview_app with the dev "
+                         "server command (it picks a free port, waits for the server, opens the page and stops it "
+                         "afterwards; a static site with index.html needs no command). To test against a running "
+                         "server, start it inside the test itself.")
 
 
 CD_TARGET = re.compile(r'''(?:^|[;&|(]\s*)(?:cd|pushd|Set-Location)\s+(['"]?)([^\s;&|'"]+)\1''', re.I)
@@ -182,6 +199,61 @@ def describe_shell() -> str:
     return (("commands run in PowerShell 7" if kind == "pwsh" else "commands run in Windows PowerShell 5.1")
             + " on Windows (no Git Bash): prefer PowerShell syntax and $env:NAME for environment variables; "
               "&&, ||, /dev/null, rm -rf, mkdir -p, ls -la, touch, export, which, head and tail are translated")
+
+
+DATABASE_PORTS = (("PostgreSQL", 5432), ("MySQL", 3306), ("MongoDB", 27017), ("Redis", 6379))
+TOOLCHAINS = (("bun", "bun"), ("pnpm", "pnpm"), ("yarn", "yarn"), ("Python uv", "uv"), ("Go", "go"),
+              ("Rust cargo", "cargo"), ("Java", "java"), (".NET", "dotnet"), ("Flutter", "flutter"),
+              ("PHP", "php"), ("Ruby", "ruby"), ("Deno", "deno"), ("git", "git"))
+_TOOLCHAIN_CACHE: dict = {}
+
+
+def describe_toolchain(root: Path) -> str:
+    """One sentence on the runtimes and database servers this computer has, so a new app is built
+    on what is really there. Only the scheme of a project's DATABASE_URL is read, never its value."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def node_version(node):
+        try:
+            return subprocess.run([node, "--version"], capture_output=True, text=True, timeout=5,
+                                  creationflags=_creation_flags(False)).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    def listening(port):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                return True
+        except OSError:
+            return False
+
+    found = []
+    # Installed tools rarely change within a session: reuse them for ten minutes. Database
+    # servers start and stop, so their ports are probed on every run, in parallel.
+    cached = _TOOLCHAIN_CACHE if time.monotonic() - _TOOLCHAIN_CACHE.get("at", -1e9) < 600 else None
+    with ThreadPoolExecutor(max_workers=1 + len(DATABASE_PORTS)) as pool:
+        node = None if cached else shutil.which("node")
+        version = pool.submit(node_version, node) if node else None
+        ports = [(name, port, pool.submit(listening, port)) for name, port in DATABASE_PORTS]
+        if cached:
+            found += cached["tools"]
+        else:
+            tools = [(f"Node.js {version.result()}".strip() + (" with npm" if shutil.which("npm") else "")) if node
+                     else "Node.js is not installed"]
+            # Presence only (no version calls): every toolchain a new project might be built with.
+            others = [label for label, program in TOOLCHAINS if shutil.which(program)]
+            tools.append(("also installed: " + ", ".join(others)) if others else "no other toolchains on PATH")
+            _TOOLCHAIN_CACHE.update(at=time.monotonic(), tools=tools)
+            found += tools
+        for name, port, up in ports:
+            found.append(f"{name} is accepting connections on 127.0.0.1:{port}" if up.result() else f"no {name} server on port {port}")
+    try:
+        env_text = (Path(root) / ".env").read_text(encoding="utf-8", errors="replace")[:65536]
+    except OSError:
+        env_text = ""
+    scheme = re.search(r"(?m)^\s*DATABASE_URL\s*=\s*['\"]?([a-z0-9+]+):", env_text)
+    found.append(f"the project's .env sets DATABASE_URL ({scheme.group(1)})" if scheme else "no DATABASE_URL in the project's .env")
+    return "environment: " + "; ".join(found)
 
 
 def shell_argv(command: str, env_names=()) -> tuple[list[str], str]:

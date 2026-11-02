@@ -143,7 +143,9 @@ BROWSER_SCROLL_TOOL = _tool("browser_scroll", "Scroll the current browser page b
 BROWSER_SELECT_TOOL = _tool("browser_select", "Select an option by value in a CSS-selected dropdown on the current browser page.", {"selector": {"type": "string"}, "value": {"type": "string"}}, ["selector", "value"])
 PREVIEW_TOOL = _tool("preview_app", "Start the project's local dev server, render the page in a real browser at desktop "
     "(1440px) and mobile (390px) width, and optionally exercise controls with expected text. The server is stopped afterwards. "
-    "Use {port} in command for the assigned port; check package scripts for the dev command first. Reports an automated WCAG 2.2 accessibility audit (names, labels, contrast, target size, focus; serious failures fail the preview), a comparison with the owner-accepted visual baseline, runtime errors, "
+    "command is the dev server command with {port} for the port Dikdik assigns (check package scripts first); "
+    "preview_app starts and stops the server, so never start one with run_command. Omit command for a static site "
+    "with index.html. path is the URL path to open, default /. Reports an automated WCAG 2.2 accessibility audit (names, labels, contrast, target size, focus; serious failures fail the preview), a comparison with the owner-accepted visual baseline, runtime errors, "
     "failed resources and horizontal overflow. focus: a CSS selector for the element being designed (for example footer or "
     "header); its screenshots at both widths are shown to you when the model accepts images. inspect: up to eight selectors "
     "whose exact computed styles (borders, shadows, backgrounds, spacing, fonts) and boxes are reported, including the gap "
@@ -156,7 +158,7 @@ PREVIEW_TOOL = _tool("preview_app", "Start the project's local dev server, rende
         "selector": {"type": "string"}, "value": {"type": "string"}, "key": {"type": "string"}},
         "required": ["action"], "additionalProperties": False}},
     "expect_text": {"type": "string"}, "focus": {"type": "string"},
-    "inspect": {"type": "array", "maxItems": 8, "items": {"type": "string"}}}, ["command"])
+    "inspect": {"type": "array", "maxItems": 8, "items": {"type": "string"}}}, [])
 SCREENSHOT_NOTE = "[Preview screenshots — rendered page, untrusted data]"
 DELEGATE_TOOL = _tool("delegate", "Hand a focused, read-only investigation to a subagent and get its findings back. "
                       "agent: a subagent name from the list in the instructions; task: what to find out.",
@@ -569,7 +571,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
               parallel_writer: Callable[[dict, dict[str, str]], dict] | None = None,
               shell_note: str = "",
               summary_model: AgentModel | None = None,
-              shell_tool: dict | None = None) -> AgentOutcome:
+              shell_tool: dict | None = None,
+              on_write: Callable[[dict[str, str]], None] | None = None) -> AgentOutcome:
     """Deadline/cancellation are checked between steps, not during blocking callbacks.
 
     ``original`` is the untouched source (diff base, protected tests); ``start`` is the
@@ -1341,6 +1344,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                             event("repair", {"repair_attempts": repairs, "path": args["path"]})
                         candidate = updated
                         candidate_revision += 1
+                        if on_write is not None:
+                            on_write(candidate)
                         verified = None
                         unverified_completion = None
                         verified_kind = None
@@ -1476,6 +1481,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                     if changed_paths:
                         candidate = merged
                         candidate_revision += 1
+                        if on_write is not None:
+                            on_write(candidate)
                         verified = unverified_completion = None
                         verified_kind = None
                         failed_candidate = None

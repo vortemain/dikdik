@@ -13,8 +13,6 @@
 .explorer-head { flex: 0 0 40px; min-height: 40px; padding: 0 9px 0 16px; font-size: 10px; font-weight: 500; letter-spacing: .09em; }
 .explorer-project { flex: 0 0 28px; min-height: 28px; padding: 0 10px; background: var(--surface-2); }
 .explorer-project strong { font-size: 10px; letter-spacing: .04em; font-weight: 600; }
-.explorer-stack { padding: 6px 12px; gap: 4px; }
-.stack-chip { border-radius: 3px; background: transparent; border: 1px solid var(--line); color: var(--muted); font-size: 9px; padding: 0 4px; }
 .explorer .file-search { flex-shrink: 0; margin: 5px 8px 10px; height: 27px; padding: 0 6px; border-radius: 3px; }
 .explorer .file-search input { width: 100%; min-width: 0; height: 25px; font-size: 11px; padding: 0 5px 0 25px; }
 .explorer .file-search .i { left: 7px; width: 13px; height: 13px; }
