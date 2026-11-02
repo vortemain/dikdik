@@ -4,11 +4,11 @@ import importlib.util
 import os
 import queue
 import threading
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from .accessibility import AUDIT
 from .browser_network import fetch_public, public_url
-from .host_browser import PublicProxy, find_browser, page_text
+from .host_browser import PREVIEW_HOST, PublicProxy, find_browser, page_text
 
 
 def available():
@@ -170,7 +170,11 @@ class BrowserSessions:
                             except Exception:
                                 request_route.abort()
                         context.route("**/*", route)
-                        context.route_web_socket("**/*", lambda socket: socket.close())
+                        # Public pages get no WebSockets. The project's own dev server keeps its live-reload
+                        # socket (tunnelled by the proxy to that server only): closing it made next dev
+                        # reload the page in a loop and froze the preview for minutes.
+                        context.route_web_socket(lambda url: urlsplit(url).hostname != PREVIEW_HOST,
+                                                 lambda socket: socket.close())
                         state["page"].set_default_timeout(10000)
                         state["page"].on("dialog", lambda dialog: dialog.dismiss())
                         # Popups stay inside the managed page, never in another desktop window.

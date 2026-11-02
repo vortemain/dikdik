@@ -1184,6 +1184,7 @@ function openCanvas(tab: string): void {
   }
   setCanvas(true);
   if (tab === "files") renderFileList();
+  if (tab === "browser") void refreshLive();
   if (tab === "git") void loadGit();
   if (tab === "terminal") renderTerminal();
   if (tab === "browser") renderBrowser();
@@ -1706,7 +1707,57 @@ function renderBrowser(): void {
   button("browser-text-toggle").textContent = browserText ? "Show page" : "Show page text";
   el("browser-page-text").hidden = !browserText || !view.screenshot;
   el("browser-page-text").textContent = view.text || "No readable text was captured from this page.";
+  // The project's dev server is still running after a preview: show the real page, live, as an
+  // editor's preview pane does. Captures remain in History; a public page the agent opened wins.
+  const newest = pages[pages.length - 1];
+  const live = !!liveServer?.running && browserIndex === null && !busy && !browserText && (!newest || !!newest.label);
+  const frame = el("browser-live") as HTMLIFrameElement;
+  frame.hidden = !live;
+  setClass(el("browser-viewport"), "is-live", live);
+  setClass(el("browser-viewport"), "is-mobile", live && browserDevice === "mobile");
+  button("browser-live-stop").hidden = !liveServer?.running;
+  if (!live) { if (frame.dataset.url) { frame.dataset.url = ""; frame.src = "about:blank"; } return; }
+  const url = liveUrl();
+  if (frame.dataset.url !== url) { frame.dataset.url = url; frame.src = url; }
+  el("browser-empty").hidden = true; mount.hidden = true;
+  if (document.activeElement !== address) address.value = liveAddress();
+  el("browser-current-url").textContent = url;
+  el("browser-title").textContent = "Your app · live";
+  el("browser-lock").hidden = true;
+  link.hidden = false; link.href = url; link.title = "Open in your browser";
+  button("browser-external-empty").hidden = true;
+  button("browser-reload").disabled = false; button("browser-reload").hidden = false;
+  button("browser-back").disabled = true; button("browser-forward").disabled = true;
+  el("browser-device").hidden = false;
+  for (const option of el("browser-device").querySelectorAll<HTMLButtonElement>("button")) option.setAttribute("aria-pressed", String(option.dataset.device === browserDevice));
+  el("browser-status").textContent = `Running ${(liveServer?.command ?? "the dev server").replace("{port}", String(liveServer?.port))} · edits reload here`;
+  setClass(el("browser-status"), "browser-error", false);
 }
+// --- live preview: the project's running dev server ------------------------------------------
+let liveServer: { running: boolean; port?: number; path?: string; command?: string } | null = null, livePath = "";
+// The page and the app use different host names, so the app never receives Dikdik's sign-in
+// cookie (cookies are shared across ports of one host, not across host names).
+const liveHost = (): string => globalThis.location?.hostname === "localhost" ? "127.0.0.1" : "localhost";
+const liveUrl = (): string => `http://${liveHost()}:${liveServer?.port}${livePath || liveServer?.path || "/"}`;
+const liveAddress = (): string => { const path = livePath || liveServer?.path || "/"; return `localhost:${liveServer?.port}${path === "/" ? "" : path}`; };
+async function refreshLive(): Promise<void> {
+  try { liveServer = await api<NonNullable<typeof liveServer>>("/api/preview/live"); }
+  catch { liveServer = null; }
+  if (!liveServer?.running) livePath = "";
+  renderBrowser();
+}
+/** An address on the running app ("/about", "localhost:5173/about"): the path to show, else null. */
+function livePathOf(value: string): string | null {
+  if (!liveServer?.running) return null;
+  if (value.startsWith("/")) return value;
+  const match = /^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1|\[::1\]):(\d+)(\/.*)?$/i.exec(value);
+  return match && Number(match[1]) === liveServer.port ? match[2] || "/" : null;
+}
+button("browser-live-stop").addEventListener("click", () => {
+  void request<NonNullable<typeof liveServer>>("/api/preview/live/stop", "POST", {})
+    .then(status => { liveServer = status; livePath = ""; renderBrowser(); message("Stopped the preview server."); })
+    .catch(error => message(error instanceof Error ? error.message : "Could not stop the server", true));
+});
 select("browser-history").addEventListener("change", () => { browserIndex = Number(select("browser-history").value); renderBrowser(); });
 select("browser-zoom").addEventListener("change", () => {
   const zoom = select("browser-zoom").value, mount = el("browser-snapshot");
@@ -1920,6 +1971,8 @@ async function openPage(url: string): Promise<void> {
 }
 el("browser-form").addEventListener("submit", event => {
   event.preventDefault();
+  const onApp = livePathOf(input("browser-url").value.trim());
+  if (onApp !== null) { livePath = onApp; browserIndex = null; input("browser-url").blur(); renderBrowser(); return; }
   let url = input("browser-url").value.trim();
   if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
   if (url) void openPage(url);
@@ -1935,7 +1988,10 @@ el("browser-forward").addEventListener("click", () => {
   const next = (browserIndex ?? count - 1) + 1;
   browserIndex = next >= count - 1 ? null : next; renderBrowser();
 });
-el("browser-reload").addEventListener("click", () => { if (browserView(browserEvents()).interactive) { void browserAction("reload", {}); return; } const url = el("browser-current-url").textContent ?? ""; if (url.startsWith("http")) void openPage(url); });
+el("browser-reload").addEventListener("click", () => {
+  const frame = el("browser-live") as HTMLIFrameElement;
+  if (!frame.hidden && frame.dataset.url) { frame.src = frame.dataset.url; return; }
+  if (browserView(browserEvents()).interactive) { void browserAction("reload", {}); return; } const url = el("browser-current-url").textContent ?? ""; if (url.startsWith("http")) void openPage(url); });
 el("browser-stop").addEventListener("click", () => {
   const task = browserTask();
   if (task) void api(`/api/tasks/${task}/browser/stop`, {}).catch(error => message(String(error), true));
@@ -2674,6 +2730,7 @@ function startStream(id: string): void {
     if (record.kind === "terminal_command" || record.kind === "terminal_output" || isTerminal(record.kind)) terminalPaint.schedule();
     if (record.kind === "browser_started") autoOpenBrowser([record]);
     if (record.kind === "browser_started" || record.kind === "browser_result") renderBrowser();
+    if (record.kind === "live_preview") { livePath = ""; void refreshLive(); }
     if (record.kind === 'plan_updated') { void loadPlan(id); void loadPlans().catch(() => undefined); }
     if (record.kind === 'task_tracker') renderChecklist();
     if ((record.kind === "agent_model" || record.kind === "running") && canvasTab === "usage" && !el("canvas").hidden) renderUsage();

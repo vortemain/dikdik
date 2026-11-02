@@ -63,7 +63,9 @@ STATIC = {
 SESSION_AGE = 30 * 24 * 3600
 PAIRING_AGE = 600  # seconds a device-link code stays valid
 PAIRING_FAILURES = 5  # wrong codes before every outstanding code is revoked
+# frame-src: the Browser panel shows the project's running dev server (any local port) live.
 PAGE_CSP = ("default-src 'self'; style-src 'self'; script-src 'self'; font-src 'self'; img-src 'self' data:; "
+            "frame-src 'self' http://localhost:* http://127.0.0.1:*; "
             "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 # An extension app is untrusted page content. `sandbox` gives it an opaque origin even
 # when opened directly, so it never shares Dikdik's origin, cookie or API; it may run its
@@ -670,6 +672,8 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 elif path == "/api/project":
                     self.reply(200, {"name": engine.root.name, "path": str(engine.root), "trusted": engine.trusted(), "indexer": INDEXER,
                                      **workspace_metadata(engine.root), "images": workspace_images(engine.root)})
+                elif path == "/api/preview/live":
+                    self.reply(200, engine.live_preview.status())
                 elif path == "/api/files/image":
                     kind, raw = workspace_image(engine.root, parse_qs(urlsplit(self.path).query).get("path", [""])[0])
                     self.reply(200, raw, kind)
@@ -1000,6 +1004,9 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(200, gitops.commit(engine.root, body.get("message"), body.get("files"), engine.git_identity()))
                 elif path == "/api/files/open-in-editor":
                     self.reply(200, open_in_editor(engine.root, str(body.get("path") or "."), body.get("line")))
+                elif path == "/api/preview/live/stop":
+                    engine.live_preview.stop()
+                    self.reply(200, engine.live_preview.status())
                 elif path == "/api/files/upload" and isinstance(body, dict):
                     activity["last"] = time.monotonic()
                     rel = body.get("path")

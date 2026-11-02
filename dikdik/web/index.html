@@ -377,6 +377,7 @@
             <label class="browser-address" for="browser-url"><span id="browser-lock" aria-hidden="true"><svg class="i"><use href="#i-lock"/></svg></span><span class="sr-only">Address</span><input id="browser-url" type="text" inputmode="url" placeholder="Enter an address" maxlength="4096" required autocomplete="off" spellcheck="false"></label>
             <div id="browser-device" class="browser-device" role="group" aria-label="Preview size" hidden><button type="button" data-device="desktop" aria-pressed="true">Desktop</button><button type="button" data-device="mobile" aria-pressed="false">Mobile</button></div>
             <a id="browser-external" class="nav-icon" target="_blank" rel="noopener noreferrer" title="Open in your browser" aria-label="Open in your browser" hidden><svg class="i"><use href="#i-external"/></svg></a>
+            <button id="browser-live-stop" class="nav-icon" type="button" title="Stop the app’s dev server" aria-label="Stop the app’s dev server" hidden><svg class="i"><use href="#i-stop"/></svg></button>
             <details class="browser-menu"><summary class="nav-icon" aria-label="More" title="More"><svg class="i"><use href="#i-more"/></svg></summary>
               <div class="browser-menu-body">
                 <button id="browser-text-toggle" type="button" aria-pressed="false" disabled>Show page text</button>
@@ -391,6 +392,7 @@
           <div class="browser-viewport" id="browser-viewport">
             <div id="browser-empty" class="browser-blank"><p>Enter an address to open a page. When Dikdik previews your app, it opens here.</p><button id="browser-example" type="button" hidden>Open example.com</button></div>
             <div id="browser-snapshot" class="browser-snapshot" hidden></div>
+            <iframe id="browser-live" class="browser-live" title="Your app, running live" referrerpolicy="no-referrer" hidden></iframe>
             <pre id="browser-page-text" class="browser-page-text" tabindex="0" aria-label="Page text" hidden></pre>
           </div>
           <div id="browser-footer" class="browser-footer is-quiet"><p id="browser-status" class="browser-status" role="status"></p></div>

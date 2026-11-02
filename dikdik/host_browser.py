@@ -32,13 +32,21 @@ from .browser_network import public_url, resolve_public
 PREVIEW_HOST = "preview.dikdik.example"
 
 
+_LOOPBACK_FAMILY: dict[int, str] = {}  # port -> the loopback address its server answered on
+
+
 def connect_loopback(port: int, timeout: float):
     """Connect to a local dev server on IPv4 or IPv6: "localhost" binds only ::1 on current
-    Node and Windows, so an IPv4-only check never saw servers such as vite dev."""
+    Node and Windows, so an IPv4-only check never saw servers such as vite dev. The address
+    that answered is tried first next time: Windows takes about two seconds to refuse a
+    loopback connection, which otherwise delayed every script and image of an IPv6-only server."""
     error = None
-    for host in ("127.0.0.1", "::1"):
+    known = _LOOPBACK_FAMILY.get(port)
+    for host in ((known,) if known else ()) + tuple(h for h in ("127.0.0.1", "::1") if h != known):
         try:
-            return socket.create_connection((host, port), timeout=timeout)
+            connection = socket.create_connection((host, port), timeout=timeout)
+            _LOOPBACK_FAMILY[port] = host
+            return connection
         except OSError as exc:
             error = exc
     raise error
@@ -46,6 +54,10 @@ def connect_loopback(port: int, timeout: float):
 PAGE_TIMEOUT = 45
 TEXT_LIMIT = 20_000
 TUNNEL_LIMIT = 64 * 1024 * 1024   # bytes through one capture's proxy, both directions
+IDLE_SECONDS = 20                 # a public connection that sends nothing for this long is closed
+# The project's own dev server may compile a route for minutes on first request (next dev) and
+# keeps live-reload sockets open; closing it after 20 quiet seconds failed real previews.
+PREVIEW_IDLE_SECONDS = 300
 CANDIDATES = {
     "win32": [r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe", r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
               r"%ProgramFiles%\Google\Chrome\Application\chrome.exe", r"%LocalAppData%\Google\Chrome\Application\chrome.exe"],
@@ -81,21 +93,32 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
                 head += chunk
             line = head.split(b"\r\n", 1)[0].decode("latin-1")
             method, target, _ = (line.split(" ") + ["", "", ""])[:3]
+            preview_port = getattr(self.server, "preview_port", None)
             if method == "CONNECT":
                 host, _, port = target.rpartition(":")
-                if port != "443":
+                host = host.strip("[]")
+                if preview_port and host == PREVIEW_HOST and port == "80":
+                    # The project's live-reload WebSocket (ws://), tunnelled to its own dev server.
+                    upstream = self._open("http://" + PREVIEW_HOST + "/", PREVIEW_HOST, 80)
+                elif port != "443":
                     return self._refuse(b"403 Only HTTPS on port 443")
-                upstream = self._open(f"https://{host.strip('[]')}/", host.strip("[]"), 443)
+                else:
+                    upstream = self._open(f"https://{host}/", host, 443)
                 if upstream is None:
                     return self._refuse(b"403 Not a public address")
                 self.request.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
                 rest = head.split(b"\r\n\r\n", 1)[1]
                 if rest:
                     upstream.sendall(rest)
-                self._pipe(upstream)
-            elif (method in {"GET", "HEAD"} or self.server.allow_http_writes and method in {"POST", "PUT", "PATCH", "DELETE", "OPTIONS"}) and target.startswith("http://"):
+                self._pipe(upstream, PREVIEW_IDLE_SECONDS if host == PREVIEW_HOST else IDLE_SECONDS)
+            elif target.startswith("http://"):
                 from urllib.parse import urlsplit
                 parts = urlsplit(target)
+                own = bool(preview_port) and parts.hostname == PREVIEW_HOST
+                # The project's own app may use any method and body (forms, server actions,
+                # uploads); public sites get page loads only, or bounded writes when allowed.
+                if not (own or method in {"GET", "HEAD"} or self.server.allow_http_writes and method in {"POST", "PUT", "PATCH", "DELETE", "OPTIONS"}):
+                    return self._refuse(b"405 Only page loads are allowed")
                 if parts.port not in (None, 80):
                     return self._refuse(b"403 Only HTTP on port 80")
                 upstream = self._open(target, parts.hostname or "", 80)
@@ -104,17 +127,16 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
                 path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
                 lines = head.split(b"\r\n\r\n", 1)[0].split(b"\r\n")[1:]
                 lengths = [h.split(b":", 1)[1].strip() for h in lines if h.lower().startswith(b"content-length:")]
-                if len(lengths) > 1 or any(h.lower().startswith(b"transfer-encoding:") for h in lines) or lengths and (not lengths[0].isdigit() or int(lengths[0]) > 1024 * 1024):
+                if not own and (len(lengths) > 1 or any(h.lower().startswith(b"transfer-encoding:") for h in lines) or lengths and (not lengths[0].isdigit() or int(lengths[0]) > 1024 * 1024)):
                     upstream.close()
                     return self._refuse(b"413 Request body too large or unsupported")
                 kept = [h for h in lines if not h.lower().startswith((b"proxy-", b"connection:", b"keep-alive:"))]
-                preview_port = getattr(self.server, "preview_port", None)
-                if preview_port and parts.hostname == PREVIEW_HOST:
+                if own:
                     kept = [h for h in kept if not h.lower().startswith(b"host:")]
                     kept.append(f"Host: 127.0.0.1:{preview_port}".encode())
                 request = f"{method} {path} HTTP/1.1\r\n".encode() + b"\r\n".join(kept) + b"\r\nConnection: close\r\n\r\n"
                 upstream.sendall(request + head.split(b"\r\n\r\n", 1)[1])
-                self._pipe(upstream)
+                self._pipe(upstream, PREVIEW_IDLE_SECONDS if own else IDLE_SECONDS)
             else:
                 self._refuse(b"405 Only page loads are allowed")
         except (OSError, ValueError):
@@ -135,12 +157,12 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
     def _refuse(self, status: bytes):
         self.request.sendall(b"HTTP/1.1 " + status + b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 
-    def _pipe(self, upstream):
+    def _pipe(self, upstream, idle: float = IDLE_SECONDS):
         sockets = [self.request, upstream]
         transferred = 0
         try:
             while True:
-                readable, _, _ = select.select(sockets, [], [], 20)
+                readable, _, _ = select.select(sockets, [], [], idle)
                 if not readable:
                     return
                 for sock in readable:

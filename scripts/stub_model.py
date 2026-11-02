@@ -23,6 +23,7 @@ Behaviour (keyed on words in the latest user message):
   (alternating two files, which Dikdik's stuck detector stops after 6 calls);
 - "SECRET": asks for a DEMO_TOKEN secret with request_secret (needs command approval in the task);
 - "FILES": creates three files and edits one, a delay apart (the Explorer follows live);
+- "PREVIEW": previews a Next.js project twice with `npx next dev` (needs command approval);
 - "MARKDOWN": a reply with a table, an alert, a quote and a file path, plus
   provider "reasoning_content" (shown as a Thinking row);
 - an attached image: says it sees an image;
@@ -120,6 +121,11 @@ def make_handler(expected_key: str, log_path: str | None, delay: float):
                                                                           "after": "  const done = 0;\n  return <main>"}, n)])
             elif "FILES" in objective:
                 data = reply("Wrote the page, the store and the styles.")
+            elif "PREVIEW" in objective and "preview_app" in tools and done.count("preview_app") < 2:
+                # Twice: the second preview reuses the running dev server.
+                data = reply("Previewing the app.", [call("preview_app", {"command": "npx next dev --port {port}", "path": "/"}, n)])
+            elif "PREVIEW" in objective:
+                data = reply("Previewed the app; it is running in the Browser panel.")
             elif "MARKDOWN" in objective:
                 data = reply(MARKDOWN, reasoning="The user wants a summary. I will list the files with their sizes.")
             elif has_image:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import codecs
+import logging
 import re
 import shutil
 import signal
@@ -23,6 +24,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from . import logs
 from .windows_shell import powershell_command
 
 OUTPUT_LIMIT = 256 * 1024     # kept for the model and the Terminal panel
@@ -534,6 +536,48 @@ def run_tests(root: Path, runners: list[dict], cancel: threading.Event, on_chunk
             "output": "\n\n".join(f"== {r['label']}: {r['status']} ==\n{r.get('output', '')}" for r in runs)[:OUTPUT_LIMIT]}
 
 
+_DIKDIK_JOB: list = []  # Windows: one job, held open for this process's lifetime
+
+
+def _end_with_dikdik(process) -> None:
+    """On Windows, put a background server in a job that Windows ends when Dikdik's process exits,
+    however it exits (closed, killed, crashed, or replaced by an update), so no dev server is left
+    holding a port. Elsewhere the engine and the updater stop servers on exit."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        api = ctypes.WinDLL("kernel32", use_last_error=True)
+        if not _DIKDIK_JOB:
+            api.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+            api.CreateJobObjectW.restype = wintypes.HANDLE
+            job = api.CreateJobObjectW(None, None)
+            if not job:
+                return
+            class Basic(ctypes.Structure):
+                _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                            ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                            ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                            ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+            class Extended(ctypes.Structure):
+                _fields_ = [("BasicLimitInformation", Basic), ("IoInfo", ctypes.c_uint64 * 6), ("ProcessMemoryLimit", ctypes.c_size_t),
+                            ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+            info = Extended()
+            info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            api.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+            api.SetInformationJobObject.restype = wintypes.BOOL
+            if not api.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):  # JobObjectExtendedLimitInformation
+                return
+            _DIKDIK_JOB.append(job)
+        api.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        api.AssignProcessToJobObject.restype = wintypes.BOOL
+        api.AssignProcessToJobObject(_DIKDIK_JOB[0], int(process._handle))
+    except (OSError, AttributeError, ValueError):  # an older Windows or a restricted job: stopped on close as before
+        logs.log("background_job_unavailable", logging.DEBUG, exc_info=True)
+
+
 class BackgroundShells:
     """Long-running commands (dev servers, watchers) started in the project folder.
 
@@ -554,6 +598,7 @@ class BackgroundShells:
         process = subprocess.Popen(argv, cwd=root, env=child_env(env), stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags,
                                    start_new_session=os.name != "nt")
+        _end_with_dikdik(process)
         entry = {"id": shell_id, "command": command, "shell": shell_name, "pid": process.pid,
                   "process": process, "output": [], "size": 0, "status": "running", "exit_code": None,
                   "started": time.time()}

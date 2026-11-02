@@ -170,6 +170,11 @@
   background: var(--surface); }
 .browser-blank { margin: auto; padding: 24px; max-width: 320px; text-align: center; color: var(--faint); font-size: 12.5px; line-height: 1.6; }
 .browser-snapshot { min-height: 0; width: 100%; flex-shrink: 0; }
+/* The running app, live: fills the panel; Mobile shows it at phone width. */
+.browser-live { align-self: stretch; width: 100%; min-height: 100%; border: 0; background: #fff; }
+.browser-viewport.is-live { overflow: hidden; }
+.browser-viewport.is-mobile { background: var(--surface-2); padding: 12px 0; }
+.browser-viewport.is-mobile .browser-live { width: 390px; max-width: 100%; flex: 0 0 auto; border-radius: 12px; box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / .2)); }
 .browser-viewport .browser-image { display: block; width: 100%; height: auto; border: 0; border-radius: 0; }
 .browser-page-text { align-self: stretch; width: 100%; margin: 0; padding: 20px; white-space: pre-wrap; overflow-wrap: anywhere;
   font: 12px/1.6 var(--mono); color: var(--ink-2); }

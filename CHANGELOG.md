@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.7 — 2026-11-02
+
+Previews of your app:
+- Fixed previews that hung for minutes and then failed: the preview proxy closed a connection
+  after 20 quiet seconds, while `next dev` compiles a route on first request for longer
+  (ERR_EMPTY_RESPONSE), and the preview browser closed every WebSocket, so Next's live-reload
+  client reloaded the page in a loop and froze the capture. A real Next.js shop that failed after
+  about five minutes per attempt (31 minutes in one run) now previews in 29 seconds.
+- For the project's own preview host only: compiles may take five minutes, live-reload sockets
+  are tunnelled to the dev server, and any method and body reach the app (forms, server actions,
+  uploads). Public pages keep their limits.
+- The page is requested once before the browser opens it, so it arrives compiled.
+- A dev server that listens only on IPv6 (Vite on Windows) no longer costs about two seconds per
+  request: the loopback address that answered is remembered.
+- The dev server keeps running after a preview. The Browser panel shows the app live with its
+  full address (localhost:port/path), Reload, Desktop/Mobile, a working "Open in your browser"
+  and Stop; typing a path loads it there. The next preview of the same dev or static server
+  reuses it and starts at once; a production server (next start) is restarted to serve the
+  latest build. The app runs on a different host name from Dikdik, so it never receives
+  Dikdik's sign-in cookie.
+- Dev servers never outlive Dikdik: on Windows they join a job that ends with Dikdik's process
+  (even when killed or replaced by an update), and the updater stops previews before exiting.
+- The conversation says "Previewing your app" instead of "Opening public web page".
+
 ## 0.3.6 — 2026-11-02
 
 Building a new app from a prompt:

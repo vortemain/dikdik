@@ -275,6 +275,7 @@ class Engine:
         self.bash = BashService(self)
         self.browser = BrowserService(self)
         self.background = local_exec.BackgroundShells()
+        self.live_preview = local_preview.LiveServer()  # the last preview's dev server, shown live in the Browser panel
         self.planning = Planning(self)
         self.automation = AutomationScheduler(self)  # starts only after every tool service exists
         self.automation.start()
@@ -552,6 +553,7 @@ class Engine:
 
     def close(self):
         self._warming_stop.set()
+        self.live_preview.stop()
         self.background.close()
         for flag in list(self.pausing.values()):
             flag.set()
@@ -1845,8 +1847,11 @@ class Engine:
             result = program_guard(program, local_preview.preview(self.root, arguments.get("command"), _Either(cancel, pause),
                 path=arguments.get("path", "/"), actions=arguments.get("actions"), expect_text=arguments.get("expect_text", ""),
                 save_screenshot=save_preview, env=sandbox_env or None, visual=compare_view,
-                focus=arguments.get("focus", ""), inspect=arguments.get("inspect")))
+                focus=arguments.get("focus", ""), inspect=arguments.get("inspect"), live=self.live_preview))
             workspace.forget_paths()
+            live = self.live_preview.status()
+            if live.get("running"):  # the Browser panel shows the running app, not only the captures
+                self.store.event(task, "live_preview", {key: live[key] for key in ("port", "path", "command")})
             after = {**inventory(self.root), **workspace.tracked_snapshot()}
             changed = {path: text for path, text in after.items() if before.get(path) != text}
             if changed:

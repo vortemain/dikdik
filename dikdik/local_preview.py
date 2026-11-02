@@ -7,7 +7,9 @@ import re
 import shlex
 import socket
 import sys
+import threading
 import time
+import weakref
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -43,6 +45,106 @@ def server_command(root, command):
         elif "{port}" not in command and re.fullmatch(r"\s*(?:bun|pnpm|yarn)\s+(?:run\s+)?dev\s*", command):
             command = command.strip() + " --port {port}"
     return command
+
+
+WARM_SECONDS = 240
+# Servers that pick up file changes by themselves (dev servers, a static file server); a
+# production server such as `next start` serves its last build, so it is started fresh.
+RELOADING = re.compile(r"\bdev\b|\bwatch\b|vite|--reload|runserver|flask\s+run|\bserve\b|-m\s+http\.server", re.I)
+
+
+_LIVE: "weakref.WeakSet[LiveServer]" = weakref.WeakSet()
+
+
+def stop_all() -> None:
+    """Stop every kept dev server; called before Dikdik exits without the usual shutdown (an update)."""
+    for live in list(_LIVE):
+        try:
+            live.stop()
+        except Exception:  # stopping the others matters more than one failure
+            logs.log("live_preview_stop_failed", logging.WARNING, exc_info=True)
+
+
+class LiveServer:
+    """The project's dev server, kept running after a preview so the Browser panel shows the real
+    page and the next preview reuses it instead of starting and compiling again. One per project;
+    a different command replaces it, and Dikdik stops it when the project closes."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._current: dict | None = None
+        _LIVE.add(self)
+
+    def reuse(self, root, command):
+        """The port of a running server for the same project and command that reloads by itself."""
+        with self._lock:
+            current = self._current
+        if not current or current["root"] != str(root) or current["command"] != command or not RELOADING.search(command):
+            return None
+        if current["shells"].poll(current["id"])["status"] != "running":
+            self.stop()
+            return None
+        return current["port"]
+
+    def adopt(self, shells, shell_id, port, command, root, path) -> None:
+        with self._lock:
+            previous, self._current = self._current, {"shells": shells, "id": shell_id, "port": port, "command": command,
+                                                       "root": str(root), "path": path, "started": time.time()}
+        if previous and previous["shells"] is not shells:
+            previous["shells"].close()
+
+    def visited(self, path) -> None:
+        with self._lock:
+            if self._current:
+                self._current["path"] = path
+
+    def output(self) -> str:
+        with self._lock:
+            current = self._current
+        return current["shells"].poll(current["id"]).get("output", "")[-4000:] if current else ""
+
+    def status(self) -> dict:
+        with self._lock:
+            current = self._current
+        if not current:
+            return {"running": False}
+        running = current["shells"].poll(current["id"])["status"] == "running"
+        return {"running": running, "port": current["port"], "path": current["path"], "command": current["command"],
+                "started": current["started"]}
+
+    def stop(self) -> None:
+        with self._lock:
+            current, self._current = self._current, None
+        if current:
+            current["shells"].close()
+
+
+def warm_up(port, path, cancel, timeout=WARM_SECONDS):
+    """Request the page once before the browser does. Dev servers (next dev, Vite, Nuxt) compile a
+    route on its first request, often for longer than a navigation should wait; afterwards the
+    browser gets the compiled page at once. A failure here is left for the browser to report."""
+    import http.client
+
+    done = threading.Event()
+
+    def fetch():
+        try:
+            connection = connect_loopback(port, timeout)
+            client = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+            client.sock = connection
+            client.request("GET", path, headers={"Host": f"127.0.0.1:{port}", "Accept": "text/html"})
+            client.getresponse().read()
+            client.close()
+        except Exception:  # best effort: the browser's own request reports what is wrong
+            logs.log("preview_warm_up_failed", logging.DEBUG, exc_info=True)
+        finally:
+            done.set()
+
+    threading.Thread(target=fetch, name="dikdik-preview-warm-up", daemon=True).start()
+    deadline = time.monotonic() + timeout
+    while not done.wait(0.2):
+        if cancel.is_set() or time.monotonic() >= deadline:
+            return
 
 
 def page_path(path):
@@ -84,11 +186,13 @@ def seams(inspection):
 
 
 def preview(root, command, cancel, *, path="/", actions=None, expect_text="", save_screenshot=None, env=None,
-            focus="", inspect=None, visual=None):
+            focus="", inspect=None, visual=None, live: LiveServer | None = None):
     """``focus`` screenshots one element (the part being designed) at desktop and mobile width;
     ``inspect`` reports exact computed styles and boxes for up to eight selectors at both widths;
     ``visual(view, png)``, when given, compares each capture with the accepted baseline for
-    that view (``path#label``; interaction results also key on the actions performed)."""
+    that view (``path#label``; interaction results also key on the actions performed).
+    With ``live``, a running server for the same command is reused and the server is kept
+    running afterwards for the Browser panel; without it the server is stopped as before."""
     command, path = server_command(root, command), page_path(path)
     if not isinstance(command, str) or "{port}" not in command or len(command) > 4000:
         raise ValueError("command is the command that starts the project's dev server, with {port} for the port Dikdik "
@@ -114,29 +218,36 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
     if not available():
         return {"status": "blocked", "error": "Interactive Chromium support is unavailable in this installation"}
     # Choose an unused port ourselves; ordinary browsing never gains localhost access.
-    with socket.socket() as reserved:
-        reserved.bind(("127.0.0.1", 0))
-        port = reserved.getsockname()[1]
-    shells, sessions = BackgroundShells(), BrowserSessions(preview_port=port)
+    reused = live.reuse(root, command) if live is not None else None
+    if reused:
+        port = reused
+    else:
+        with socket.socket() as reserved:
+            reserved.bind(("127.0.0.1", 0))
+            port = reserved.getsockname()[1]
+    shells, sessions = (None if reused else BackgroundShells()), BrowserSessions(preview_port=port)
     views, issues, audits, compared = [], [], [], []
     acted = hashlib.sha256(json.dumps(actions, sort_keys=True).encode()).hexdigest()[:12]
-    started = None
+    started, ready = None, bool(reused)
     try:
-        started = shells.start(root, command.replace("{port}", str(port)), env=env)
-        deadline = time.monotonic() + READY_SECONDS
-        while True:
-            if cancel.is_set():
-                return {"status": "cancelled", "error": "Preview cancelled"}
-            state = shells.poll(started["id"])
-            if state["status"] != "running":
-                return {"status": "failed", "error": "The preview server exited before becoming ready", "output": state["output"][-6000:]}
-            try:
-                with connect_loopback(port, 0.2):
-                    break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    return {"status": "failed", "error": f"Preview server did not listen on its assigned port within {READY_SECONDS} seconds", "output": state["output"][-6000:]}
-                cancel.wait(0.1)
+        if not reused:
+            started = shells.start(root, command.replace("{port}", str(port)), env=env)
+            deadline = time.monotonic() + READY_SECONDS
+            while True:
+                if cancel.is_set():
+                    return {"status": "cancelled", "error": "Preview cancelled"}
+                state = shells.poll(started["id"])
+                if state["status"] != "running":
+                    return {"status": "failed", "error": "The preview server exited before becoming ready", "output": state["output"][-6000:]}
+                try:
+                    with connect_loopback(port, 0.2):
+                        break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        return {"status": "failed", "error": f"Preview server did not listen on its assigned port within {READY_SECONDS} seconds", "output": state["output"][-6000:]}
+                    cancel.wait(0.1)
+            ready = True
+        warm_up(port, path, cancel)
 
         def capture(action, arguments, label):
             result = sessions.execute("preview", action, {**arguments, "audit": True}, cancel)
@@ -200,9 +311,10 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
         compact_views = [{**view, "text": view.get("text", "")[:2000], "elements": view.get("elements", [])[:20]} for view in views]
         # A 500 page or a script error is explained in the dev server's own console, not the page.
         broken = any(view.get("runtime_errors") or any(e.get("status", 0) >= 500 for e in view.get("http_errors", [])) for view in views)
-        server_output = shells.poll(started["id"]).get("output", "")[-4000:] if broken else ""
+        server_output = ((live.output() if reused else shells.poll(started["id"]).get("output", "")[-4000:]) if broken else "")
         return {"status": "failed" if issues else "passed", "views": compact_views, "issues": list(dict.fromkeys(issues)),
-                "server_port": port, **({"server_output": server_output} if server_output else {}),
+                "server_port": port, **({"server_reused": True} if reused else {}),
+                **({"server_output": server_output} if server_output else {}),
                 **({"inspection": inspection, "seams": seams(inspection)} if inspection else {}),
                 "interactions_checked": len(actions), "expected_text_checked": bool(expect_text),
                 "accessibility": audits,
@@ -216,10 +328,16 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
         return {"status": "cancelled" if cancel.is_set() else "failed", "error": reason[:1500], "views": views}
     finally:
         # A browser that is slow to shut down must not replace the finished result with an
-        # exception; the dev server is stopped either way.
+        # exception. A server that came up is kept for the Browser panel when asked to; any
+        # other is stopped.
         try:
             sessions.close()
         except Exception:
             logs.log("preview_browser_close_failed", logging.WARNING, exc_info=True)
         finally:
-            shells.close()
+            if reused:
+                live.visited(path)
+            elif live is not None and ready and not cancel.is_set() and shells.poll(started["id"])["status"] == "running":
+                live.adopt(shells, started["id"], port, command, root, path)
+            elif shells is not None:
+                shells.close()

@@ -341,7 +341,11 @@ def hand_off(installer: Path) -> None:
 def _exit_soon(delay: float = 1.5) -> None:
     def later() -> None:
         threading.Event().wait(delay)  # let the last status reply reach the window first
-        os._exit(0)
+        try:  # os._exit skips the usual shutdown: stop the app previews it would have stopped
+            from .local_preview import stop_all
+            stop_all()
+        finally:
+            os._exit(0)
     threading.Thread(target=later, daemon=True).start()
 
 

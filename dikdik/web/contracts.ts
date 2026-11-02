@@ -623,7 +623,7 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
     case "terminal_output":
       return [];  // rendered in the read-only Terminal panel, never duplicated into chat
     case "browser_started":
-      return [{ ...base, role: "tool", title: "Opening public web page", body: textOf(d.url, 4096) }];
+      return [{ ...base, role: "tool", title: d.runtime === "local project preview" ? "Previewing your app" : "Opening public web page", body: textOf(d.url, 4096) }];
     case "browser_result":
       return [{ ...base, role: "tool", title: "Browser capture", details: d }];
     case 'plan_updated':
