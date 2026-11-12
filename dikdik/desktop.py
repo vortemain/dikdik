@@ -188,74 +188,172 @@ def window_background() -> str:
         return "#1A1A19"
 
 
-def _ready_hook(edgechromium):
-    """pywebview's WebView2 class: EdgeChrome in pywebview 6 (BrowserView in older releases)."""
+_PATCHED = "_dikdik_context_menus"
+
+
+def _wrap_once(owner, name: str, make):
+    """Replace owner.name with make(original) unless already wrapped. Missing hooks are ignored."""
+    try:
+        original = getattr(owner, name)
+    except Exception:
+        return False
+    if getattr(original, _PATCHED, False):
+        return True
+    wrapped = functools.wraps(original)(make(original))
+    setattr(wrapped, _PATCHED, True)
+    setattr(owner, name, wrapped)
+    return True
+
+
+# The Windows window's title-bar state, set by run(): None leaves the native title bar alone.
+_TITLE_BAR: dict | None = None
+
+
+def _finish_title_bar(view, sender, chrome: dict) -> None:
+    """Once WebView2 is ready: let the page's title bar drag the window (non-client regions).
+    An older runtime without them keeps (or gets back) the native caption."""
+    if chrome.get("custom"):
+        return
+    try:
+        sender.CoreWebView2.Settings.IsNonClientRegionSupportEnabled = True  # CSS app-region: drag
+    except Exception:
+        chrome["custom"] = False
+        if chrome.get("caption_removed") and chrome.get("hwnd"):
+            try:
+                _set_caption(chrome["hwnd"], True)
+            except Exception:
+                pass
+        return
+    try:
+        if not chrome.get("caption_removed"):  # the window showed before Dikdik could prepare it
+            hwnd = int(view.form.Handle.ToInt64())
+            _keep_maximized_in_work_area(hwnd)
+            _remove_caption(hwnd)
+            chrome.update(hwnd=hwnd, caption_removed=True)
+        chrome["custom"] = True
+    except Exception:
+        chrome["custom"] = False
+
+
+def _edgechromium_menus(edgechromium) -> None:
+    """WebView2 (Windows): pywebview turns default menus on only in debug mode. The same hook
+    finishes the integrated title bar."""
+    def make(original):
+        def on_webview_ready(view, sender, args):
+            original(view, sender, args)
+            try:
+                sender.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
+            except Exception:
+                pass  # Initialization failed or a newer pywebview owns this setting.
+            if _TITLE_BAR is not None:
+                _finish_title_bar(view, sender, _TITLE_BAR)
+        return on_webview_ready
+    # pywebview 6 names the class EdgeChrome; older releases used BrowserView.
     for name in ("EdgeChrome", "BrowserView"):
-        cls = getattr(edgechromium, name, None)
-        if cls is not None and hasattr(cls, "on_webview_ready"):
-            return cls
-    return None
+        owner = getattr(edgechromium, name, None)
+        if owner is not None and _wrap_once(owner, "on_webview_ready", make):
+            return
 
 
-def _enable_native_context_menus(edgechromium=None, chrome: dict | None = None) -> None:
-    """Keep the browser right-click menu available in non-debug desktop mode and, given
-    ``chrome``, turn the window's title bar into the page's own.
+def _gtk_menus(gtk) -> None:
+    """WebKitGTK (Linux): pywebview connects a handler that swallows every right click."""
+    def make(original):
+        def __init__(view, *args, **kwargs):
+            original(view, *args, **kwargs)
+            try:
+                from gi.repository import GObject
+                webview = view.webview
+                signal = GObject.signal_lookup("context-menu", type(webview))
+                while signal:
+                    handler = GObject.signal_handler_find(webview, GObject.SignalMatchType.ID,
+                                                          signal, 0, None, None, None)
+                    if not handler:
+                        break
+                    webview.disconnect(handler)
+            except Exception:
+                pass
+        return __init__
+    owner = getattr(gtk, "BrowserView", None)
+    if owner is not None:
+        _wrap_once(owner, "__init__", make)
 
-    pywebview 6 enables WebView2's default context menus (copy, paste, select)
-    only when debug=True, so copy/paste by right-click is silently unavailable
-    in release builds. Wrap the EdgeChromium hook so the menus are normally
-    available while debug-only extras (devtools, F12, status bar) stay off.
-    A missing or renamed upstream hook is harmless; newer releases may fix it.
 
-    The title bar is replaced only once WebView2 accepts non-client regions: without
-    them the page could not move the window, so it keeps the native caption.
+def _qt_menus(qt) -> None:
+    """Qt WebEngine (Linux release builds): pywebview sets NoContextMenu outside debug mode,
+    and its own menu adds an Inspect Element entry. Show the standard menu without it."""
+    owner = getattr(qt, "BrowserView", None)
+    view_class = getattr(owner, "WebView", None)
+    if owner is None or view_class is None:
+        return
+    debug = lambda: bool(getattr(qt, "_state", {}).get("debug"))
+
+    def make_init(original):
+        def __init__(window, *args, **kwargs):
+            original(window, *args, **kwargs)
+            if debug():
+                return
+            try:
+                window.webview.setContextMenuPolicy(qt.QtCore.Qt.DefaultContextMenu)
+            except Exception:
+                pass
+        return __init__
+
+    def make_event(original):
+        def contextMenuEvent(view, event):
+            if debug():
+                return original(view, event)
+            try:
+                create = getattr(view, "createStandardContextMenu", None) or view.page().createStandardContextMenu
+                menu = create()
+                for action in list(menu.actions()):
+                    if "inspect" in (action.text() or "").lower():
+                        menu.removeAction(action)
+                if menu.actions():
+                    (getattr(menu, "exec", None) or menu.exec_)(event.globalPos())
+            except Exception:
+                pass
+        return contextMenuEvent
+
+    _wrap_once(owner, "__init__", make_init)
+    _wrap_once(view_class, "contextMenuEvent", make_event)
+
+
+_PLATFORM_FIXES = {
+    "webview.platforms.edgechromium": _edgechromium_menus,
+    "webview.platforms.gtk": _gtk_menus,
+    "webview.platforms.qt": _qt_menus,
+}
+
+
+def _fix_loaded_platforms() -> None:
+    for name, fix in _PLATFORM_FIXES.items():
+        module = sys.modules.get(name)
+        if module is not None:
+            try:
+                fix(module)
+            except Exception:
+                pass  # A right-click menu is never worth failing the launch for.
+
+
+def _enable_native_context_menus(webview=None) -> None:
+    """Keep the right-click menu (cut, copy, paste, select all) in non-debug desktop mode.
+
+    pywebview disables the renderer's context menu unless debug=True, on every
+    platform it supports, so paste by right-click is unavailable in release
+    builds. The renderer module is imported only when pywebview starts, so wrap
+    its initializer and fix whichever renderer it loads. Debug-only extras
+    (devtools, F12, status bar, Inspect Element) stay off.
     """
-    if edgechromium is None:
-        if sys.platform != "win32":
-            return
-        try:
-            from webview.platforms import edgechromium
-        except Exception:
-            return
-    cls = _ready_hook(edgechromium)
-    if cls is None:
+    _fix_loaded_platforms()
+    if webview is None:
         return
-    original = cls.on_webview_ready
-    if getattr(original, "_dikdik_context_menus", False):
-        return
-
-    @functools.wraps(original)
-    def on_webview_ready(view, sender, args):
-        original(view, sender, args)
-        try:
-            sender.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
-        except Exception:
-            pass  # The menu is an improvement; a newer pywebview owns its own behavior.
-        if chrome is None or chrome.get("custom"):
-            return
-        try:
-            sender.CoreWebView2.Settings.IsNonClientRegionSupportEnabled = True  # CSS app-region: drag
-        except Exception:
-            # An older WebView2 runtime: the page cannot move the window, so it keeps the native caption.
-            chrome["custom"] = False
-            if chrome.get("caption_removed") and chrome.get("hwnd"):
-                try:
-                    _set_caption(chrome["hwnd"], True)
-                except Exception:
-                    pass
-            return
-        try:
-            if not chrome.get("caption_removed"):  # the window showed before Dikdik could prepare it
-                hwnd = int(view.form.Handle.ToInt64())
-                _keep_maximized_in_work_area(hwnd)
-                _remove_caption(hwnd)
-                chrome.update(hwnd=hwnd, caption_removed=True)
-            chrome["custom"] = True
-        except Exception:
-            chrome["custom"] = False
-
-    on_webview_ready._dikdik_context_menus = True
-    cls.on_webview_ready = on_webview_ready
+    def make(original):
+        def initialize(*args, **kwargs):
+            guilib = original(*args, **kwargs)
+            _fix_loaded_platforms()
+            return guilib
+        return initialize
+    _wrap_once(webview, "initialize", make)
 
 
 def run(server, link: str, data: Path, webview=None) -> None:
@@ -268,8 +366,10 @@ def run(server, link: str, data: Path, webview=None) -> None:
     if target.scheme != "http" or target.hostname != "127.0.0.1" or target.port != server.server_port:
         raise ValueError("The desktop window requires its own local Dikdik server")
     webview = webview or load_webview()
+    global _TITLE_BAR
     chrome: dict = {"custom": False, "hwnd": None, "caption_removed": False}
-    _enable_native_context_menus(chrome=chrome if sys.platform == "win32" else None)
+    _TITLE_BAR = chrome if sys.platform == "win32" else None
+    _enable_native_context_menus(webview)
     # All outbound links in the application use target=_blank. Keep them in the
     # system browser, including provider sign-in, without enabling a Python API.
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True

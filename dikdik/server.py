@@ -1282,6 +1282,8 @@ def early_exits(parser: argparse.ArgumentParser) -> None:
 
 
 def main(*, desktop: bool = False):
+    from .hidden_console import install as hide_child_consoles
+    hide_child_consoles()  # Windows GUI launches: no terminal windows for git, npm, MCP servers...
     parser = argparse.ArgumentParser(description="Dikdik — Small name. Serious intelligence.",
                                      prog="python -m dikdik.server")
     parser.add_argument("-v", "--version", action="store_true", help="Print the version and exit")

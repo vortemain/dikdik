@@ -106,33 +106,99 @@ class DesktopTests(unittest.TestCase):
         core = SimpleNamespace(Settings=settings)
         native = SimpleNamespace(CoreWebView2=core)
         ready = []
-        class BrowserView:
+        # pywebview 6 names the WebView2 host class EdgeChrome.
+        class EdgeChrome:
             def on_webview_ready(self, sender, args):
                 ready.append(sender)
 
-        stub = SimpleNamespace(BrowserView=BrowserView)
-        desktop._enable_native_context_menus(stub)
-        BrowserView().on_webview_ready(native, None)
+        stub = SimpleNamespace(EdgeChrome=EdgeChrome)
+        desktop._edgechromium_menus(stub)
+        EdgeChrome().on_webview_ready(native, None)
         self.assertEqual(ready, [native])
         self.assertTrue(settings.AreDefaultContextMenusEnabled)
         # A broken native attribute does not break window readiness.
         settings.AreDefaultContextMenusEnabled = False
         native.CoreWebView2 = SimpleNamespace(Settings=SimpleNamespace())
-        BrowserView().on_webview_ready(native, None)
+        EdgeChrome().on_webview_ready(native, None)
         self.assertEqual(ready.count(native), 2)
         # Idempotent: wrapping twice does not stack calls.
-        desktop._enable_native_context_menus(stub)
-        self.assertEqual(len(ready), 2)
-
-    def test_pywebview_6_hook_name_is_patched_too(self):
-        class Settings:
-            AreDefaultContextMenusEnabled = False
-        native = SimpleNamespace(CoreWebView2=SimpleNamespace(Settings=Settings()))
-        class EdgeChrome:  # pywebview 6 has no BrowserView in edgechromium
-            def on_webview_ready(self, sender, args): pass
-        desktop._enable_native_context_menus(SimpleNamespace(EdgeChrome=EdgeChrome))
+        desktop._edgechromium_menus(stub)
         EdgeChrome().on_webview_ready(native, None)
-        self.assertTrue(native.CoreWebView2.Settings.AreDefaultContextMenusEnabled)
+        self.assertEqual(len(ready), 3)
+
+    def test_context_menus_fixed_for_the_renderer_pywebview_loads(self):
+        class EdgeChrome:
+            def on_webview_ready(self, sender, args):
+                pass
+        platform = SimpleNamespace(EdgeChrome=EdgeChrome)
+        renderer = SimpleNamespace(initialize=lambda gui=None: "guilib")
+        desktop._enable_native_context_menus(renderer)
+        with patch.dict("sys.modules", {"webview.platforms.edgechromium": platform}):
+            self.assertEqual(renderer.initialize("edgechromium"), "guilib")
+        self.assertTrue(getattr(EdgeChrome.on_webview_ready, desktop._PATCHED))
+        first = renderer.initialize
+        desktop._enable_native_context_menus(renderer)
+        self.assertIs(renderer.initialize, first)
+
+    def test_qt_context_menu_restored_without_inspect_element(self):
+        state = {"debug": False}
+        class Action:
+            def __init__(self, text):
+                self._text = text
+            def text(self):
+                return self._text
+        class Menu:
+            def __init__(self):
+                self.items = [Action("Copy"), Action("Paste"), Action("Inspect")]
+                self.shown = None
+            def actions(self):
+                return list(self.items)
+            def removeAction(self, action):
+                self.items.remove(action)
+            def exec(self, pos):
+                self.shown = pos
+        menu = Menu()
+        class WebView:
+            def createStandardContextMenu(self):
+                return menu
+            def contextMenuEvent(self, event):
+                raise AssertionError("pywebview's menu adds Inspect Element")
+        class BrowserView:
+            def __init__(self, window):
+                self.webview = Mock()
+                self.webview.setContextMenuPolicy("none")
+        BrowserView.WebView = WebView
+        Qt = SimpleNamespace(DefaultContextMenu="default")
+        qt = SimpleNamespace(BrowserView=BrowserView, _state=state, QtCore=SimpleNamespace(Qt=Qt))
+        desktop._qt_menus(qt)
+        window = BrowserView(None)
+        window.webview.setContextMenuPolicy.assert_called_with("default")
+        WebView().contextMenuEvent(SimpleNamespace(globalPos=lambda: (4, 2)))
+        self.assertEqual([a.text() for a in menu.items], ["Copy", "Paste"])
+        self.assertEqual(menu.shown, (4, 2))
+        state["debug"] = True
+        with self.assertRaises(AssertionError):
+            WebView().contextMenuEvent(None)
+
+    def test_gtk_menu_blocker_is_removed(self):
+        try:
+            import gi
+            gi.require_version("Gtk", "3.0")
+            gi.require_version("WebKit2", "4.1")
+            from gi.repository import WebKit2
+            webview = WebKit2.WebView()
+        except Exception:
+            self.skipTest("WebKitGTK is not available")
+        calls = []
+        class BrowserView:
+            def __init__(self, window):
+                self.webview = webview
+                webview.connect("context-menu", lambda *a: calls.append(a) or True)
+        desktop._gtk_menus(SimpleNamespace(BrowserView=BrowserView))
+        BrowserView(None)
+        from gi.repository import GObject
+        signal = GObject.signal_lookup("context-menu", type(webview))
+        self.assertEqual(GObject.signal_handler_find(webview, GObject.SignalMatchType.ID, signal, 0, None, None, None), 0)
 
     def test_title_bar_becomes_the_pages_only_when_webview2_supports_drag_regions(self):
         class Settings:
@@ -144,8 +210,8 @@ class DesktopTests(unittest.TestCase):
             def on_webview_ready(self, sender, args): pass
         chrome = {"custom": False, "hwnd": None}
         native = SimpleNamespace(CoreWebView2=SimpleNamespace(Settings=Settings()))
-        with patch.object(desktop, "_remove_caption") as remove, patch.object(desktop, "_keep_maximized_in_work_area") as fit:
-            desktop._enable_native_context_menus(SimpleNamespace(EdgeChrome=EdgeChrome), chrome=chrome)
+        with patch.object(desktop, "_remove_caption") as remove, patch.object(desktop, "_keep_maximized_in_work_area") as fit,                 patch.object(desktop, "_TITLE_BAR", chrome):
+            desktop._edgechromium_menus(SimpleNamespace(EdgeChrome=EdgeChrome))
             EdgeChrome().on_webview_ready(native, None)
             remove.assert_called_once_with(4242)
             fit.assert_called_once_with(4242)
@@ -162,8 +228,8 @@ class DesktopTests(unittest.TestCase):
             def __init__(self): self.form = SimpleNamespace(Handle=handle)
             def on_webview_ready(self, sender, args): pass
         old = {"custom": False, "hwnd": None}
-        with patch.object(desktop, "_remove_caption") as remove:
-            desktop._enable_native_context_menus(SimpleNamespace(EdgeChrome=OldEdgeChrome), chrome=old)
+        with patch.object(desktop, "_remove_caption") as remove, patch.object(desktop, "_TITLE_BAR", old):
+            desktop._edgechromium_menus(SimpleNamespace(EdgeChrome=OldEdgeChrome))
             OldEdgeChrome().on_webview_ready(SimpleNamespace(CoreWebView2=SimpleNamespace(Settings=OldSettings())), None)
             remove.assert_not_called()
         self.assertFalse(old["custom"])
@@ -184,11 +250,11 @@ class DesktopTests(unittest.TestCase):
                     def __init__(self): self.form = SimpleNamespace(Handle=SimpleNamespace(ToInt64=lambda: 99))
                     def on_webview_ready(self, sender, args): pass
                 chrome = {"custom": False, "hwnd": None, "caption_removed": False}
-                with patch.object(desktop, "_set_caption") as caption, patch.object(desktop, "_keep_maximized_in_work_area") as fit:
+                with patch.object(desktop, "_set_caption") as caption, patch.object(desktop, "_keep_maximized_in_work_area") as fit,                         patch.object(desktop, "_TITLE_BAR", chrome):
                     desktop._prepare_window(window, chrome)  # before_show
                     caption.assert_called_once_with(99, False)
                     fit.assert_called_once_with(99)
-                    desktop._enable_native_context_menus(SimpleNamespace(EdgeChrome=EdgeChrome), chrome=chrome)
+                    desktop._edgechromium_menus(SimpleNamespace(EdgeChrome=EdgeChrome))
                     EdgeChrome().on_webview_ready(SimpleNamespace(CoreWebView2=SimpleNamespace(Settings=Settings())), None)
                     self.assertEqual(chrome["custom"], supported)
                     if supported:
@@ -229,6 +295,9 @@ class DesktopTests(unittest.TestCase):
     def test_context_menus_hook_absent_renderer_is_harmless(self):
         renderer = SimpleNamespace(settings={}, create_window=MagicMock())
         self.assertIsNone(desktop._enable_native_context_menus(renderer))
+        desktop._edgechromium_menus(SimpleNamespace())
+        desktop._qt_menus(SimpleNamespace())
+        desktop._gtk_menus(SimpleNamespace())
 
     def test_conflicting_launch_modes_are_refused_before_engine_init(self):
         with patch("sys.argv", ["dikdik", "--desktop", "--no-browser"]), patch("sys.stderr", io.StringIO()), patch("dikdik.server.Engine") as engine:
