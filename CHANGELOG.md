@@ -1,6 +1,50 @@
 # Changelog
 
-## Unreleased
+## 0.3.8 — 2026-11-12
+
+Browser:
+- The Browser panel shows the page live (a screencast that updates as the page changes). Clicks,
+  double and right clicks, hover, typing, paste and scrolling work in the live view and return at
+  once; a hidden panel streams nothing and an unavailable stream falls back to the screenshot.
+- The agent has 18 browser tools. It reads the page as an accessibility tree with stable element
+  refs and acts by ref, role and name, label, text or CSS. It types key by key (masks and live
+  validation run), fills, selects, checks, hovers and drags, and switches to dark mode or a device
+  size. It sees screenshots (an element, a zoomed region, the full page) and reads computed
+  styles, the console and network requests, including the data a form sent, and it can run
+  JavaScript. Each action returns the updated tree and any new errors or failed requests.
+- preview_app takes up to 20 steps (type, check, hover, double click and more) found by role,
+  label or text, each with an optional expected text. A failing step is reported by number with a
+  capture and the run stops there. It adds a dark-mode capture and reports console errors and the
+  data forms sent. The app keeps running and opens in the agent's browser for step-by-step
+  testing, which also counts as checking the requested interaction.
+- Fixed: forms on public pages could never submit (the request was passed in place of the page
+  state), and reading a page while a click navigated failed.
+
+Desktop window and layout:
+- Windows: one integrated title bar. The native caption is removed before the window first shows
+  (the resizable frame stays). The page's title bar drags the window with Snap and double-click to
+  maximize (WebView2 non-client regions), and the page draws its own minimize, maximize and close
+  buttons, the only Python it can call. The window's first colour follows the system theme instead
+  of green, and a maximized window stops at the taskbar. A WebView2 runtime without drag regions
+  keeps the native title bar.
+- The title bar, sidebar, conversation and panel keep fixed places at every width: between 761 and
+  1100 px an open panel no longer drops under the conversation; the sidebar folds to a rail and
+  opens as a drawer.
+- Sidebar: Today, Yesterday, previous 7 and 30 days, then older; marks for failed runs and runs
+  that need you; how long ago each was active; sort and filters behind a button.
+- A calm start-up screen that appears only when start-up is slow, and a welcome page with the
+  project, quick starts and recent conversations.
+
+Setting up the computer:
+- environment_check reports the OS, package managers and installed toolchains, what the project's
+  files call for (about 40 toolchains: Python, Node.js and its package managers, Go, Rust, Java,
+  .NET, C/C++, PHP, Ruby, Dart/Flutter, Swift, Zig, R, Docker, PostgreSQL, Android tools, Arduino
+  and more), what is missing, and exact non-interactive install and verify commands for winget,
+  Scoop, Chocolatey, Homebrew, apt, dnf, pacman, zypper or snap.
+- A failed command comes back with a diagnosis and the fix for this computer: a missing program,
+  Python or Node module, a project binary, or the Microsoft C++ Build Tools.
+- Commands find tools installed since Dikdik started (the Windows registry PATH and the usual tool
+  folders), installers may run for 30 minutes, and installing software is a high-risk action.
 
 Desktop app:
 - Right-click works again: Cut, Copy, Paste and Select All appear in the desktop window on
