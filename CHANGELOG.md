@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+Desktop app:
+- Right-click works again: Cut, Copy, Paste and Select All appear in the desktop window on
+  Windows (WebView2), Linux release builds (Qt) and Linux source installs (GTK). The earlier
+  Windows fix targeted a class pywebview 6 renamed, so it silently did nothing; pywebview also
+  blocks the menu on Linux outside debug mode. Developer tools stay off.
+- No more terminal windows popping up on Windows. When Dikdik runs without a console (the
+  desktop app), every program it starts (git, npm, node, Python, PowerShell, MCP servers, and
+  tools that libraries start) now runs hidden, not only the call sites that remembered the flag.
+
 ## 0.3.7 — 2026-11-02
 
 Previews of your app:
