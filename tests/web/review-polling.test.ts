@@ -94,7 +94,8 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     holdProject = null; releaseProject(); await tick();
     node("token").value = "local-test";
     await node("connect-form").listeners.get("submit")!({ preventDefault() {} });
-    node("history").children[0]!.onclick!();
+    // The list opens with a date section heading; the first row is the conversation.
+    node("history").children.find(child => child.className === "conv-item")!.onclick!();
     await tick();
     expect(requests).toBe(1);
     expect(node("review-controls").hidden).toBe(false);
@@ -144,7 +145,7 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     state = 'completed'; result = null;
     let release!: () => void;
     holdGet = new Promise<void>(resolve => { release = resolve; });
-    node('history').children[0]!.onclick!(); await tick();
+    node('history').children.find(child => child.className === 'conv-item')!.onclick!(); await tick();
     node('objective').value = 'Start another turn';
     node('edits').value = '[{"path":"a.py","before":"1","after":"2"}]';
     let releaseHistory!: () => void;

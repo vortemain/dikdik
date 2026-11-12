@@ -3,6 +3,7 @@
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
+import sys
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -49,7 +50,14 @@ class DesktopTests(unittest.TestCase):
         renderer.create_window.assert_called_once()
         self.assertTrue(Path(renderer.start.call_args.kwargs["icon"]).is_file())
         self.assertEqual(renderer.create_window.call_args.kwargs["url"], link)
-        self.assertNotIn("js_api", renderer.create_window.call_args.kwargs)
+        # The page can reach only the title bar's window buttons, and nothing through them.
+        api = renderer.create_window.call_args.kwargs.get("js_api")
+        if sys.platform == "win32":
+            self.assertIsInstance(api, desktop.WindowControls)
+            self.assertEqual({name for name in dir(api) if not name.startswith("_")},
+                             {"window_state", "minimize", "toggle_maximize", "close"})
+        else:
+            self.assertIsNone(api)
         self.assertTrue(renderer.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"])
         self.assertFalse(renderer.settings["ALLOW_FILE_URLS"])
         self.assertTrue(server._BaseServer__is_shut_down.is_set())
@@ -191,6 +199,98 @@ class DesktopTests(unittest.TestCase):
         from gi.repository import GObject
         signal = GObject.signal_lookup("context-menu", type(webview))
         self.assertEqual(GObject.signal_handler_find(webview, GObject.SignalMatchType.ID, signal, 0, None, None, None), 0)
+
+    def test_title_bar_becomes_the_pages_only_when_webview2_supports_drag_regions(self):
+        class Settings:
+            AreDefaultContextMenusEnabled = False
+            IsNonClientRegionSupportEnabled = False
+        handle = SimpleNamespace(ToInt64=lambda: 4242)
+        class EdgeChrome:
+            def __init__(self): self.form = SimpleNamespace(Handle=handle)
+            def on_webview_ready(self, sender, args): pass
+        chrome = {"custom": False, "hwnd": None}
+        native = SimpleNamespace(CoreWebView2=SimpleNamespace(Settings=Settings()))
+        with patch.object(desktop, "_remove_caption") as remove, patch.object(desktop, "_keep_maximized_in_work_area") as fit,                 patch.object(desktop, "_TITLE_BAR", chrome):
+            desktop._edgechromium_menus(SimpleNamespace(EdgeChrome=EdgeChrome))
+            EdgeChrome().on_webview_ready(native, None)
+            remove.assert_called_once_with(4242)
+            fit.assert_called_once_with(4242)
+        self.assertTrue(native.CoreWebView2.Settings.IsNonClientRegionSupportEnabled)
+        self.assertEqual(chrome, {"custom": True, "hwnd": 4242, "caption_removed": True})
+        # An older WebView2 runtime without drag regions keeps the native title bar.
+        class OldSettings:
+            AreDefaultContextMenusEnabled = False
+            def __setattr__(self, name, value):
+                if name == "IsNonClientRegionSupportEnabled":
+                    raise AttributeError(name)
+                object.__setattr__(self, name, value)
+        class OldEdgeChrome:
+            def __init__(self): self.form = SimpleNamespace(Handle=handle)
+            def on_webview_ready(self, sender, args): pass
+        old = {"custom": False, "hwnd": None}
+        with patch.object(desktop, "_remove_caption") as remove, patch.object(desktop, "_TITLE_BAR", old):
+            desktop._edgechromium_menus(SimpleNamespace(EdgeChrome=OldEdgeChrome))
+            OldEdgeChrome().on_webview_ready(SimpleNamespace(CoreWebView2=SimpleNamespace(Settings=OldSettings())), None)
+            remove.assert_not_called()
+        self.assertFalse(old["custom"])
+        self.assertEqual(desktop.WindowControls(old).window_state(), {"custom_title_bar": False, "maximized": False})
+
+    def test_the_caption_goes_before_the_first_frame_and_returns_on_an_old_runtime(self):
+        """No native title bar flashes at launch; a runtime without drag regions gets it back."""
+        window = SimpleNamespace(native=SimpleNamespace(Handle=SimpleNamespace(ToInt64=lambda: 99)))
+        for supported in (True, False):
+            with self.subTest(supported=supported):
+                class Settings:
+                    AreDefaultContextMenusEnabled = False
+                    def __setattr__(self, name, value):
+                        if name == "IsNonClientRegionSupportEnabled" and not supported:
+                            raise AttributeError(name)
+                        object.__setattr__(self, name, value)
+                class EdgeChrome:
+                    def __init__(self): self.form = SimpleNamespace(Handle=SimpleNamespace(ToInt64=lambda: 99))
+                    def on_webview_ready(self, sender, args): pass
+                chrome = {"custom": False, "hwnd": None, "caption_removed": False}
+                with patch.object(desktop, "_set_caption") as caption, patch.object(desktop, "_keep_maximized_in_work_area") as fit,                         patch.object(desktop, "_TITLE_BAR", chrome):
+                    desktop._prepare_window(window, chrome)  # before_show
+                    caption.assert_called_once_with(99, False)
+                    fit.assert_called_once_with(99)
+                    desktop._edgechromium_menus(SimpleNamespace(EdgeChrome=EdgeChrome))
+                    EdgeChrome().on_webview_ready(SimpleNamespace(CoreWebView2=SimpleNamespace(Settings=Settings())), None)
+                    self.assertEqual(chrome["custom"], supported)
+                    if supported:
+                        caption.assert_called_once()  # not removed twice
+                    else:
+                        caption.assert_called_with(99, True)  # the native title bar is back
+                    fit.assert_called_once()
+
+    def test_maximized_windows_keep_the_taskbar_visible(self):
+        # A 1920x1080 monitor with a 48 px taskbar at the bottom; an 8 px invisible resize border.
+        monitor, work, frame = (0, 0, 1920, 1080), (0, 0, 1920, 1032), (-8, -8, 8, 8)
+        self.assertEqual(desktop.maximized_bounds(work, monitor, frame), ((-8, -8), (1936, 1048)))
+        # The content (window minus the border) fills the work area exactly and stops at the taskbar.
+        (x, y), (w, h) = desktop.maximized_bounds(work, monitor, frame)
+        self.assertEqual((x + 8, y + 8, x + w - 8, y + h - 8), work)
+        # A taskbar on the left of a second monitor: positions are relative to that monitor.
+        self.assertEqual(desktop.maximized_bounds((2000, 0, 3840, 1080), (1920, 0, 3840, 1080), frame), ((72, -8), (1856, 1096)))
+
+    def test_window_background_matches_the_system_theme(self):
+        self.assertIn(desktop.window_background(), {"#FBFBFA", "#1A1A19"})
+
+    def test_window_buttons_act_only_on_their_own_window(self):
+        user32 = Mock()
+        user32.IsZoomed.return_value = 0
+        controls = desktop.WindowControls({"custom": True, "hwnd": 77})
+        with patch.object(desktop.WindowControls, "_user32", return_value=user32):
+            controls.minimize()
+            self.assertTrue(controls.toggle_maximize())
+            controls.close()
+            self.assertEqual(controls.window_state(), {"custom_title_bar": True, "maximized": False})
+        user32.ShowWindow.assert_any_call(77, 6)
+        user32.ShowWindow.assert_any_call(77, 3)
+        user32.PostMessageW.assert_called_once_with(77, 0x0010, 0, 0)
+        with patch.object(desktop.WindowControls, "_user32", return_value=user32):
+            desktop.WindowControls({"custom": False, "hwnd": None}).close()  # no window yet: nothing happens
+        user32.PostMessageW.assert_called_once()
 
     def test_context_menus_hook_absent_renderer_is_harmless(self):
         renderer = SimpleNamespace(settings={}, create_window=MagicMock())

@@ -80,7 +80,8 @@ class TranslationTests(unittest.TestCase):
 @unittest.skipUnless(os.name == "nt", "Windows only")
 class ChildEnvironmentTests(unittest.TestCase):
     def test_python_output_is_utf8_and_a_python_is_always_reachable(self):
-        with patch.dict(os.environ, {"PATH": r"C:\nowhere"}, clear=False):
+        # No installed-tool folders either (they would bring a Python back): the bundled one is the fallback.
+        with patch.dict(os.environ, {"PATH": r"C:\nowhere"}, clear=False), patch.object(local_exec, "installed_paths", return_value=[]):
             os.environ.pop("PYTHONIOENCODING", None)
             env = local_exec.child_env({"SECRET": "v"})
         self.assertEqual((env["PYTHONIOENCODING"], env["SECRET"]), ("utf-8", "v"))

@@ -903,6 +903,9 @@ export function browserView(events: TaskEvent[]): BrowserView {
       view.url = url; view.screenshot = screenshot;
       view.interactive = data.interactive === true;
       view.title = textOf(data.title, 256); view.text = textOf(data.text, 12000);
+    } else if (view.status === "passed" && url && !screenshot && view.screenshot && typeof data.title === "string") {
+      // An action on the live page (no capture): the page moved on; the stream shows it.
+      view.url = url; view.title = textOf(data.title, 256);
     }
   }
   return view;

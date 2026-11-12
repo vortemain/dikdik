@@ -185,8 +185,37 @@ def seams(inspection):
     return found
 
 
+# Steps a preview can take, as a person would. "type" presses keys one by one (masks and
+# validation run); "fill" sets the value at once. A step names its element by CSS selector,
+# role and name, label, placeholder or visible text.
+STEP_ACTIONS = {"click", "dblclick", "fill", "type", "select", "press", "check", "uncheck", "hover"}
+STEP_KEYS = {"action", "selector", "role", "name", "label", "placeholder", "text", "value", "key", "expect"}
+
+
+def _step_arguments(step):
+    """The browser action and arguments for one preview step."""
+    action = step["action"]
+    args = {key: step[key] for key in ("selector", "role", "name", "label", "placeholder", "text") if key in step}
+    if action == "dblclick":
+        return "click", {**args, "double": True}
+    if action == "type":  # a field is named by selector, role, label or placeholder; "value" is what to type
+        args.pop("text", None)
+        return "type", {**args, "text": step.get("value", "")}
+    if action in {"fill", "select"}:
+        return action, {**args, "value": step.get("value", "")}
+    if action == "press":
+        return "press", {**args, "key": step.get("key", "")}
+    return action, args
+
+
+def _describe_step(step):
+    target = step.get("selector") or (f'{step["role"]} "{step.get("name", "")}"' if step.get("role") else "") \
+        or step.get("label") or step.get("placeholder") or step.get("text") or step.get("key") or ""
+    return f'{step["action"]} {target}'.strip()
+
+
 def preview(root, command, cancel, *, path="/", actions=None, expect_text="", save_screenshot=None, env=None,
-            focus="", inspect=None, visual=None, live: LiveServer | None = None):
+            focus="", inspect=None, visual=None, live: LiveServer | None = None, color_scheme=None):
     """``focus`` screenshots one element (the part being designed) at desktop and mobile width;
     ``inspect`` reports exact computed styles and boxes for up to eight selectors at both widths;
     ``visual(view, png)``, when given, compares each capture with the accepted baseline for
@@ -208,13 +237,15 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
         raise ValueError("focus must be one CSS selector of at most 300 characters")
     if not isinstance(inspect, list) or len(inspect) > 8 or not all(isinstance(item, str) and 0 < len(item) <= 300 for item in inspect):
         raise ValueError("inspect takes at most eight CSS selectors")
-    if not isinstance(actions, list) or len(actions) > 12:
-        raise ValueError("Provide at most twelve browser actions")
+    if not isinstance(actions, list) or len(actions) > 20:
+        raise ValueError("Provide at most twenty browser actions")
     for step in actions:
-        if (not isinstance(step, dict) or set(step) - {"action", "selector", "value", "key"}
-                or step.get("action") not in {"click", "fill", "select", "press"}
+        if (not isinstance(step, dict) or set(step) - STEP_KEYS
+                or step.get("action") not in STEP_ACTIONS
                 or any(not isinstance(value, str) or len(value) > 2048 for value in step.values())):
-            raise ValueError("Use bounded click, fill, select or press actions")
+            raise ValueError("Use bounded " + ", ".join(sorted(STEP_ACTIONS)) + " steps")
+    if color_scheme not in {None, "light", "dark"}:
+        raise ValueError("color_scheme is light or dark")
     if not available():
         return {"status": "blocked", "error": "Interactive Chromium support is unavailable in this installation"}
     # Choose an unused port ourselves; ordinary browsing never gains localhost access.
@@ -226,7 +257,7 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
             reserved.bind(("127.0.0.1", 0))
             port = reserved.getsockname()[1]
     shells, sessions = (None if reused else BackgroundShells()), BrowserSessions(preview_port=port)
-    views, issues, audits, compared = [], [], [], []
+    views, issues, audits, compared, steps = [], [], [], [], []
     acted = hashlib.sha256(json.dumps(actions, sort_keys=True).encode()).hexdigest()[:12]
     started, ready = None, bool(reused)
     try:
@@ -281,17 +312,36 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
 
         url = f"http://{PREVIEW_HOST}{path}"
         current = capture("navigate", {"url": url, "viewport": {"width": 1440, "height": 900}}, "desktop")
-        for index, step in enumerate(actions):
-            current = sessions.execute("preview", step["action"], {**{key: value for key, value in step.items() if key != "action"}, "capture_screenshot": False}, cancel)
-            if current.get("status") != "passed":
-                raise ValueError(current.get("error", "Browser interaction failed"))
-        if expect_text:
+        # Each step is checked as it happens: a step that fails, or whose expected text does not
+        # appear, is reported by number with a capture of the page at that moment, and the run stops there.
+        stopped = False
+        for index, step in enumerate(actions, 1):
+            action, arguments = _step_arguments(step)
+            done = sessions.execute("preview", action, {**arguments, "observe": "none"}, cancel)
+            record = {"step": index, "did": _describe_step(step), "status": done.get("status")}
+            if done.get("status") == "passed" and step.get("expect"):
+                seen = sessions.execute("preview", "wait", {"text": step["expect"], "timeout": 10, "observe": "none"}, cancel)
+                record["expected"] = step["expect"]
+                if seen.get("status") != "passed":
+                    record["status"], done = "failed", {"error": f"expected text did not appear: {step['expect']}"}
+            if record["status"] != "passed":
+                record["error"] = str(done.get("error", "Browser interaction failed"))[:400]
+                issues.append(f"step {index} ({record['did']}) failed: {record['error'].splitlines()[0][:200]}")
+                steps.append(record)
+                try:
+                    current = capture("screenshot", {}, f"failed step {index}")
+                except ValueError:
+                    pass
+                stopped = True
+                break
+            steps.append(record)
+        if expect_text and not stopped:
             assertion = sessions.execute("preview", "wait_text", {"text": expect_text, "capture_screenshot": False}, cancel)
             if assertion.get("status") != "passed":
                 issues.append("Expected interaction result was not visible: " + expect_text)
-        if actions:
+        if actions and not stopped:
             current = capture("screenshot", {}, "interaction result")
-        if expect_text and expect_text not in current.get("text", ""):
+        if expect_text and not stopped and expect_text not in current.get("text", ""):
             issues.append("Expected interaction result was not visible: " + expect_text)
         inspection = {}
 
@@ -308,6 +358,12 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
         examine("desktop")
         capture("resize", {"width": 390, "height": 844}, "mobile")
         examine("mobile")
+        if color_scheme == "dark":
+            capture("resize", {"width": 1440, "height": 900, "color_scheme": "dark"}, "dark")
+            examine("dark")
+        # What the page said and sent during the run: console errors and the data forms posted.
+        console = sessions.execute("preview", "console", {"level": "warning", "limit": 20}, cancel).get("console", [])
+        sent = sessions.execute("preview", "network", {"only_sent": True, "limit": 10}, cancel).get("network", [])
         compact_views = [{**view, "text": view.get("text", "")[:2000], "elements": view.get("elements", [])[:20]} for view in views]
         # A 500 page or a script error is explained in the dev server's own console, not the page.
         broken = any(view.get("runtime_errors") or any(e.get("status", 0) >= 500 for e in view.get("http_errors", [])) for view in views)
@@ -316,7 +372,10 @@ def preview(root, command, cancel, *, path="/", actions=None, expect_text="", sa
                 "server_port": port, **({"server_reused": True} if reused else {}),
                 **({"server_output": server_output} if server_output else {}),
                 **({"inspection": inspection, "seams": seams(inspection)} if inspection else {}),
-                "interactions_checked": len(actions), "expected_text_checked": bool(expect_text),
+                "interactions_checked": sum(step["status"] == "passed" for step in steps),
+                "expected_text_checked": bool(expect_text) and not stopped or bool(steps) and not stopped and any("expected" in step for step in steps),
+                **({"steps": steps} if steps else {}),
+                **({"console": console} if console else {}), **({"sent_requests": sent} if sent else {}),
                 "accessibility": audits,
                 **({"visual": compared} if visual is not None else {}),
                 "note": "Measured browser rendering, an automated WCAG 2.2 subset and supplied interactions only. Screenshots are retained; "

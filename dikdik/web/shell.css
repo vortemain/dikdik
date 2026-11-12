@@ -1,0 +1,131 @@
+/* DIKDIK window shell: one title bar across the window, then sidebar | conversation | panel.
+   Every region has a fixed grid area, so nothing wraps onto a new row at any width. In the
+   Windows desktop app the title bar is the window's own (app-region: drag; window buttons). */
+
+:root { --titlebar-h: 48px; --rail-w: 52px; --sidebar-w: 264px; }
+
+/* --- grid ---------------------------------------------------------------------------- */
+.app {
+  height: 100dvh; display: grid;
+  grid-template-rows: var(--titlebar-h) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) auto;
+  grid-template-areas: "title title title" "side main canvas";
+}
+.titlebar { grid-area: title; }
+.sidebar, .rail { grid-area: side; }
+.main { grid-area: main; }
+.canvas { grid-area: canvas; position: relative; }
+.app.sidebar-collapsed { grid-template-columns: var(--rail-w) minmax(0, 1fr) auto; }
+.app.sidebar-collapsed .sidebar { display: none; }
+.app .rail { display: none; }
+.app.sidebar-collapsed .rail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0; border-right: 1px solid var(--line); background: var(--sidebar); }
+.app.sidebar-collapsed #rail-expand { display: none; }  /* the title bar's button shows the sidebar */
+
+/* --- title bar ------------------------------------------------------------------------- */
+.titlebar {
+  display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr) auto auto; align-items: center;
+  height: var(--titlebar-h); min-width: 0; background: var(--sidebar); border-bottom: 1px solid var(--line);
+  user-select: none; -webkit-user-select: none;
+  app-region: drag; -webkit-app-region: drag;
+}
+.titlebar button, .titlebar a, .titlebar input, .titlebar select, .titlebar summary, .titlebar [role=button] { app-region: no-drag; -webkit-app-region: no-drag; }
+.app.sidebar-collapsed .titlebar { grid-template-columns: var(--rail-w) minmax(0, 1fr) auto auto; }
+.titlebar-lead { display: flex; align-items: center; gap: 2px; height: 100%; min-width: 0; padding: 0 8px 0 14px; }
+.titlebar-space { flex: 1 1 auto; }
+.titlebar .brand { gap: 8px; font-size: 15px; font-weight: 650; }
+.titlebar .brand img { width: 22px; height: 22px; border-radius: 6px; }
+.titlebar button.icon { width: 30px; height: 30px; padding: 6px; border-radius: 7px; }
+.app.sidebar-collapsed .titlebar-lead { justify-content: center; padding: 0; }
+.app.sidebar-collapsed .titlebar-lead > :not(#toggle-sidebar) { display: none; }
+.titlebar .topbar-title { padding: 0 8px 0 16px; gap: 8px; }
+.titlebar #chat-title { font-size: 13.5px; }
+.titlebar .topbar-project { padding: 3px 7px; font-size: 13px; }
+.titlebar .topbar-actions { gap: 2px; padding: 0 8px; }
+.panel-buttons { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; padding-left: 6px; border-left: 1px solid var(--line); }
+.panel-button[aria-pressed="true"], .titlebar .changes-button[aria-pressed="true"] { background: var(--surface-3); color: var(--ink); }
+
+/* Window buttons, drawn like the system's: full title-bar height, flush with the edge. */
+.window-controls { display: flex; align-self: stretch; height: var(--titlebar-h); }
+.window-controls[hidden] { display: none; }
+.window-controls button { width: 46px; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); }
+.window-controls button:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.window-controls .window-close:hover:not(:disabled) { background: #c42b1c; color: #fff; }
+.window-controls svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; shape-rendering: crispEdges; }
+.window-controls .restore, .window-controls.is-maximized .max { display: none; }
+.window-controls.is-maximized .restore { display: inline; }
+.custom-chrome .titlebar .topbar-actions { padding-right: 4px; }
+
+/* --- sidebar --------------------------------------------------------------------------- */
+.sidebar { background: var(--sidebar); border-right: 1px solid var(--line); }
+.sidebar-head { display: grid; gap: 6px; padding: 10px 10px 4px; }
+.sidebar-head .project-picker { width: 100%; margin: 0; padding: 6px 8px; gap: 9px; border-color: transparent; background: transparent; border-radius: 9px; }
+.sidebar-head .project-picker:hover { background: var(--hover); border-color: transparent; }
+.sidebar-head .project-picker-icon { width: 24px; height: 24px; border-radius: 6px; }
+.sidebar-head .project-picker-icon .i { width: 14px; height: 14px; }
+.sidebar-head .project-picker-text small { font-size: 10.5px; }
+.sidebar-head .project-picker-text strong { font-size: 13.5px; }
+.sidebar-head .new-task { margin: 0; width: 100%; justify-content: flex-start; gap: 9px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow-sm); font-size: 13.5px; font-weight: 500; color: var(--ink); }
+.sidebar-head .new-task:hover:not(:disabled) { background: var(--surface-2); border-color: var(--line-strong); }
+.sidebar-head .new-task kbd { margin-left: auto; opacity: 0; transition: opacity .12s; }
+.sidebar-head .new-task:hover kbd, .sidebar-head .new-task:focus-visible kbd { opacity: 1; }
+.task-search-row { display: flex; align-items: center; gap: 2px; }
+.task-search-row .task-search { flex: 1 1 auto; margin: 0; }
+.task-search-row .task-search input { height: 32px; padding: 0 10px 0 32px; border-color: transparent; background: transparent; font-size: 13.5px; }
+.task-search-row .task-search input:hover { background: var(--hover); }
+.task-search-row .task-search input:focus { background: var(--surface); border-color: var(--accent); }
+.filter-toggle { width: 30px; height: 30px; flex: 0 0 auto; }
+.filter-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.sidebar-head .list-tools, .sidebar-head .tag-chips { padding: 2px 0 0; }
+.sidebar .list-head { padding: 14px 10px 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .01em; color: var(--faint); }
+.sidebar .conv-history .list-head:first-child { padding-top: 6px; }
+.sidebar .conv-list { padding: 0 8px 12px; }
+.sidebar .conv-history { gap: 1px; }
+
+/* Rows: a status mark, the title, then pin and age; the actions button replaces the age on hover. */
+.sidebar div.conv-item { gap: 6px; min-height: 32px; padding: 0 4px 0 6px; border-radius: 7px; font-size: 13.5px; color: var(--ink-2); }
+.sidebar div.conv-item[aria-current=true] { background: var(--surface-3); color: var(--ink); font-weight: 500; }
+.conv-mark { display: grid; place-items: center; width: 15px; height: 15px; flex: 0 0 15px; }
+.conv-mark::before { content: ""; width: 6px; height: 6px; border-radius: 50%; }
+.conv-mark-attention::before { background: var(--warn); }
+.conv-mark-failed::before { background: var(--danger); }
+.conv-mark-running::before { background: var(--accent); animation: breathe 1.6s ease-in-out infinite; }
+.conv-pin { display: inline-flex; flex: 0 0 auto; color: var(--faint); }
+.conv-pin svg.i { width: 13px; height: 13px; }
+.conv-age { flex: 0 0 auto; min-width: 22px; padding-right: 4px; text-align: right; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.sidebar .conv-more { display: none; opacity: 1; margin-left: 0; width: 24px; height: 24px; }
+.sidebar div.conv-item:hover .conv-more, .sidebar div.conv-item:focus-within .conv-more { display: inline-flex; }
+.sidebar div.conv-item:hover .conv-age, .sidebar div.conv-item:focus-within .conv-age { display: none; }
+.sidebar .folder-row { margin-top: 6px; }
+.sidebar .folder-head { padding: 5px 6px; font-size: 12.5px; }
+.sidebar-foot { padding: 6px 8px 8px; }
+.sidebar-foot .foot-button { padding: 7px 10px; font-size: 13.5px; border-radius: 8px; }
+
+/* --- narrower windows -------------------------------------------------------------------- */
+/* With a panel open, a narrow window folds the sidebar to its rail; the sidebar opens over the page. */
+@media (max-width: 1100px) and (min-width: 761px) {
+  .app.canvas-open { grid-template-columns: var(--rail-w) minmax(0, 1fr) auto; }
+  .app.canvas-open .titlebar { grid-template-columns: var(--rail-w) minmax(0, 1fr) auto auto; }
+  .app.canvas-open .sidebar { display: flex; position: fixed; z-index: 40; top: var(--titlebar-h); bottom: 0; left: 0; width: min(300px, 86vw); box-shadow: var(--shadow-lg); transform: translateX(-102%); transition: transform .2s ease; }
+  .app.canvas-open.sidebar-open .sidebar { transform: none; }
+  .app.canvas-open.sidebar-open .scrim { display: block; position: fixed; inset: var(--titlebar-h) 0 0 0; z-index: 35; background: rgb(0 0 0 / .3); }
+  .app.canvas-open .rail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0; border-right: 1px solid var(--line); background: var(--sidebar); }
+  .app.canvas-open #rail-expand { display: none; }
+  .app.canvas-open .titlebar-lead { justify-content: center; padding: 0; }
+  .app.canvas-open .titlebar-lead > :not(#toggle-sidebar) { display: none; }
+  .app.canvas-open .canvas { width: min(var(--canvas-w), 56vw); max-width: calc(100vw - var(--rail-w) - 340px); }
+  .titlebar .changes-button .label { display: none; }
+}
+/* Phones: the sidebar is a drawer and the panel covers the page. */
+@media (max-width: 760px) {
+  .app, .app.sidebar-collapsed, .app.canvas-open { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "main"; }
+  .titlebar, .app.sidebar-collapsed .titlebar { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+  .titlebar-lead { padding: 0 4px 0 8px; }
+  .titlebar-lead > :not(#toggle-sidebar-mobile) { display: none; }
+  .app.sidebar-collapsed .titlebar-lead > #toggle-sidebar-mobile { display: inline-flex; }
+  .titlebar .topbar-title { padding-left: 4px; }
+  .titlebar .topbar-project, .titlebar .topbar-sep, .panel-buttons #open-terminal { display: none; }
+  .sidebar, .app.sidebar-collapsed .sidebar { display: flex; top: var(--titlebar-h); }
+  .app.sidebar-collapsed .rail, .app.canvas-open .rail { display: none; }
+  .app.sidebar-open .scrim { inset: var(--titlebar-h) 0 0 0; }
+  .canvas { position: fixed; z-index: 30; top: var(--titlebar-h); right: 0; bottom: 0; left: 0; width: auto !important; }
+}

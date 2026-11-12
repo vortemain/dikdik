@@ -2,15 +2,14 @@
 otherwise the computer's own Edge or Chrome (`host_browser`: fresh profile, every request
 through a public-only proxy). Neither gets the workspace."""
 
+import base64
 import json
 import threading
 import time
 import uuid
 from urllib.parse import urlsplit
 
-from .agent import (BROWSER_TOOL, SHELL_TOOL, TOOLS, WEB_FETCH_TOOL, BROWSER_CLICK_TOOL,
-                    BROWSER_FILL_TOOL, BROWSER_SCREENSHOT_TOOL, BROWSER_PRESS_TOOL,
-                    BROWSER_SCROLL_TOOL, BROWSER_SELECT_TOOL)
+from .agent import BROWSER_ACTION_TOOLS, BROWSER_TOOL, SHELL_TOOL, TOOLS, WEB_FETCH_TOOL
 from .browser_network import public_url
 from . import host_browser
 from .interactive_browser import BrowserSessions, available as interactive_available, web_fetch
@@ -19,6 +18,15 @@ from . import migrations
 
 
 HOST_PNG_LIMIT = 8 * 1024 * 1024  # a full-colour 1440x900 page from a real browser
+PRESETS = {"mobile": (390, 844), "tablet": (768, 1024), "desktop": (1440, 900)}
+# Agent tool -> browser action. Each returns the page's accessibility tree after acting, except
+# the tools that read records or values, which skip looking at the page again.
+AGENT_ACTIONS = {"browser_snapshot": "snapshot", "browser_click": "click", "browser_type": "type", "browser_fill": "fill",
+                 "browser_select": "select", "browser_press": "press", "browser_hover": "hover", "browser_drag": "drag",
+                 "browser_scroll": "scroll", "browser_wait": "wait", "browser_resize": "resize",
+                 "browser_screenshot": "screenshot", "browser_inspect": "inspect", "browser_evaluate": "evaluate",
+                 "browser_console": "console", "browser_network": "network"}
+QUIET_ACTIONS = {"inspect", "evaluate", "console", "network", "screenshot"}
 
 
 class CaptureCancel:
@@ -53,7 +61,7 @@ class BrowserService:
         self._lock = threading.Lock()
         self._active: dict[str, CaptureCancel] = {}
         self._closed = False
-        self.sessions = BrowserSessions()
+        self.sessions = BrowserSessions(preview_port=self.app_port)
         self._launch_verified = False
         self._idle = threading.Event()
         self._idle.set()
@@ -82,7 +90,7 @@ class BrowserService:
             if not self._idle.wait(75):
                 raise RuntimeError("Browser actions are still stopping")
             self.sessions.close()
-            self.sessions = BrowserSessions()
+            self.sessions = BrowserSessions(preview_port=self.app_port)
         return self.info()
 
     def info(self):
@@ -96,6 +104,40 @@ class BrowserService:
                 "network": "public_only_proxy",
                 "availability": "host_ready" if host else "unavailable",
                 "launch_verified": self._launch_verified, "approval_required": ["approve_execution", "approve_browser"]}
+
+    def app_port(self):
+        """The port of the project's app that preview_app left running, so the agent's browser can
+        open it at http://preview.dikdik.example/ and test it step by step; None when none runs."""
+        live = getattr(self.engine, "live_preview", None)
+        status = live.status() if live is not None else {}
+        return status.get("port") if status.get("running") else None
+
+    def live_frames(self, task, seconds=1800):
+        """JPEG frames of the task's page as it changes, for the Browser panel's live view. The
+        newest frame is resent every few seconds so a closed panel is noticed and the stream ends."""
+        self.store.status(task)
+        if not self.enabled():
+            raise PermissionError("Browser tools are disabled in Settings")
+        sessions = self.sessions
+        if not sessions.has_page(task):
+            raise KeyError(task)
+        return self._frames(task, sessions, seconds)  # checked above, before any response is sent
+
+    def _frames(self, task, sessions, seconds):
+        seq, last, sent = 0, None, time.monotonic()
+        deadline = time.monotonic() + seconds
+        with sessions.watch(task):
+            while time.monotonic() < deadline and not sessions.closed and not self._closed and sessions is self.sessions:
+                got = sessions.frame(task, seq, timeout=4)
+                if got:
+                    seq, last = got
+                    sent = time.monotonic()
+                    yield last
+                elif not sessions.has_page(task):
+                    return
+                elif last is not None and time.monotonic() - sent > 4:
+                    sent = time.monotonic()
+                    yield last
 
     def busy(self, task):
         with self._lock:
@@ -118,11 +160,14 @@ class BrowserService:
                 cancel.set()
         return {"stop_requested": cancel is not None}
 
-    def visit(self, task, url, approval, cancel=None):
+    def visit(self, task, url, approval, cancel=None, options=None):
         self.store.status(task)
         if approval.get("approve_execution") is not True or approval.get("approve_browser") is not True:
             raise PermissionError("Approve running tools and public web browsing for this task")
         url = public_url(url)
+        if urlsplit(url).hostname == host_browser.PREVIEW_HOST and self.app_port() is None:
+            raise ValueError("The project's app is not running. Run preview_app first; it keeps the dev server running "
+                             "so http://preview.dikdik.example/ opens the app here.")
         if not self.enabled():
             raise PermissionError("Browser tools are disabled in Settings")
         cancel = CaptureCancel(cancel)
@@ -142,7 +187,7 @@ class BrowserService:
             self.store.event(task, "browser_started", {"url": url, "runtime": "Chromium" if interactive else "this computer"})
             try:
                 if interactive:
-                    result = self.sessions.execute(task, "navigate", {"url": url, "viewport": approval.get("viewport")}, cancel)
+                    result = self.sessions.execute(task, "navigate", {"url": url, "viewport": approval.get("viewport"), **(options or {})}, cancel)
                 elif on_host:
                     result = host_browser.capture(url, cancel)
                 else:
@@ -171,7 +216,30 @@ class BrowserService:
                 if not self._active:
                     self._idle.set()
 
-    def action(self, task, action_type, arguments, cancel=None):
+    def agent_action(self, task, tool, arguments, cancel=None):
+        """An agent's browser_* tool call, translated to an action on its task's page."""
+        args = dict(arguments or {})
+        if tool == "browser_check":
+            action = "check" if args.pop("checked", True) is not False else "uncheck"
+        elif tool == "browser_navigate":
+            action = args.pop("direction", None)
+            if action not in {"back", "forward", "reload"}:
+                raise ValueError("direction is back, forward or reload")
+        elif tool in AGENT_ACTIONS:
+            action = AGENT_ACTIONS[tool]
+        else:
+            raise ValueError("Tool unavailable")
+        if action == "resize" and "preset" in args:
+            preset = args.pop("preset")
+            if preset not in PRESETS:
+                raise ValueError("preset is mobile, tablet or desktop")
+            args["width"], args["height"] = PRESETS[preset]
+        if action == "inspect":
+            args = {"selectors": args.get("targets")}
+        args.setdefault("observe", "none" if action in QUIET_ACTIONS else "snapshot")
+        return self.action(task, action, args, cancel, attach=action == "screenshot")
+
+    def action(self, task, action_type, arguments, cancel=None, attach=False):
         """Act on the same persistent page as browse_url and the workspace panel."""
         self.store.status(task)
         if not self.enabled():
@@ -185,10 +253,15 @@ class BrowserService:
                 if self._closed or task in self._active:
                     raise ValueError("A browser action is already running")
                 self._active[task] = stop; self._idle.clear()
+        # A pointer moving over the live view is not history; everything else is recorded.
+        record = action_type != "hover" or (arguments or {}).get("observe") != "none"
         try:
-            self.store.event(task, "browser_started", {"action": action_type, "runtime": "Chromium"})
+            if record:
+                self.store.event(task, "browser_started", {"action": action_type, "runtime": "Chromium"})
             result = self.sessions.execute(task, action_type, arguments, stop)
             png = result.pop("png", None)
+            if attach and png and result.get("status") == "passed" and len(png) <= 3 * 1024 * 1024:
+                result["attach_images"] = ["data:image/png;base64," + base64.b64encode(png).decode("ascii")]
             if png and result["status"] == "passed":
                 snapshot = uuid.uuid4().hex
                 with self.store.connect() as db:
@@ -196,7 +269,8 @@ class BrowserService:
                     db.execute("DELETE FROM browser_snapshots WHERE task_id=? AND id NOT IN (SELECT id FROM browser_snapshots WHERE task_id=? ORDER BY created DESC LIMIT 10)", (task, task))
                     db.execute("DELETE FROM browser_snapshots WHERE id NOT IN (SELECT id FROM browser_snapshots ORDER BY created DESC LIMIT 100)")
                 result["screenshot"] = f"/api/tasks/{task}/browser/screenshots/{snapshot}"
-            self.store.event(task, "browser_result", result)
+            if record:
+                self.store.event(task, "browser_result", {k: v for k, v in result.items() if k != "attach_images"})
             return result
         finally:
             with self._lock:
@@ -220,7 +294,7 @@ class BrowserService:
     def route(self, method, raw_path, body=None):
         path = urlsplit(raw_path).path
         try:
-            actions = [BROWSER_CLICK_TOOL, BROWSER_FILL_TOOL, BROWSER_SCREENSHOT_TOOL, BROWSER_PRESS_TOOL, BROWSER_SCROLL_TOOL, BROWSER_SELECT_TOOL]
+            actions = BROWSER_ACTION_TOOLS
             tools = TOOLS + [SHELL_TOOL, BROWSER_TOOL, WEB_FETCH_TOOL, TASK_TRACKER, WRITE_PLAN, READ_PLAN] + actions
             if method == 'GET' and path in {'/api/tools', '/api/tools/'}:
                 return 200, [tool['function']['name'] for tool in tools]
@@ -254,7 +328,8 @@ class BrowserService:
             task = parts[3]
             if method == "GET":
                 events = self.store.get(task)["events"]
-                return 200, {"latest": next((e["data"] for e in reversed(events) if e["kind"] == "browser_result"), None), **self.info()}
+                return 200, {"latest": next((e["data"] for e in reversed(events) if e["kind"] == "browser_result"), None),
+                             "live": self.sessions.has_page(task), **self.info()}
             if method == "POST":
                 if not isinstance(body, dict):
                     raise ValueError("Body must be a JSON object")

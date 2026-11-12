@@ -54,6 +54,7 @@ STATIC = {
     "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
     "/model-settings.css": ("model-settings.css", "text/css; charset=utf-8"),
     "/dialogs.css": ("dialogs.css", "text/css; charset=utf-8"),
+    "/shell.css": ("shell.css", "text/css; charset=utf-8"),
     "/icon.svg": ("icon.svg", "image/svg+xml"),
     **{f"/fonts/{name}.woff2": (f"fonts/{name}.woff2", "font/woff2") for name in FONTS},
     **{f"/assets/{path.relative_to(WEB / 'assets').as_posix()}":
@@ -303,6 +304,32 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 return
             cookie = f"{self.cookie_name}={token}; Path=/; Max-Age={SESSION_AGE}; HttpOnly; SameSite=Strict" + ("; Secure" if remote and remote.secure else "")
             self.reply(200, {"signed_in": True}, cookie=cookie)
+
+        def browser_live(self, task):
+            """The task's browser page as a live MJPEG stream: an <img> shows it as frames arrive."""
+            try:
+                frames = engine.browser.live_frames(task)
+            except PermissionError as exc:
+                self.reply(403, {"error": str(exc)})
+                return
+            except KeyError:
+                self.reply(404, {"error": "No live page for this task"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=dikdikframe")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.close_connection = True
+            try:
+                for jpeg in frames:
+                    self.wfile.write(b"--dikdikframe\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                                     + str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n")
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                return
+            finally:
+                frames.close()  # stops the screencast when nobody else watches
 
         def stream(self, task, after):
             """Server-sent events: each new task event, the reply as it streams, then `end`."""
@@ -658,6 +685,9 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                               "archived": bool(r["archived"]), "folder": r["folder"] or "",
                               "tags": json.loads(r["tags"]) if r["tags"] else []} for r in rows]
                     self.reply(200, {"tasks": tasks, "total": len(tasks)})
+                    return
+                if len(parts) == 6 and parts[:3] == ["", "api", "tasks"] and parts[4:6] == ["browser", "live"]:
+                    self.browser_live(parts[3])
                     return
                 if len(parts) == 7 and parts[:3] == ["", "api", "tasks"] and parts[4:6] == ["browser", "screenshots"]:
                     self.reply(200, engine.browser.screenshot(parts[3], parts[6]), "image/png")

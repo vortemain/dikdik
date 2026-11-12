@@ -2,17 +2,64 @@
 
 Desktop installs include a persistent Chromium runtime. Browsing stays inside
 the workspace Browser panel: the page renders in a separate browser process,
-and the panel forwards clicks, typing, paste, scrolling and navigation. The
-agent uses that same task-scoped session. There is no popup browser window and
-nothing to install beyond Dikdik's desktop extras.
+and the panel forwards clicks (double and right clicks included), pointer
+movement, typing, paste, scrolling and navigation. The agent uses that same
+task-scoped session. There is no popup browser window and nothing to install
+beyond Dikdik's desktop extras.
+
+## Live view
+
+While the Browser panel is open on a page, it shows that page live: a CDP
+screencast streams JPEG frames as the page changes
+(`GET /api/tasks/{id}/browser/live`, `multipart/x-mixed-replace`), so the
+user watches the agent work and can take over at any moment. Actions sent from
+the live view skip their screenshot and page text and return at once. Pointer
+movement over the live page is forwarded as hover and is not kept in the task
+history. A hidden panel streams nothing; when no live page exists (after a
+restart) the panel falls back to the last screenshot.
+
+## Agent browser tools
+
+`browse_url` opens a page and returns its accessibility tree. The browser_*
+tools then act on that page the way a person does:
+
+| Tool | Purpose |
+|---|---|
+| `browser_snapshot` | the page as roles, names, values and states (`[checked]`, `[disabled]`, `[expanded]`, `[required]`, `[invalid]` with its message, `[focused]`), with a stable ref such as `e12` for every control |
+| `browser_click`, `browser_hover`, `browser_drag` | by ref, role and name, label, placeholder, text or CSS (or x/y); double and right click, modifier keys |
+| `browser_type` | real key presses, one character at a time, so masks, key handlers and live validation run |
+| `browser_fill`, `browser_select`, `browser_check` | set a value at once, choose options, check or uncheck |
+| `browser_press`, `browser_scroll`, `browser_wait`, `browser_navigate` | keys and shortcuts, scrolling, waiting for text or element states, back/forward/reload |
+| `browser_resize` | mobile, tablet or desktop sizes and a light or dark color scheme |
+| `browser_screenshot`, `browser_inspect` | an image the model sees (an element, a zoomed region or the full page) and exact computed styles |
+| `browser_console`, `browser_network` | console messages and uncaught errors; requests with status, failures and the body each form or script sent |
+| `browser_evaluate` | JavaScript in the page, returning JSON |
+
+Each action returns the updated accessibility tree plus any new console
+errors, failed requests and sent data. Clicks, typing, filling, selection,
+checking, dragging, key presses and JavaScript are high-risk website actions
+under the approval policy. Snapshots, screenshots, hovering, scrolling,
+waiting, navigation, resizing, inspection and the console/network records are
+read-only. After `preview_app` the project's app keeps running, and
+`http://preview.dikdik.example/<path>` opens it in the agent's browser for
+step-by-step testing. That address works only while the app runs. A passing
+preview of the revision, an action on the running app and a confirmed outcome
+(`browser_wait` for text) together satisfy the interaction check, just as
+preview actions with expected text do.
 
 ## Local application verification
 
 In local Auto mode, `preview_app` can start the project's development server,
-capture desktop (1440 × 900) and mobile (390 × 844) views, and exercise bounded
-click/fill/select/key actions with expected visible text. It reports JavaScript
-runtime errors, failed resources and horizontal overflow, saves screenshots in
-the task's browser history, then closes its browser and stops its server.
+capture desktop (1440 × 900) and mobile (390 × 844) views, and exercise up to
+twenty steps: click, dblclick, type (real key presses), fill, select, check,
+uncheck, press and hover, each naming its element by role and name, label,
+placeholder, text or selector. A step's `expect` is text that must appear after
+it. A step that fails is reported by number with a capture of that moment, and
+the run stops there. `color_scheme: "dark"` adds a dark-mode capture. It reports
+JavaScript runtime errors, console errors and warnings, failed resources, the
+data forms and scripts sent, and horizontal overflow. It saves screenshots in
+the task's browser history and closes its browser. The dev server keeps
+running for the Browser panel and for step-by-step testing.
 An agent cannot satisfy a requested interaction merely by capturing a screenshot.
 These are measured checks of the supplied page and actions, not proof of aesthetic
 quality or every possible user journey.
@@ -36,7 +83,9 @@ still control whether these tools are offered.
 
 Sessions have empty browser profiles and separate cookies per task. Browser
 requests use the existing public-only proxy with pinned DNS. Service workers,
-WebSockets, browser downloads and native permission dialogs are not supported.
+WebSockets (except the project app's live-reload socket), browser downloads and
+native permission dialogs are not supported. Page dialogs are dismissed unless
+an action asks to accept them, and each one is recorded in the console log.
 Form interactions can send public HTTP/HTTPS requests after approval. Up to two
 task sessions are retained; opening another evicts the oldest session. Browser
 state ends on project/server shutdown, task deletion or eviction. Screenshots

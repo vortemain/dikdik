@@ -13,7 +13,7 @@ import { mcpPane } from "./mcp-pane";
 import { boundedFilePreview, detectLanguage, fileFacts, highlight, highlightLines, languageLabel, supportedLanguages, projectStack, type Token } from "./highlight";
 import { providersPane } from "./providers-pane";
 import { fileIcon, folderIcon, providerIcon, providerId, refreshFileIcons, vscodeLogo, dikdikLogo } from "./icons";
-import { fileTree, organiseTasks, parentFolders, parseTags, rankCommands, splitDiff, toolFileChanges, workspacePath, type LiveChange } from "./organise";
+import { fileTree, groupByDate, organiseTasks, parentFolders, parseTags, rankCommands, shortAge, splitDiff, statusKind, toolFileChanges, workspacePath, type LiveChange } from "./organise";
 import { renderRichText } from './rich-text';
 import type { TaskScope, TaskSort } from "./organise";
 import { ComposerSize, composerMaximum } from './composer-size';
@@ -53,7 +53,7 @@ const confirmCards = new Map<string, HTMLElement>();
 const confirmDecisions = new Map<string, (accept: boolean) => void>();  // open approvals, newest last
 const secretCards = new Map<string, HTMLElement>();  // open secret requests
 // Organisation and files: read by functions that run at load time.
-let modelReady = true, activeTag = "", listLimit = 40, folderOptions: string[] = [];
+let modelReady = true, activeTag = "", listLimit = 40, folderOptions: string[] = [], filtersOpen = false;
 let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean; title_model?: string; notifications?: 'off' | 'background' | 'all'; notification_previews?: boolean } | null = null;
 let nativeNotifications = false;
 const titled = new Set<string>();  // conversations we already asked to be titled this session
@@ -1169,7 +1169,18 @@ function renderReview(taskId: string, state: string, result: unknown): void {
 
 function setCanvas(open: boolean): void {
   el("canvas").hidden = !open;
+  if (!open || canvasTab !== "browser") endBrowserStream();  // a hidden panel streams nothing
+  setClass(el("workspace"), "canvas-open", open);  // narrow windows fold the sidebar to its rail
   el("toggle-canvas").setAttribute("aria-pressed", String(open && canvasTab === "changes"));
+  syncPanelButtons();
+}
+/** The title bar's panel buttons show which panel is open. */
+function syncPanelButtons(): void {
+  const open = !el("canvas").hidden;
+  for (const id of ["open-terminal", "open-browser", "open-files"]) {
+    const node = el(id), panel = node.dataset?.panel ?? "";
+    node.setAttribute("aria-pressed", String(open && (canvasTab === panel || panel === "files" && canvasTab === "git")));
+  }
 }
 
 // --- canvas tabs: changes, files, git, usage ------------------------------
@@ -1183,6 +1194,7 @@ function openCanvas(tab: string): void {
     for (const pane of canvas.querySelectorAll<HTMLElement>(".canvas-body")) pane.hidden = pane.dataset.pane !== tab;
   }
   setCanvas(true);
+  syncPanelButtons();
   if (tab === "files") renderFileList();
   if (tab === "browser") void refreshLive();
   if (tab === "git") void loadGit();
@@ -1563,7 +1575,31 @@ function flushBrowserTyping(): void {
   browserTypeTimer = undefined;
   if (!browserTypedText) return;
   const text = browserTypedText; browserTypedText = "";
-  void browserAction("type", { text });
+  void browserAction("type", { text });  // real key events, so the page's key handlers run
+}
+// While the panel streams the page live, the stream shows each change, so actions skip their
+// screenshot and page text and return at once. A stream that fails falls back to screenshots.
+let browserStreaming = false;
+const browserLiveBroken = new Set<string>();
+function endBrowserStream(): void {
+  const mount = el("browser-snapshot");
+  if (mount.dataset.live !== "1") return;
+  mount.replaceChildren(); mount.dataset.screenshot = ""; mount.dataset.live = "";
+  browserStreaming = false;
+}
+let browserHover: { x: number; y: number } | null = null;
+function hoverInBrowser(x: number, y: number): void {
+  const queued = browserHover !== null;
+  browserHover = { x, y };
+  if (queued) return;  // one hover waits at a time; it takes the newest position
+  const task = browserTask(), browserEpoch = browserScope;
+  if (!task) return;
+  browserActionQueue = browserActionQueue.then(async () => {
+    const point = browserHover; browserHover = null;
+    if (!point || browserTask() !== task || browserEpoch !== browserScope || !browserStreaming) return;
+    try { await api(`/api/tasks/${task}/browser/actions`, { action: "hover", arguments: { ...point, observe: "none" }, approve_browser: true, approve_execution: true }); }
+    catch { /* a missed hover is harmless; the next movement sends another */ }
+  });
 }
 function typeInBrowser(text: string): void {
   browserTypedText += text;
@@ -1578,7 +1614,8 @@ function browserAction(action: string, arguments_: Record<string, unknown>): Pro
     if (browserTask() !== task || browserEpoch !== browserScope) return;
     try {
       el("browser-status").textContent = "Updating page…";
-      const result = await api<{ status: string; error?: string }>(`/api/tasks/${task}/browser/actions`, { action, arguments: arguments_, approve_browser: true, approve_execution: true });
+      const live = browserStreaming ? { observe: "none" } : {};
+      const result = await api<{ status: string; error?: string }>(`/api/tasks/${task}/browser/actions`, { action, arguments: { ...arguments_, ...live }, approve_browser: true, approve_execution: true });
       if (result.status !== "passed") throw new Error(result.error || "Browser action failed");
       browserIndex = null; await refreshBrowser(task);
     } catch (error) { message(error instanceof Error ? error.message : "Browser action failed", true); }
@@ -1615,6 +1652,7 @@ function autoOpenBrowser(events: TaskEvent[]): void {
     browserAutoOpened.add(event.seq);
     if (now - event.time > 30) continue;
     browserIndex = null;
+    if (event.data?.action === undefined) browserLiveBroken.delete(event.task_id);  // a new page may stream again
     if (el("canvas").hidden || canvasTab !== "browser") openCanvas("browser");
   }
 }
@@ -1654,35 +1692,63 @@ function renderBrowser(): void {
   }
   el("browser-empty").hidden = !!view.screenshot;
   const mount = el("browser-snapshot"); mount.hidden = !view.screenshot || browserText;
-  if (mount.dataset.screenshot !== view.screenshot) {
+  // Following a live page in a visible panel: stream it (frames arrive as the page changes).
+  const task = browserTask();
+  const streaming = !!task && !!view.screenshot && view.interactive && browserIndex === null && !preview && !browserText
+    && !browserLiveBroken.has(task) && !el("canvas").hidden && canvasTab === "browser";
+  browserStreaming = streaming;
+  const source = streaming ? `/api/tasks/${task}/browser/live?scope=${browserScope}` : view.screenshot;
+  if (mount.dataset.screenshot !== source) {
     const restoreFocus = document.activeElement?.classList?.contains("browser-image");
-    mount.dataset.screenshot = view.screenshot;
+    mount.dataset.screenshot = source; mount.dataset.live = streaming ? "1" : "";
     mount.replaceChildren();
-    if (view.screenshot) {
-      const image = make("img", "browser-image"); image.src = view.screenshot; image.alt = view.title || `Page at ${shown}`;
+    if (source) {
+      const image = make("img", "browser-image"); image.src = source; image.alt = view.title || `Page at ${shown}`;
       image.draggable = false;
       image.tabIndex = view.interactive ? 0 : -1;
       if (view.interactive) {
-        image.setAttribute("aria-label", "Web page. Click to interact, then type.");
+        image.setAttribute("aria-label", streaming ? "Web page, live. Click to interact, then type." : "Web page. Click to interact, then type.");
+        const point = (event: MouseEvent): { x: number; y: number } => {
+          const box = image.getBoundingClientRect();
+          return { x: Math.min(image.naturalWidth - 1, Math.max(0, (event.clientX - box.left) * image.naturalWidth / box.width)),
+                   y: Math.min(image.naturalHeight - 1, Math.max(0, (event.clientY - box.top) * image.naturalHeight / box.height)) };
+        };
+        // Each press goes over as it happened: a double-click's second press carries detail 2,
+        // so the page gets click, click and dblclick, as from a mouse.
         image.addEventListener("click", event => {
           if (browserIndex !== null) return;
-          const box = image.getBoundingClientRect(); image.focus();
-          void browserAction("click", { x: Math.min(image.naturalWidth - 1, Math.max(0, (event.clientX - box.left) * image.naturalWidth / box.width)), y: Math.min(image.naturalHeight - 1, Math.max(0, (event.clientY - box.top) * image.naturalHeight / box.height)) });
+          image.focus();
+          void browserAction("click", { ...point(event), ...(event.detail > 1 ? { detail: Math.min(3, event.detail) } : {}) });
         });
+        image.addEventListener("contextmenu", event => {
+          if (browserIndex !== null) return;
+          event.preventDefault(); image.focus();
+          void browserAction("click", { ...point(event), button: "right" });
+        });
+        image.addEventListener("mousemove", event => { if (browserStreaming && browserIndex === null) hoverInBrowser(point(event).x, point(event).y); });
         image.addEventListener("keydown", event => {
           if (event.ctrlKey || event.metaKey) {
-            if (event.key.toLowerCase() === "a") { event.preventDefault(); void browserAction("press", { key: "ControlOrMeta+A" }); }
+            // Paste arrives as a paste event; other shortcuts (select all, copy, undo) go to the page.
+            if (event.key.length === 1 && event.key.toLowerCase() !== "v") { event.preventDefault(); void browserAction("press", { key: `ControlOrMeta+${event.key.toLowerCase() === "a" ? "A" : event.key.toLowerCase()}` }); }
             return;
           }
           if (event.key.length === 1 && !event.altKey) { event.preventDefault(); typeInBrowser(event.key); }
-          else if (["Enter", "Tab", "Backspace", "Delete", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
-            event.preventDefault(); void browserAction("press", { key: event.key === "Tab" && event.shiftKey ? "Shift+Tab" : event.key });
+          else if (["Enter", "Tab", "Backspace", "Delete", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "F5"].includes(event.key)) {
+            event.preventDefault();
+            void browserAction("press", { key: `${event.shiftKey ? "Shift+" : ""}${event.altKey ? "Alt+" : ""}${event.key}` });
           }
         });
-        image.addEventListener("paste", event => { event.preventDefault(); typeInBrowser(event.clipboardData?.getData("text/plain") ?? ""); });
+        image.addEventListener("paste", event => {
+          event.preventDefault(); flushBrowserTyping();
+          const text = event.clipboardData?.getData("text/plain") ?? "";
+          if (text) void browserAction("type", { text: text.slice(0, 8000), insert: true });
+        });
         image.addEventListener("wheel", event => { event.preventDefault(); void browserAction("scroll", { x: Math.max(-3000, Math.min(3000, event.deltaX)), y: Math.max(-3000, Math.min(3000, event.deltaY)) }); }, { passive: false });
       }
-      image.addEventListener("error", () => { el("browser-status").textContent = "This page image is no longer available. Open the address again."; setClass(el("browser-footer"), "is-quiet", false); });
+      image.addEventListener("error", () => {
+        if (streaming && task) { browserLiveBroken.add(task); renderBrowser(); return; }  // no live page: show the capture
+        el("browser-status").textContent = "This page image is no longer available. Open the address again."; setClass(el("browser-footer"), "is-quiet", false);
+      });
       mount.append(image);
       if (restoreFocus) image.focus();
     }
@@ -2441,6 +2507,9 @@ async function project(): Promise<void> {
   const summary = `${plural(projectFiles.length, "file")} · ${plural(data.python_tests.length, "test")}`;
   el("project-picker-name").textContent = data.name;
   el("topbar-project-name").textContent = data.name;
+  // The welcome screen names the project and what it is made of.
+  el("welcome-project").textContent = data.name;
+  el("welcome-meta").textContent = projectFiles.length ? [...projectStack(projectFiles).slice(0, 3), plural(projectFiles.length, "file")].join(" · ") : "Empty folder";
   el("explorer-project").textContent = data.name;
   el("explorer-project").title = [data.name, ...projectStack(projectFiles)].join(" · ");
   el("topbar-project").title = `${data.name} · ${summary}. Switch, open, clone or create a project`;
@@ -2488,9 +2557,18 @@ function taskRowBase(task: TaskSummary): HTMLElement {
     spiral.setAttribute("aria-label", "Running");
     spiral.append(icon("spiral"));
     item.append(spiral);
+  } else {
+    // Only what needs a look gets a mark: a run waiting for you, or one that failed.
+    const kind = statusKind(task.state);
+    const mark = make("span", `conv-mark${kind ? ` conv-mark-${kind}` : ""}`);
+    if (kind) { mark.setAttribute("role", "img"); mark.setAttribute("aria-label", kind === "failed" ? "Failed" : "Needs you"); }
+    else mark.setAttribute("aria-hidden", "true");
+    item.append(mark);
   }
   item.append(label);
-  if (task.pinned) item.append(make("span", "conv-pin", "Pinned"));
+  if (task.pinned) { const pin = make("span", "conv-pin"); pin.append(icon("pin")); pin.setAttribute("aria-label", "Pinned"); item.append(pin); }
+  const when = task.updated ?? task.created;
+  if (when) { const age = make("span", "conv-age", shortAge(when, Date.now() / 1000)); age.setAttribute("aria-hidden", "true"); item.append(age); }
   const more = make("button", "ghost icon conv-more");
   more.type = "button";
   more.setAttribute("aria-label", `Actions for ${name}`);
@@ -2511,7 +2589,8 @@ function renderHistory(): void {
   const query = ((el("task-search") as HTMLInputElement).value ?? "").trim();
   // Sort, date and status filters earn their space once there is something to filter (or one is set).
   const filtering = (select("task-sort").value || "recent") !== "recent" || (select("task-since").value || "0") !== "0" || (select("task-scope").value || "all") !== "all";
-  el("list-tools").hidden = lastTasks.length < 6 && !filtering;
+  el("list-tools").hidden = !filtersOpen && !filtering;
+  el("filter-toggle").setAttribute("aria-pressed", String(filtersOpen || filtering));
   const view = organiseTasks(lastTasks, {
     query, tag: activeTag, sort: (select("task-sort").value || "recent") as TaskSort, sinceDays: Number(select("task-since").value) || 0,
     showArchived, selected, now: Date.now() / 1000, scope: (select("task-scope").value || "all") as TaskScope,
@@ -2542,8 +2621,13 @@ function renderHistory(): void {
     if (!shut) nodes.push(...folder.tasks.map(taskRow));
   }
   const rest = view.recent.slice(0, listLimit);
-  if (rest.length && (view.pinned.length || view.folders.length)) nodes.push(make("p", "list-head", showArchived ? "All" : "Recent"));
-  nodes.push(...rest.map(taskRow));
+  const byDate = (select("task-sort").value || "recent") === "recent" && !query;
+  if (byDate) {
+    for (const group of groupByDate(rest, Date.now() / 1000)) nodes.push(make("p", "list-head", group.label), ...group.tasks.map(taskRow));
+  } else {
+    if (rest.length && (view.pinned.length || view.folders.length)) nodes.push(make("p", "list-head", showArchived ? "All" : "Recent"));
+    nodes.push(...rest.map(taskRow));
+  }
   if (view.recent.length > listLimit) {
     const more = make("button", "ghost small show-archived", `Show more (${view.recent.length - listLimit})`); more.type = "button";
     more.onclick = () => { listLimit += 40; renderHistory(); };
@@ -2556,7 +2640,8 @@ function renderHistory(): void {
   }
   if (!nodes.length) nodes.push(make("div", "conv-empty", query || activeTag ? "No matching tasks" : "No tasks yet"));
   el("history").replaceChildren(...nodes);
-  el("recent-head").hidden = view.pinned.length > 0 || view.folders.length > 0;
+  renderWelcomeRecent();
+  el("recent-head").hidden = byDate || view.pinned.length > 0 || view.folders.length > 0;
   const chips = el("tag-chips");
   chips.hidden = !view.tags.length;
   chips.replaceChildren(...view.tags.map(tag => {
@@ -2574,6 +2659,23 @@ let deletingArchived = false;
 async function loadHistory(): Promise<void> {
   lastTasks = await api<TaskSummary[]>("/api/tasks");
   renderHistory();
+}
+/** The welcome screen's "Pick up where you left off": the latest few conversations. */
+function renderWelcomeRecent(): void {
+  const now = Date.now() / 1000;
+  const recent = lastTasks.filter(task => !task.session && !task.archived)
+    .sort((a, b) => (b.updated ?? b.created ?? 0) - (a.updated ?? a.created ?? 0)).slice(0, 4);
+  el("welcome-recent-section").hidden = recent.length === 0;
+  el("welcome-recent").replaceChildren(...recent.map(task => {
+    const row = make("button", "recent-row"); row.type = "button";
+    const kind = isTaskActive(task) ? "running" : statusKind(task.state);
+    const mark = make("span", `conv-mark${kind ? ` conv-mark-${kind}` : ""}`); mark.setAttribute("aria-hidden", "true");
+    const when = task.updated ?? task.created;
+    row.append(mark, make("span", "recent-title", conversationLabel(task)), make("span", "recent-age", when ? shortAge(when, now) : ""));
+    row.title = `${conversationLabel(task)} — ${task.state}`;
+    row.onclick = () => selectTask(task.id);
+    return row;
+  }));
 }
 
 // --- task actions menu ----------------------------------------------------
@@ -2881,13 +2983,22 @@ el("connect-form").addEventListener("submit", async event => {
 // --- layout: sidebar, canvas, settings ------------------------------------
 function setSidebarCollapsed(collapsed: boolean): void {
   setClass(el("workspace"), "sidebar-collapsed", collapsed);
-  el("show-sidebar").hidden = true;  // the rail has its own Show sidebar button
+  el("show-sidebar").hidden = true;  // the title bar's own button toggles the sidebar
+  const label = collapsed ? "Show sidebar" : "Hide sidebar";
+  el("toggle-sidebar").setAttribute("aria-label", label); el("toggle-sidebar").title = label;
   storageSet("dikdik.sidebar", collapsed ? "collapsed" : "open");
 }
 function closeSidebarDrawer(): void { setClass(el("workspace"), "sidebar-open", false); }
-el("toggle-sidebar").addEventListener("click", () => {
-  if (wide("(max-width: 760px)")) closeSidebarDrawer(); else setSidebarCollapsed(true);
-});
+/** Where the sidebar opens as a drawer over the page: a phone, or a narrow window with a panel open. */
+function sidebarIsDrawer(): boolean {
+  return wide("(max-width: 760px)") || (wide("(max-width: 1100px)") && !el("canvas").hidden);
+}
+function toggleSidebar(): void {
+  const app = el("workspace");
+  if (sidebarIsDrawer()) setClass(app, "sidebar-open", !app.className.includes("sidebar-open"));
+  else setSidebarCollapsed(!app.className.includes("sidebar-collapsed"));
+}
+el("toggle-sidebar").addEventListener("click", toggleSidebar);
 el("show-sidebar").addEventListener("click", () => setSidebarCollapsed(false));
 el("toggle-sidebar-mobile").addEventListener("click", () => setClass(el("workspace"), "sidebar-open", true));
 el("scrim").addEventListener("click", closeSidebarDrawer);
@@ -2896,9 +3007,54 @@ if (storageGet("dikdik.sidebar") === "collapsed") setSidebarCollapsed(true);
 el("toggle-canvas").addEventListener("click", () => {
   if (el("canvas").hidden === true || canvasTab !== "changes") openCanvas("changes"); else setCanvas(false);
 });
-el("open-files").addEventListener("click", () => {
-  if (el("canvas").hidden === true || canvasTab === "changes") openCanvas("files"); else setCanvas(false);
-});
+// Terminal, Browser and Files in the title bar: each opens its panel, or closes it when it is showing.
+for (const id of ["open-terminal", "open-browser", "open-files"]) {
+  el(id).addEventListener("click", () => {
+    const panel = el(id).dataset?.panel ?? "files";
+    if (!el("canvas").hidden && (canvasTab === panel || panel === "files" && canvasTab === "git")) setCanvas(false);
+    else openCanvas(panel);
+  });
+}
+
+// --- the desktop window's own title bar ---------------------------------------------
+// In the Windows desktop app the title bar above is the window's title bar: WebView2 treats it
+// as the drag region (CSS app-region), and these buttons call the app's only window functions.
+interface WindowControlsApi {
+  window_state(): Promise<{ custom_title_bar: boolean; maximized: boolean }>;
+  minimize(): Promise<void>; toggle_maximize(): Promise<boolean>; close(): Promise<void>;
+}
+function windowApi(): WindowControlsApi | null {
+  const api = (globalThis as { pywebview?: { api?: Partial<WindowControlsApi> } }).pywebview?.api;
+  return api && typeof api.window_state === "function" ? api as WindowControlsApi : null;
+}
+let windowChromeReady = false;
+async function setupWindowChrome(): Promise<void> {
+  const api = windowApi();
+  if (!api || windowChromeReady) return;
+  let state;
+  try { state = await api.window_state(); } catch { return; }
+  if (!state?.custom_title_bar) return;
+  windowChromeReady = true;
+  document.documentElement.classList.add("custom-chrome");
+  el("window-controls").hidden = false;
+  const showMaximized = (maximized: boolean): void => {
+    setClass(el("window-controls"), "is-maximized", maximized);
+    const label = maximized ? "Restore" : "Maximize";
+    el("window-maximize").setAttribute("aria-label", label); el("window-maximize").title = label;
+  };
+  showMaximized(state.maximized);
+  el("window-minimize").addEventListener("click", () => { void api.minimize(); });
+  el("window-maximize").addEventListener("click", () => { void api.toggle_maximize().then(showMaximized); });
+  el("window-close").addEventListener("click", () => { void api.close(); });
+  // Snap, a double-click on the title bar or the keyboard can change the size too.
+  let pending: ReturnType<typeof setTimeout> | undefined;
+  globalThis.addEventListener?.("resize", () => {
+    if (pending !== undefined) clearTimeout(pending);
+    pending = setTimeout(() => { void api.window_state().then(next => showMaximized(next.maximized)).catch(() => {}); }, 120);
+  });
+}
+globalThis.addEventListener?.("pywebviewready", () => { void setupWindowChrome(); });
+void setupWindowChrome();
 el("apply").addEventListener("click", () => { void applyChanges(); });
 el("apply-cancel").addEventListener("click", () => { applyStep = "idle"; syncApplyBar(); });
 el("apply-commit").addEventListener("click", () => openCanvas("git"));
@@ -2912,6 +3068,7 @@ el("close-canvas").addEventListener("click", () => setCanvas(false));
 el("copy-diff").addEventListener("click", () => { void copyText(renderedDiff, el("copy-diff") as HTMLButtonElement); });
 el("new-task").addEventListener("click", newTask);
 el("task-search").addEventListener("input", renderHistory);
+el("filter-toggle").addEventListener("click", () => { filtersOpen = !filtersOpen; renderHistory(); });
 el("show-archived").addEventListener("click", () => { showArchived = !showArchived; renderHistory(); });
 el("task-actions").addEventListener("click", () => { if (selected) openTaskMenu(selected, el("task-actions")); });
 if (typeof el("task-menu").querySelectorAll === "function") {
@@ -4469,7 +4626,7 @@ treeGrip.addEventListener("keydown", (event: KeyboardEvent) => {
 });
 
 // --- collapsed rail, status filter and the status menu ----------------------------------
-el("rail-expand").addEventListener("click", () => setSidebarCollapsed(false));
+el("rail-expand").addEventListener("click", () => { if (sidebarIsDrawer()) setClass(el("workspace"), "sidebar-open", true); else setSidebarCollapsed(false); });
 el("rail-new").addEventListener("click", newTask);
 el("rail-palette").addEventListener("click", togglePalette);
 el("rail-settings").addEventListener("click", () => openSettings("general", true));
