@@ -18,10 +18,9 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import research, session_credentials
+from . import research, session_credentials, toolchain
 from .providers import propose
-from .agent import (AgentBudget, BROWSER_CLICK_TOOL, BROWSER_FILL_TOOL, BROWSER_SCREENSHOT_TOOL, BROWSER_TOOL,
-                    WEB_FETCH_TOOL, BROWSER_PRESS_TOOL, BROWSER_SCROLL_TOOL, BROWSER_SELECT_TOOL,
+from .agent import (AgentBudget, BROWSER_ACTION_TOOLS, BROWSER_TOOL, ENVIRONMENT_TOOL, WEB_FETCH_TOOL,
                     DELEGATE_TOOL, LOCAL_SHELL_TOOL, SHELL_TOOL, TEST_KINDS, TOOLS, ToolCall, run_agent)
 from .agent_profiles import LIMITS as PROFILE_LIMITS, AgentProfiles
 from .agent_provider import CompatibleAgentModel
@@ -749,7 +748,7 @@ class Engine:
 
     def agent_info(self):
         """What the agent can use in this workspace: tools, skills, subagents and hook rules."""
-        tools = [*TOOLS, SHELL_TOOL, BROWSER_TOOL, WEB_FETCH_TOOL, BROWSER_CLICK_TOOL, BROWSER_FILL_TOOL, BROWSER_SCREENSHOT_TOOL, BROWSER_PRESS_TOOL, BROWSER_SCROLL_TOOL, BROWSER_SELECT_TOOL, DELEGATE_TOOL, TASK_TRACKER, READ_SKILL]
+        tools = [*TOOLS, SHELL_TOOL, BROWSER_TOOL, WEB_FETCH_TOOL, *BROWSER_ACTION_TOOLS, DELEGATE_TOOL, TASK_TRACKER, READ_SKILL]
         try:
             skills = [{"name": row["name"], "description": row["description"], "scope": row["scope"], "enabled": bool(row["enabled"])} for row in self.skills.enumerate_skills()]
         except OSError:
@@ -1727,13 +1726,18 @@ class Engine:
                 return {"status": "failed", "changed": {}, "error": outside_note(refreshed) + " The command did not run."}
             before = {**inventory(self.root), **workspace.tracked_snapshot()}
             program = program_files()
-            timeout = min(int(timeout or 60), 600)
+            installing = toolchain.is_install(command)
+            # Installers (winget, brew, apt, rustup, the C++ Build Tools) can take many minutes.
+            timeout = min(max(int(timeout or 60), 1500), 1800) if installing else min(int(timeout or 60), 600)
             chunk, done = stream_command(command, "this computer", timeout)
             result = local_exec.run(self.root, command, cancel, timeout=timeout, on_chunk=chunk, env=sandbox_env or None,
                                     limits=self._local_limits())
             result = program_guard(program, result)
             done(result)
             workspace.forget_paths()
+            if installing:  # what is installed changed: look again before the next command or check
+                toolchain.forget()
+                local_exec.forget_installed()
             try:
                 facts.record_command(command, result)
             except OSError:
@@ -1847,7 +1851,8 @@ class Engine:
             result = program_guard(program, local_preview.preview(self.root, arguments.get("command"), _Either(cancel, pause),
                 path=arguments.get("path", "/"), actions=arguments.get("actions"), expect_text=arguments.get("expect_text", ""),
                 save_screenshot=save_preview, env=sandbox_env or None, visual=compare_view,
-                focus=arguments.get("focus", ""), inspect=arguments.get("inspect"), live=self.live_preview))
+                focus=arguments.get("focus", ""), inspect=arguments.get("inspect"), live=self.live_preview,
+                color_scheme=arguments.get("color_scheme")))
             workspace.forget_paths()
             live = self.live_preview.status()
             if live.get("running"):  # the Browser panel shows the running app, not only the captures
@@ -1874,7 +1879,8 @@ class Engine:
         asking = request.get("approve_execution") is True  # secrets only ever reach approved commands
         use_skills = profile is None or profile["use_skills"]
         researching = request.get("approve_browser") is True and request.get("approve_execution") is True and (profile is None or profile["allow_browser"]) and research.configured(self.models.secrets)
-        extra_tools = ([research.SEARCH_TOOL] if researching else []) + [TASK_TRACKER] + ([READ_SKILL] if use_skills else []) + (session.tools if session else []) + ([BROWSER_TOOL, WEB_FETCH_TOOL] if browsing else []) + ([BROWSER_CLICK_TOOL, BROWSER_FILL_TOOL, BROWSER_SCREENSHOT_TOOL, BROWSER_PRESS_TOOL, BROWSER_SCROLL_TOOL, BROWSER_SELECT_TOOL] if browsing and self.browser.info().get("interactive") else []) + ([READ_PLAN] if plan_context else []) + ([REQUEST_SECRET] if asking else []) + ([ASK_QUESTION] if asking else [])
+        setting_up = local and (profile is None or profile["allow_shell"])
+        extra_tools = ([research.SEARCH_TOOL] if researching else []) + ([ENVIRONMENT_TOOL] if setting_up else []) + [TASK_TRACKER] + ([READ_SKILL] if use_skills else []) + (session.tools if session else []) + ([BROWSER_TOOL, WEB_FETCH_TOOL] if browsing else []) + (BROWSER_ACTION_TOOLS if browsing and self.browser.info().get("interactive") else []) + ([READ_PLAN] if plan_context else []) + ([REQUEST_SECRET] if asking else []) + ([ASK_QUESTION] if asking else [])
         def extra_call(name, arguments):
             if name == "web_search" and researching:
                 return research.search(self.models.secrets, arguments)
@@ -1886,22 +1892,20 @@ class Engine:
                 if policy == "never" and approval_question(arguments.get("question", "")):
                     return {"error": "Auto mode already authorizes the requested work. Continue with the available tools; ask only for genuinely missing information or credentials."}
                 return self._ask_question(task, arguments, _Either(cancel, pause))
+            if name == "environment_check" and setting_up:
+                files = inventory(self.root)
+                return toolchain.report(sorted(files), files.get, arguments.get("tool") if isinstance(arguments.get("tool"), str) else None)
             if name == 'task_tracker':
                 return self.planning.tracker(task, arguments.get('tasks'))
             if name == 'read_plan' and plan_context:
                 return {'path': 'PLAN.md', **plan_context, 'untrusted': True}
             if name == "browse_url" and browsing:
-                return self.browser.visit(task, arguments.get("url"), request, cancel)
+                options = {"observe": "snapshot", **({"color_scheme": arguments["color_scheme"]} if arguments.get("color_scheme") else {})}
+                return self.browser.visit(task, arguments.get("url"), request, cancel, options)
             if name == "web_fetch" and browsing:
                 return self.browser.fetch(task, arguments.get("url"))
-            if name in {"browser_press", "browser_scroll", "browser_select"} and browsing:
-                return self.browser.action(task, name.removeprefix("browser_"), arguments, cancel)
-            if name == "browser_click" and browsing:
-                return self.browser.action(task, "click", arguments, cancel)
-            if name == "browser_fill" and browsing:
-                return self.browser.action(task, "fill", arguments, cancel)
-            if name == "browser_screenshot" and browsing:
-                return self.browser.action(task, "screenshot", arguments, cancel)
+            if name.startswith("browser_") and browsing:
+                return self.browser.agent_action(task, name, arguments, cancel)
             if session:
                 return session.call(name, arguments)
             raise ValueError("Tool unavailable")

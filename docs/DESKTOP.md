@@ -95,11 +95,36 @@ for platform packages. macOS uses its system WebKit through pywebview.
 ## Local app behavior
 
 The desktop host binds to `127.0.0.1` and uses the same HttpOnly session-cookie
-exchange as browser mode. Its initial token is passed in a URL fragment. It does
-not expose a custom Python API to the page. External links open in the system
+exchange as browser mode. Its initial token is passed in a URL fragment. External links open in the system
 browser, and the host disables pywebview's file-URL access flag. App downloads, including
 conversation exports, remain available. Theme and drafts persist in a dedicated
 `desktop` folder inside the private data directory.
+
+### Window and title bar
+
+On Windows the window has one integrated title bar, as desktop editors do. The
+native caption is removed while the resizable frame stays, so the window still
+resizes from its edges and snaps. The page's title bar (brand, sidebar toggle,
+project and task, panel buttons) is the drag region through WebView2's
+non-client region support (CSS `app-region: drag`): dragging, Snap layouts,
+double-click to maximize and the system menu behave natively. The page draws its
+own minimize, maximize/restore and close buttons. Those buttons are the only Python
+the page can call (`desktop.WindowControls`: `window_state`, `minimize`,
+`toggle_maximize`, `close`), which act only on the Dikdik window and expose
+nothing else. A WebView2 runtime without non-client region support keeps the
+native title bar. macOS and Linux keep their native title bars.
+
+The caption is removed just before the window first shows, so launch never shows
+the native title bar, and the window's background matches the app's theme (taken
+from the Windows light/dark setting) until the page paints. Windows would maximize
+a captionless window over the whole monitor; Dikdik answers `WM_GETMINMAXINFO` with
+the monitor's work area, so a maximized window stops at the taskbar. The start-up
+screen appears only when start-up takes longer than a moment.
+
+The layout keeps the title bar, sidebar, conversation and panel in fixed grid
+areas at every width. Below 1100 px with a panel open, the sidebar folds to a
+rail and opens as a drawer; below 760 px the sidebar is a drawer and the panel
+covers the conversation.
 
 Source launch requires Python and the optional dependencies. Platform bundles
 include Python and Chromium; their installers still require native OS testing

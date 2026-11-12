@@ -21,6 +21,22 @@ test("browser history keeps the last valid screenshot across failures and reload
   expect(eventToMessages(event({ status: "passed", screenshot }), "Browse")[0]?.kind).toBe("browser_result");
 });
 
+test("an action on the live page moves the address on and keeps the page interactive", () => {
+  const view = browserView([
+    event({ status: "passed", url: "https://example.com/", title: "Home", screenshot, interactive: true }),
+    event({ action: "click" }, "browser_started"),
+    event({ status: "passed", url: "https://example.com/next", title: "Next" }),  // live action: no capture
+  ]);
+  expect(view).toMatchObject({ url: "https://example.com/next", title: "Next", screenshot, interactive: true, status: "passed" });
+  // A record read (console, network) has no title and changes nothing; a bad address is ignored.
+  expect(browserView([event({ status: "passed", url: "https://example.com/", title: "Home", screenshot, interactive: true }),
+                      event({ status: "passed", url: "https://example.com/" , console: [] })]).title).toBe("Home");
+  expect(browserView([event({ status: "passed", url: "https://example.com/", title: "Home", screenshot, interactive: true }),
+                      event({ status: "passed", url: "javascript:alert(1)", title: "x" })]).url).toBe("https://example.com/");
+  // Without an earlier capture there is nothing to stream, so no page appears.
+  expect(browserView([event({ status: "passed", url: "https://example.com/", title: "Home" })]).url).toBe("");
+});
+
 test("unsafe links and screenshot sources never reach the browser view", () => {
   for (const url of ["javascript:alert(1)", "file:///secret", "https://user:key@example.com/"]) {
     expect(browserView([event({ status: "passed", url, screenshot })]).screenshot).toBe("");

@@ -56,6 +56,42 @@ export function organiseTasks(tasks: readonly TaskSummary[], view: TaskView): Or
   const folderNames = [...new Set(tasks.map(task => task.folder ?? "").filter(Boolean))].sort();
   return { pinned, folders, recent, tags, folderNames, older, archived: tasks.filter(task => task.archived && !task.session).length };
 }
+/** The sidebar's date sections, by the local calendar day of a conversation's last activity. */
+export const DATE_GROUPS = ["Today", "Yesterday", "Previous 7 days", "Previous 30 days", "Older"] as const;
+export type DateGroup = typeof DATE_GROUPS[number];
+export function dateGroup(when: number, now: number): DateGroup {
+  const midnight = (seconds: number): number => { const day = new Date(seconds * 1000); day.setHours(0, 0, 0, 0); return day.getTime(); };
+  const days = Math.round((midnight(now) - midnight(when)) / 86_400_000);
+  return days <= 0 ? "Today" : days === 1 ? "Yesterday" : days < 7 ? "Previous 7 days" : days < 30 ? "Previous 30 days" : "Older";
+}
+/** Consecutive date sections of an already-sorted list; empty sections are left out. */
+export function groupByDate(tasks: readonly TaskSummary[], now: number): { label: DateGroup; tasks: TaskSummary[] }[] {
+  const groups = new Map<DateGroup, TaskSummary[]>();
+  for (const task of tasks) {
+    const label = dateGroup(task.updated ?? task.created ?? now, now);
+    groups.set(label, [...(groups.get(label) ?? []), task]);
+  }
+  return DATE_GROUPS.filter(label => groups.has(label)).map(label => ({ label, tasks: groups.get(label)! }));
+}
+/** "now", "5m", "3h", "2d", "3w", "4mo", "2y": how long ago, as a sidebar row shows it. */
+export function shortAge(when: number, now: number): string {
+  const seconds = Math.max(0, now - when);
+  if (seconds < 60) return "now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  if (seconds < 7 * 86400) return `${Math.floor(seconds / 86400)}d`;
+  if (seconds < 30 * 86400) return `${Math.floor(seconds / 604800)}w`;
+  if (seconds < 365 * 86400) return `${Math.floor(seconds / (30 * 86400))}mo`;
+  return `${Math.floor(seconds / (365 * 86400))}y`;
+}
+/** What a sidebar row's status mark shows: work in progress, a run that needs you, or a failure. */
+export function statusKind(state: string): "running" | "attention" | "failed" | "" {
+  if (RUNNING.has(state)) return "running";
+  if (state === "failed" || state === "blocked" || state === "interrupted") return "failed";
+  if (state === "paused" || state === "waiting" || state === "awaiting_input" || state === "draft") return "attention";
+  return "";
+}
+
 /** "a, B ,b" → ["a", "b"]; throws with a readable message on bad tags. */
 export function parseTags(text: string): string[] {
   const tags = [...new Set(text.split(",").map(tag => tag.trim().toLowerCase()).filter(Boolean))];

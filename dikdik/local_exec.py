@@ -234,16 +234,17 @@ def describe_toolchain(root: Path) -> str:
     # servers start and stop, so their ports are probed on every run, in parallel.
     cached = _TOOLCHAIN_CACHE if time.monotonic() - _TOOLCHAIN_CACHE.get("at", -1e9) < 600 else None
     with ThreadPoolExecutor(max_workers=1 + len(DATABASE_PORTS)) as pool:
-        node = None if cached else shutil.which("node")
+        search = child_env().get("PATH")  # includes tools installed since Dikdik started
+        node = None if cached else shutil.which("node", path=search)
         version = pool.submit(node_version, node) if node else None
         ports = [(name, port, pool.submit(listening, port)) for name, port in DATABASE_PORTS]
         if cached:
             found += cached["tools"]
         else:
-            tools = [(f"Node.js {version.result()}".strip() + (" with npm" if shutil.which("npm") else "")) if node
+            tools = [(f"Node.js {version.result()}".strip() + (" with npm" if shutil.which("npm", path=search) else "")) if node
                      else "Node.js is not installed"]
             # Presence only (no version calls): every toolchain a new project might be built with.
-            others = [label for label, program in TOOLCHAINS if shutil.which(program)]
+            others = [label for label, program in TOOLCHAINS if shutil.which(program, path=search)]
             tools.append(("also installed: " + ", ".join(others)) if others else "no other toolchains on PATH")
             _TOOLCHAIN_CACHE.update(at=time.monotonic(), tools=tools)
             found += tools
@@ -273,10 +274,73 @@ def shell_argv(command: str, env_names=()) -> tuple[list[str], str]:
             powershell_command(command, legacy=kind == "powershell", env_names=env_names)], kind
 
 
+_PATH_CACHE: dict = {}
+
+
+def installed_paths() -> list[str]:
+    """Folders where installed tools live that this process's PATH may not have yet: the PATH an
+    installer saved for the machine and the user (Windows registry), and the usual per-user tool
+    folders (cargo, bun, deno, Go, pipx/uv, dotnet tools, npm globals, Homebrew). Read again at
+    most every two seconds, so a tool installed by one command is found by the next."""
+    cached = _PATH_CACHE.get("value")
+    if cached is not None and time.monotonic() - _PATH_CACHE.get("at", 0) < 2:
+        return cached
+    found: list[str] = []
+    if os.name == "nt":
+        try:
+            import winreg
+            for hive, key in ((winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+                              (winreg.HKEY_CURRENT_USER, "Environment")):
+                try:
+                    with winreg.OpenKey(hive, key) as handle:
+                        value = winreg.QueryValueEx(handle, "Path")[0]
+                except OSError:
+                    continue
+                found += [os.path.expandvars(part) for part in str(value).split(";") if part.strip()]
+        except ImportError:
+            pass
+    home = Path.home()
+    candidates = [home / ".cargo" / "bin", home / ".bun" / "bin", home / ".deno" / "bin", home / ".local" / "bin",
+                  home / "go" / "bin", home / ".dotnet" / "tools", home / ".pub-cache" / "bin"]
+    if os.name == "nt":
+        for variable, tail in (("APPDATA", "npm"), ("LOCALAPPDATA", r"Microsoft\WinGet\Links"), ("USERPROFILE", r"scoop\shims"),
+                               ("ProgramData", r"chocolatey\bin"), ("ProgramFiles", r"Go\bin"), ("ProgramFiles", r"nodejs")):
+            base = os.environ.get(variable)
+            if base:
+                candidates.append(Path(base) / tail)
+    else:
+        candidates += [Path("/opt/homebrew/bin"), Path("/usr/local/bin"), Path("/usr/local/go/bin"), Path("/snap/bin")]
+    found += [str(folder) for folder in candidates if folder.is_dir()]
+    _PATH_CACHE.update(value=found, at=time.monotonic())
+    return found
+
+
+def forget_installed() -> None:
+    """An install ran: read PATH folders and the toolchain summary again."""
+    _PATH_CACHE.clear()
+    _TOOLCHAIN_CACHE.clear()
+
+
+def with_installed_paths(path: str) -> str:
+    """PATH plus the installed-tool folders it lacks, appended so the user's own order still wins."""
+    norm = lambda part: os.path.normcase(os.path.normpath(part)) if part else ""
+    present = {norm(part) for part in path.split(os.pathsep) if part}
+    extra = []
+    for part in installed_paths():
+        key = norm(part)
+        if key and key not in present:
+            present.add(key)
+            extra.append(part)
+    return os.pathsep.join([path, *extra]) if extra and path else os.pathsep.join(extra) if extra else path
+
+
 def child_env(env: dict[str, str] | None = None) -> dict[str, str]:
     """The environment for a command: UTF-8 Python I/O unless the user set otherwise, this
-    process's environment, the approved secrets, and on Windows a Python when PATH has none."""
+    process's environment, the approved secrets, on Windows a Python when PATH has none, and the
+    folders of tools installed since Dikdik started."""
     merged = {**UTF8_ENV, **os.environ, **(env or {})}
+    path_key = next((key for key in merged if key.upper() == "PATH"), "PATH")
+    merged[path_key] = with_installed_paths(merged.get(path_key, ""))
     if os.name == "nt":
         found = shutil.which("python", path=merged.get("PATH"))
         bundled = Path(sys.executable).with_name("python.exe")

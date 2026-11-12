@@ -1,5 +1,6 @@
 """Real browser interaction fixture and public fetch policy regression checks."""
 import base64
+import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 import socket
@@ -121,6 +122,73 @@ class ServiceInteractionTests(unittest.TestCase):
             fetch.assert_called_once(); visit.assert_called_once()
             self.assertEqual([call.args[1] for call in action.call_args_list], ["fill", "click", "press", "screenshot"])
 
+    def test_agent_tools_map_to_actions_that_return_the_snapshot(self):
+        service = self.engine.browser
+        cases = [("browser_snapshot", {}, "snapshot", {"observe": "snapshot"}),
+                 ("browser_type", {"ref": "e3", "text": "555"}, "type", {"ref": "e3", "text": "555", "observe": "snapshot"}),
+                 ("browser_check", {"label": "Terms"}, "check", {"label": "Terms", "observe": "snapshot"}),
+                 ("browser_check", {"label": "Terms", "checked": False}, "uncheck", {"label": "Terms", "observe": "snapshot"}),
+                 ("browser_navigate", {"direction": "back"}, "back", {"observe": "snapshot"}),
+                 ("browser_resize", {"preset": "mobile", "color_scheme": "dark"}, "resize", {"width": 390, "height": 844, "color_scheme": "dark", "observe": "snapshot"}),
+                 ("browser_inspect", {"targets": ["e3", "header"]}, "inspect", {"selectors": ["e3", "header"], "observe": "none"}),
+                 ("browser_console", {"level": "error"}, "console", {"level": "error", "observe": "none"}),
+                 ("browser_network", {"only_sent": True}, "network", {"only_sent": True, "observe": "none"}),
+                 ("browser_evaluate", {"expression": "document.title"}, "evaluate", {"expression": "document.title", "observe": "none"})]
+        for tool, arguments, action, sent in cases:
+            with self.subTest(tool=tool), patch.object(service, "action", return_value={"status": "passed"}) as call:
+                service.agent_action(self.task, tool, arguments)
+                self.assertEqual(call.call_args.args[1:3], (action, sent))
+        with patch.object(service, "action", return_value={"status": "passed"}) as call:
+            service.agent_action(self.task, "browser_screenshot", {"region": [0, 0, 100, 50]})
+            self.assertTrue(call.call_args.kwargs["attach"])
+        for tool, arguments in [("browser_navigate", {"direction": "sideways"}), ("browser_resize", {"preset": "watch"}), ("browser_unknown", {})]:
+            with self.subTest(tool=tool), self.assertRaises(ValueError):
+                service.agent_action(self.task, tool, arguments)
+
+    def test_screenshots_reach_the_model_and_hover_leaves_no_history(self):
+        service = self.engine.browser
+        png = b"\x89PNG\r\n\x1a\nfixture"
+        with patch.object(service.sessions, "execute", return_value={"status": "passed", "url": "https://example.com/", "title": "t", "text": "", "png": png}):
+            shot = service.action(self.task, "screenshot", {}, attach=True)
+            self.assertEqual(shot["attach_images"], ["data:image/png;base64," + base64.b64encode(png).decode()])
+            before = len(self.engine.store.get(self.task)["events"])
+            service.action(self.task, "hover", {"x": 1, "y": 2, "observe": "none"})
+            self.assertEqual(len(self.engine.store.get(self.task)["events"]), before)
+            recorded = [e["data"] for e in self.engine.store.get(self.task)["events"] if e["kind"] == "browser_result"]
+            self.assertNotIn("attach_images", recorded[-1])
+
+    def test_risk_levels_and_permission_groups_cover_every_browser_tool(self):
+        from dikdik.agent import BROWSER_ACTION_TOOLS
+        from dikdik.control import ACTION_TOOLS, RULE_GROUPS, assess
+        names = {tool["function"]["name"] for tool in BROWSER_ACTION_TOOLS}
+        writes = {"browser_click", "browser_fill", "browser_type", "browser_press", "browser_select", "browser_check", "browser_drag", "browser_evaluate"}
+        for name in names:
+            with self.subTest(name=name):
+                self.assertEqual(assess(ToolCall("c", name, {}))[0], "high" if name in writes else "low")
+                self.assertIn(name, RULE_GROUPS["browse"])
+                self.assertEqual(name in ACTION_TOOLS, name in writes)
+
+    def test_the_app_opens_only_while_it_runs_and_the_proxy_follows_its_port(self):
+        from dikdik.host_browser import PublicProxy
+        service = self.engine.browser
+        approval = {"approve_execution": True, "approve_browser": True}
+        with self.assertRaisesRegex(ValueError, "Run preview_app first"):
+            service.visit(self.task, "http://preview.dikdik.example/", approval)
+        port = {"value": None}
+        proxy = PublicProxy(preview_port=lambda: port["value"])
+        try:
+            self.assertIsNone(proxy.preview_port)
+            port["value"] = 43123
+            self.assertEqual(proxy.preview_port, 43123)
+            port["value"] = 80  # never a privileged or invalid port
+            self.assertIsNone(proxy.preview_port)
+        finally:
+            proxy.close()
+        with patch.object(self.engine.live_preview, "status", return_value={"running": True, "port": 43123}):
+            self.assertEqual(service.app_port(), 43123)
+        with self.assertRaises(KeyError):
+            service.live_frames(self.task)  # no page yet: the panel falls back to screenshots
+
 
 @unittest.skipUnless(os.environ.get("DIKDIK_RUN_INTERACTIVE") == "1", "Opt-in real Chromium test")
 class LiveInteractionTests(unittest.TestCase):
@@ -163,6 +231,115 @@ class LiveInteractionTests(unittest.TestCase):
                 self.assertIn("Next page", run("back")["text"])
                 self.assertIn("Navigation worked", run("forward")["text"])
                 self.assertIn("Navigation worked", run("reload")["text"])
+                # The live panel's quick click on a link: the page is read after the navigation.
+                run("back")
+                for _ in range(3):
+                    quick = sessions.execute("task", "click", {"selector": "a", "observe": "none"})
+                    self.assertEqual((quick["status"], quick.get("png")), ("passed", None), quick)
+                    run("back")
                 self.assertEqual(sessions.execute("other", "fill", {"selector": "#name", "value": "no"})["status"], "failed")
+        finally:
+            sessions.close(); server.shutdown(); server.server_close()
+
+    def test_agent_grade_actions_refs_real_keys_records_and_live_frames(self):
+        """Everything an agent needs to check inputs and designs, against a real page."""
+        html = b'''<!doctype html><html lang="en"><title>Agent fixture</title>
+<style>body{background:#fff;color:#111} @media (prefers-color-scheme: dark){body{background:#000;color:#eee}}
+#tip{display:none} #hover:hover + #tip{display:block} #drop{width:120px;height:60px;border:1px solid}</style>
+<h1>Sign up</h1>
+<form id="form"><label for="phone">Phone</label><input id="phone" required>
+<label><input type="checkbox" id="terms"> I agree</label>
+<select id="plan" aria-label="Plan"><option value="free">Free</option><option value="pro">Pro</option></select>
+<button id="send" type="submit">Create account</button></form>
+<p id="keys">0 keys</p><p id="result">Waiting</p>
+<button id="hover">Help</button><span id="tip" role="tooltip">Shown on hover</span>
+<button id="twice">Double me</button><p id="dbl">none</p>
+<div id="drag" draggable="true">Card</div><div id="drop">Drop here</div><p id="dropped">empty</p>
+<script>
+let n = 0; const phone = document.querySelector('#phone');
+phone.addEventListener('keydown', () => { n++; document.querySelector('#keys').textContent = n + ' keys'; });
+phone.addEventListener('input', () => { phone.value = phone.value.replace(/\\D/g, '').replace(/(\\d{3})(?=\\d)/g, '$1-'); });
+document.querySelector('#twice').ondblclick = () => document.querySelector('#dbl').textContent = 'double';
+document.querySelector('#drag').ondragstart = e => e.dataTransfer.setData('text', 'card');
+const drop = document.querySelector('#drop');
+drop.ondragover = e => e.preventDefault();
+drop.ondrop = e => { e.preventDefault(); document.querySelector('#dropped').textContent = 'dropped ' + e.dataTransfer.getData('text'); };
+document.querySelector('#form').onsubmit = async e => {
+  e.preventDefault(); console.error('submitting');
+  const r = await fetch('/submit', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({phone: phone.value, terms: document.querySelector('#terms').checked, plan: document.querySelector('#plan').value})});
+  document.querySelector('#result').textContent = 'Saved ' + (await r.text());
+};
+console.log('ready');
+</script></html>'''
+        received = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200); self.send_header("Content-Type", "text/html"); self.send_header("Content-Length", str(len(html))); self.end_headers(); self.wfile.write(html)
+            def do_POST(self):
+                received.append(self.rfile.read(int(self.headers["Content-Length"])))
+                self.send_response(201); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"ok")
+            def log_message(self, *args): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        sessions = BrowserSessions()
+        def fixture_open(proxy, url, host, port):
+            if host != "dikdik.example": return None
+            return socket.create_connection(server.server_address, timeout=5)
+        try:
+            with patch("dikdik.host_browser._ProxyHandler._open", fixture_open):
+                def run(action, **args):
+                    result = sessions.execute("task", action, args)
+                    self.assertEqual(result["status"], "passed", result)
+                    return result
+                with sessions.watch("task"):
+                    run("navigate", url="http://dikdik.example/", observe="snapshot")
+                    frame = sessions.frame("task", 0, timeout=10)
+                    self.assertIsNotNone(frame, "the live view streamed no frame")
+                    self.assertTrue(frame[1].startswith(b"\xff\xd8"), "frames are JPEG")
+                    tree = run("snapshot")["snapshot"]
+                    self.assertIn('heading "Sign up" [level=1]', tree)
+                    self.assertIn('textbox "Phone" [required]', tree)
+                    import re as regex
+                    ref = lambda pattern: regex.search(pattern + r'.*?\[ref=(e\d+)\]', tree).group(1)
+                    phone, terms, plan, send = ref(r'textbox "Phone"'), ref(r'checkbox "I agree"'), ref(r'combobox "Plan"'), ref(r'button "Create account"')
+                    # Real key events: the keydown counter and the input mask both run.
+                    typed = run("type", ref=phone, text="5551234567", observe="snapshot")
+                    self.assertIn('value="555-123-456-7"', typed["snapshot"])
+                    self.assertIn("10 keys", typed["snapshot"])
+                    self.assertIn("[checked]", regex.search(r'checkbox "I agree".*', run("check", ref=terms, observe="snapshot")["snapshot"]).group(0))
+                    run("select", ref=plan, value="Pro")
+                    # The refs stay on their elements across snapshots.
+                    self.assertIn(f"[ref={phone}]", run("snapshot")["snapshot"])
+                    run("click", ref=send)
+                    run("wait", text="Saved ok")
+                    self.assertEqual(json.loads(received[-1]), {"phone": "555-123-456-7", "terms": True, "plan": "pro"})
+                    sent = run("network", only_sent=True)["network"]
+                    self.assertEqual(sent[-1]["method"], "POST"); self.assertEqual(sent[-1]["status"], 201)
+                    self.assertIn('"plan":"pro"', sent[-1]["body"])
+                    console = run("console")["console"]
+                    self.assertEqual([e["text"] for e in console if e["type"] in {"log", "error"}], ["ready", "submitting"])
+                    self.assertEqual([e["text"] for e in run("console", level="error")["console"]], ["submitting"])
+                    # Hover, double-click and drag, by role and name instead of selectors.
+                    self.assertIn("Shown on hover", run("hover", role="button", name="Help")["text"])
+                    self.assertIn("double", run("click", role="button", name="Double me", double=True)["text"])
+                    self.assertIn("dropped card", run("drag", text="Card", exact=True, to={"text": "Drop here"})["text"])
+                    # Design checks: dark mode, computed values and a zoomed region.
+                    dark = run("resize", color_scheme="dark", observe="snapshot")
+                    self.assertEqual(dark["layout"]["color_scheme"], "dark")
+                    self.assertEqual(run("evaluate", expression="getComputedStyle(document.body).backgroundColor")["result"], "rgb(0, 0, 0)")
+                    self.assertEqual(run("evaluate", ref=phone, expression="el => el.value")["result"], "555-123-456-7")
+                    import struct
+                    zoomed = run("screenshot", region=[0, 0, 200, 100])
+                    self.assertEqual(struct.unpack(">II", zoomed["png"][16:24]), (200, 100))
+                    inspected = run("inspect", selectors=[phone])["inspection"][0]
+                    self.assertEqual((inspected["selector"], inspected["found"], inspected["tag"]), (phone, 1, "input"))
+                    with self.assertRaises(AssertionError):
+                        run("press", key="Control+Alt+Shift+Meta+x")
+                    self.assertEqual(run("press", key="ControlOrMeta+a")["status"], "passed")
+                    later = sessions.frame("task", frame[0], timeout=10)
+                    self.assertIsNotNone(later, "the live view did not follow the page")
+                self.assertFalse(sessions.has_page("missing"))
+                self.assertTrue(sessions.has_page("task"))
         finally:
             sessions.close(); server.shutdown(); server.server_close()

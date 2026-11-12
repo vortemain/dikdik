@@ -178,19 +178,35 @@ class _ProxyHandler(socketserver.BaseRequestHandler):
             upstream.close()
 
 
+def _valid_port(port) -> bool:
+    return type(port) is int and 1024 <= port <= 65535
+
+
 class PublicProxy(socketserver.ThreadingTCPServer):
     daemon_threads = True
     allow_reuse_address = False
 
     def __init__(self, *, allow_http_writes=False, preview_port=None):
-        if preview_port is not None and (type(preview_port) is not int or not 1024 <= preview_port <= 65535):
+        """``preview_port`` is the app's assigned port, or a function returning the port of the
+        app that is running now (None when none is), so a long-lived browser follows it."""
+        if preview_port is not None and not callable(preview_port) and not _valid_port(preview_port):
             raise ValueError("Preview port must be an assigned unprivileged port")
         super().__init__(("127.0.0.1", 0), _ProxyHandler)
         self.refused: list[str] = []
         self.bytes = 0
         self.allow_http_writes = allow_http_writes
-        self.preview_port = preview_port
+        self._preview_port = preview_port
         threading.Thread(target=self.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True).start()
+
+    @property
+    def preview_port(self):
+        port = self._preview_port
+        if callable(port):
+            try:
+                port = port()
+            except Exception:
+                return None
+        return port if _valid_port(port) else None
 
     @property
     def address(self) -> str:

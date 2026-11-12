@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/workbench.css">
   <link rel="stylesheet" href="/model-settings.css">
   <link rel="stylesheet" href="/dialogs.css">
+  <link rel="stylesheet" href="/shell.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -72,34 +73,23 @@
   <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3.5h11l3 3v14h-14Z M8 3.5v5h7M8 13.5h8v6.5h-8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
   </svg>
 
+  <!-- Shown only when start-up takes a moment (it fades in after a short delay). -->
   <div id="boot" class="boot" role="status" aria-live="polite">
-    <div class="boot-binary" aria-hidden="true">
-      <span>0010 0000 0100 0001 0000 0010 0100 0000</span>
-      <span>0000 0100 0000 1000 0010 0000 0001 0000</span>
-      <span>0100 0000 0010 0000 0000 0100 0000 1000</span>
-      <span>0000 0001 0000 0100 0000 0010 0000 0000</span>
-      <span>0010 0000 0000 1000 0001 0000 0100 0000</span>
-      <span>0000 0100 0010 0000 0000 0001 0000 0100</span>
-      <span>0001 0000 0000 0010 0100 0000 1000 0000</span>
-      <span>0000 0010 0100 0000 0000 1000 0000 0001</span>
-    </div>
     <div class="boot-identity">
-      <div class="boot-mark" aria-hidden="true">
-        <svg class="boot-logo" viewBox="0 0 64 64">
-          <rect width="64" height="64" rx="15" fill="#1F3D31"/>
-          <g class="boot-face" fill="#E8C496">
-            <path class="boot-ear boot-ear-left" d="M25.5 25.5C18 25.2 10.8 20 8 11.5c8.6.4 15.6 4.6 19.6 10.6Z"/>
-            <path class="boot-ear boot-ear-right" d="M38.5 25.5c7.5-.3 14.7-5.5 17.5-14-8.6.4-15.6 4.6-19.6 10.6Z"/>
-            <path d="m27.6 21.4 1.6-12.2 2.3 12.2Zm8.8 0-1.6-12.2-2.3 12.2Z"/>
-            <path d="M22.8 27.6c0-5.6 4.1-8.4 9.2-8.4s9.2 2.8 9.2 8.4c0 8.2-3.9 16.8-6.4 22.1-.9 1.9-4.7 1.9-5.6 0-2.5-5.3-6.4-13.9-6.4-22.1Z"/>
-          </g>
-          <g fill="#1F3D31"><g class="boot-eyes"><circle cx="27.4" cy="31" r="2.3"/><circle cx="36.6" cy="31" r="2.3"/></g><path d="M29.6 46.6c0-1.1 1.1-1.8 2.4-1.8s2.4.7 2.4 1.8-1.1 1.7-2.4 1.7-2.4-.6-2.4-1.7Z"/></g>
-        </svg>
-      </div>
-      <div class="boot-wordmark">dikdik</div>
-      <p class="boot-tagline">Small name. Serious intelligence.</p>
-      <p class="boot-status">Opening your workspace<span aria-hidden="true">…</span></p>
+      <svg class="boot-logo" viewBox="0 0 64 64" aria-hidden="true">
+        <rect width="64" height="64" rx="15" fill="#1F3D31"/>
+        <g fill="#E8C496">
+          <path d="M25.5 25.5C18 25.2 10.8 20 8 11.5c8.6.4 15.6 4.6 19.6 10.6Z"/>
+          <path d="M38.5 25.5c7.5-.3 14.7-5.5 17.5-14-8.6.4-15.6 4.6-19.6 10.6Z"/>
+          <path d="m27.6 21.4 1.6-12.2 2.3 12.2Zm8.8 0-1.6-12.2-2.3 12.2Z"/>
+          <path d="M22.8 27.6c0-5.6 4.1-8.4 9.2-8.4s9.2 2.8 9.2 8.4c0 8.2-3.9 16.8-6.4 22.1-.9 1.9-4.7 1.9-5.6 0-2.5-5.3-6.4-13.9-6.4-22.1Z"/>
+        </g>
+        <g fill="#1F3D31"><circle cx="27.4" cy="31" r="2.3"/><circle cx="36.6" cy="31" r="2.3"/><path d="M29.6 46.6c0-1.1 1.1-1.8 2.4-1.8s2.4.7 2.4 1.8-1.1 1.7-2.4 1.7-2.4-.6-2.4-1.7Z"/></g>
+      </svg>
+      <span class="boot-wordmark">dikdik</span>
     </div>
+    <div class="boot-track" aria-hidden="true"><span></span></div>
+    <p class="boot-status">Opening your workspace</p>
   </div>
 
   <div id="connect-view" class="connect-view" hidden>
@@ -135,28 +125,56 @@
   </div>
 
   <div id="workspace" class="app" hidden>
-    <aside class="sidebar" aria-label="Tasks">
-      <div class="sidebar-top">
-        <a class="brand" href="/" aria-label="Dikdik home"><img src="/icon.svg" alt="" width="26" height="26">dikdik</a>
+    <!-- One title bar across the window, as in desktop editors. In the desktop app it is the
+         window's own title bar: a drag region (app-region) with the window buttons at the end. -->
+    <header id="titlebar" class="titlebar" aria-label="Title bar">
+      <div class="titlebar-lead">
+        <button id="toggle-sidebar-mobile" class="ghost icon" type="button" aria-label="Open menu"><svg class="i"><use href="#i-menu"/></svg></button>
+        <a class="brand" href="/" aria-label="Dikdik home"><img src="/icon.svg" alt="" width="22" height="22"><span class="brand-name">dikdik</span></a>
+        <span class="titlebar-space"></span>
         <button id="open-palette" class="ghost icon" type="button" aria-label="Command menu" title="Command menu (Ctrl K)"><svg class="i"><use href="#i-command"/></svg></button>
         <button id="toggle-sidebar" class="ghost icon" type="button" aria-label="Hide sidebar" title="Hide sidebar"><svg class="i"><use href="#i-sidebar"/></svg></button>
+        <button id="show-sidebar" class="ghost icon" type="button" aria-label="Show sidebar" title="Show sidebar" hidden><svg class="i"><use href="#i-sidebar"/></svg></button>
       </div>
-      <button id="project-picker" class="project-picker" type="button" title="Switch, open, clone or create a project" aria-haspopup="dialog">
-        <span class="project-picker-icon"><svg class="i"><use href="#i-folder"/></svg></span>
-        <span class="project-picker-text"><small>Project</small><strong id="project-picker-name">—</strong></span>
-        <svg class="i project-picker-chevron"><use href="#i-chevron"/></svg>
-      </button>
-      <button id="new-task" class="new-task" type="button"><svg class="i"><use href="#i-plus"/></svg>New task<kbd>Ctrl ⇧ O</kbd></button>
-      <label class="task-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Search tasks</span><input id="task-search" type="search" placeholder="Search tasks" autocomplete="off"></label>
-      <div id="list-tools" class="list-tools" hidden>
-        <label class="sr-only" for="task-sort">Sort conversations</label>
-        <select id="task-sort" class="mini-select"><option value="recent">Recent</option><option value="created">Newest</option><option value="title">Title</option></select>
-        <label class="sr-only" for="task-since">Show conversations from</label>
-        <select id="task-since" class="mini-select"><option value="0">Any time</option><option value="7">7 days</option><option value="30">30 days</option></select>
-        <label class="sr-only" for="task-scope">Show conversations by status</label>
-        <select id="task-scope" class="mini-select"><option value="all">All</option><option value="running">Running</option><option value="attention">Waiting</option></select>
+      <div class="topbar-title"><button id="topbar-project" class="topbar-project" type="button" title="Switch, open, clone or create a project" aria-haspopup="dialog"><svg class="i"><use href="#i-folder"/></svg><span id="topbar-project-name">—</span><svg class="i topbar-project-chevron"><use href="#i-chevron"/></svg></button><span class="topbar-sep" aria-hidden="true">/</span><h1 id="chat-title">New task</h1><button id="state-button" class="state-button" type="button" aria-haspopup="menu" title="Status and actions"><span id="task-state" class="state-pill" role="status" aria-live="polite"></span></button></div>
+      <div class="topbar-actions">
+        <button id="task-actions" class="ghost icon" type="button" aria-label="Task actions" title="Task actions" hidden><svg class="i"><use href="#i-more"/></svg></button>
+        <button id="pause" class="ghost small" type="button" hidden title="Pause after the current step; resume later from exactly here"><svg class="i"><use href="#i-pause"/></svg>Pause</button>
+        <button id="toggle-canvas" class="ghost small changes-button" type="button" aria-pressed="false" aria-controls="canvas" hidden><svg class="i"><use href="#i-diff"/></svg><span class="label">Changes</span><span id="changes-count" class="count"></span></button>
+        <span class="panel-buttons" role="group" aria-label="Panels">
+          <button id="open-terminal" class="ghost icon panel-button" type="button" data-panel="terminal" aria-pressed="false" aria-controls="canvas" aria-label="Terminal" title="Terminal"><svg class="i"><use href="#i-terminal"/></svg></button>
+          <button id="open-browser" class="ghost icon panel-button" type="button" data-panel="browser" aria-pressed="false" aria-controls="canvas" aria-label="Browser" title="Browser"><svg class="i"><use href="#i-globe"/></svg></button>
+          <button id="open-files" class="ghost icon panel-button" type="button" data-panel="files" aria-pressed="false" aria-controls="canvas" aria-label="Files and Git" title="Files and Git"><svg class="i"><use href="#i-folder"/></svg></button>
+        </span>
       </div>
-      <div id="tag-chips" class="tag-chips" role="group" aria-label="Filter by tag" hidden></div>
+      <div id="window-controls" class="window-controls" role="group" aria-label="Window" hidden>
+        <button id="window-minimize" type="button" aria-label="Minimize" title="Minimize"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10"/></svg></button>
+        <button id="window-maximize" type="button" aria-label="Maximize" title="Maximize"><svg viewBox="0 0 10 10" aria-hidden="true"><rect class="max" x=".5" y=".5" width="9" height="9"/><path class="restore" d="M2.5 2.5V.5h7v7h-2M.5 2.5h7v7h-7z"/></svg></button>
+        <button id="window-close" class="window-close" type="button" aria-label="Close" title="Close"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M.5.5l9 9m0-9-9 9"/></svg></button>
+      </div>
+    </header>
+    <aside class="sidebar" aria-label="Tasks">
+      <div class="sidebar-head">
+        <button id="project-picker" class="project-picker" type="button" title="Switch, open, clone or create a project" aria-haspopup="dialog">
+          <span class="project-picker-icon"><svg class="i"><use href="#i-folder"/></svg></span>
+          <span class="project-picker-text"><small>Project</small><strong id="project-picker-name">—</strong></span>
+          <svg class="i project-picker-chevron"><use href="#i-chevron"/></svg>
+        </button>
+        <button id="new-task" class="new-task" type="button"><svg class="i"><use href="#i-plus"/></svg><span>New task</span><kbd>Ctrl ⇧ O</kbd></button>
+        <div class="task-search-row">
+          <label class="task-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Search tasks</span><input id="task-search" type="search" placeholder="Search tasks" autocomplete="off"></label>
+          <button id="filter-toggle" class="ghost icon filter-toggle" type="button" aria-pressed="false" aria-controls="list-tools" aria-label="Sort and filter tasks" title="Sort and filter"><svg class="i"><use href="#i-sliders"/></svg></button>
+        </div>
+        <div id="list-tools" class="list-tools" hidden>
+          <label class="sr-only" for="task-sort">Sort conversations</label>
+          <select id="task-sort" class="mini-select"><option value="recent">Recent</option><option value="created">Newest</option><option value="title">Title</option></select>
+          <label class="sr-only" for="task-since">Show conversations from</label>
+          <select id="task-since" class="mini-select"><option value="0">Any time</option><option value="7">7 days</option><option value="30">30 days</option></select>
+          <label class="sr-only" for="task-scope">Show conversations by status</label>
+          <select id="task-scope" class="mini-select"><option value="all">All</option><option value="running">Running</option><option value="attention">Waiting</option></select>
+        </div>
+        <div id="tag-chips" class="tag-chips" role="group" aria-label="Filter by tag" hidden></div>
+      </div>
       <p id="recent-head" class="list-head">Recent</p>
       <nav id="conv-list" class="conv-list" aria-label="Recent tasks">
         <div id="history" class="conv-history"></div>
@@ -183,27 +201,25 @@
     <div id="scrim" class="scrim"></div>
 
     <main id="main" class="main" aria-label="Conversation">
-      <header class="topbar">
-        <button id="show-sidebar" class="ghost icon" type="button" aria-label="Show sidebar" title="Show sidebar" hidden><svg class="i"><use href="#i-sidebar"/></svg></button>
-        <button id="toggle-sidebar-mobile" class="ghost icon" type="button" aria-label="Open menu"><svg class="i"><use href="#i-menu"/></svg></button>
-        <div class="topbar-title"><button id="topbar-project" class="topbar-project" type="button" title="Switch, open, clone or create a project" aria-haspopup="dialog"><svg class="i"><use href="#i-folder"/></svg><span id="topbar-project-name">—</span><svg class="i topbar-project-chevron"><use href="#i-chevron"/></svg></button><span class="topbar-sep" aria-hidden="true">/</span><h1 id="chat-title">New task</h1><button id="state-button" class="state-button" type="button" aria-haspopup="menu" title="Status and actions"><span id="task-state" class="state-pill" role="status" aria-live="polite"></span></button></div>
-        <div class="topbar-actions">
-          <button id="task-actions" class="ghost icon" type="button" aria-label="Task actions" title="Task actions" hidden><svg class="i"><use href="#i-more"/></svg></button>
-          <button id="pause" class="ghost small" type="button" hidden title="Pause after the current step; resume later from exactly here"><svg class="i"><use href="#i-pause"/></svg>Pause</button>
-          <button id="open-files" class="ghost icon" type="button" aria-label="Files and Git" title="Files and Git"><svg class="i"><use href="#i-folder"/></svg></button>
-          <button id="toggle-canvas" class="ghost small changes-button" type="button" aria-pressed="false" aria-controls="canvas" hidden><svg class="i"><use href="#i-diff"/></svg><span class="label">Changes</span><span id="changes-count" class="count"></span></button>
-        </div>
-      </header>
-
       <div id="thread" class="thread">
-        <section class="welcome" aria-label="Welcome">
-          <img class="welcome-mark" src="/icon.svg" alt="">
-          <h1>What should we build?</h1>
-          <div class="suggestions">
-            <button class="suggestion" type="button" data-prompt="Fix the failing tests without changing the tests.">Fix failing tests</button>
-            <button class="suggestion" type="button" data-prompt="Find a likely bug in this project and fix it.">Hunt a bug</button>
-            <button class="suggestion" type="button" data-prompt="Add input validation and clear error messages to the main module.">Harden inputs</button>
-            <button class="suggestion" type="button" data-prompt="Add a unit test that covers the main function's edge cases.">Add test coverage</button>
+        <section class="welcome" aria-labelledby="welcome-title">
+          <div class="welcome-inner">
+            <p class="welcome-project"><svg class="i"><use href="#i-folder"/></svg><span id="welcome-project">Project</span><span id="welcome-meta" class="welcome-meta"></span></p>
+            <h1 id="welcome-title">What should we build?</h1>
+            <div class="welcome-grid">
+              <section class="welcome-col" aria-labelledby="welcome-start-head">
+                <h2 id="welcome-start-head">Start with</h2>
+                <button class="suggestion" type="button" data-prompt="Fix the failing tests without changing the tests."><span class="suggestion-icon"><svg class="i"><use href="#i-check"/></svg></span><span class="suggestion-text"><strong>Fix failing tests</strong><small>Run the suite, repair what breaks, leave the tests alone</small></span></button>
+                <button class="suggestion" type="button" data-prompt="Find a likely bug in this project and fix it."><span class="suggestion-icon"><svg class="i"><use href="#i-search"/></svg></span><span class="suggestion-text"><strong>Hunt a bug</strong><small>Read the code for a likely fault and fix it</small></span></button>
+                <button class="suggestion" type="button" data-prompt="Add input validation and clear error messages to the main module."><span class="suggestion-icon"><svg class="i"><use href="#i-shield"/></svg></span><span class="suggestion-text"><strong>Harden inputs</strong><small>Validation and clear errors where data comes in</small></span></button>
+                <button class="suggestion" type="button" data-prompt="Add a unit test that covers the main function's edge cases."><span class="suggestion-icon"><svg class="i"><use href="#i-flag"/></svg></span><span class="suggestion-text"><strong>Add test coverage</strong><small>Edge cases for the main function</small></span></button>
+              </section>
+              <section id="welcome-recent-section" class="welcome-col" aria-labelledby="welcome-recent-head" hidden>
+                <h2 id="welcome-recent-head">Pick up where you left off</h2>
+                <div id="welcome-recent" class="welcome-recent"></div>
+              </section>
+            </div>
+            <p class="welcome-keys"><span><kbd>Ctrl</kbd><kbd>K</kbd> Commands</span><span><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>O</kbd> New task</span><span><kbd>/</kbd> Skills and commands</span></p>
           </div>
         </section>
         <ol id="message-stream" class="message-stream" aria-label="Conversation messages"></ol>

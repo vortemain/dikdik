@@ -136,3 +136,32 @@ describe("live file changes from agent tools", () => {
     expect(toolFileChanges("agent_tool", null)).toEqual([]);
   });
 });
+
+describe("sidebar sections, ages and status marks", () => {
+  const { dateGroup, groupByDate, shortAge, statusKind } = require("../../dikdik/web/organise");
+  const noon = new Date(2026, 10, 12, 12, 0, 0).getTime() / 1000;
+  const at = (days: number, hours = 0) => noon - days * 86400 - hours * 3600;
+  test("calendar days, not 24-hour windows, decide Today and Yesterday", () => {
+    expect(dateGroup(at(0, 11), noon)).toBe("Today");          // 01:00 today
+    expect(dateGroup(at(0, 13), noon)).toBe("Yesterday");      // 23:00 yesterday, only 13 hours ago
+    expect(dateGroup(at(3), noon)).toBe("Previous 7 days");
+    expect(dateGroup(at(12), noon)).toBe("Previous 30 days");
+    expect(dateGroup(at(40), noon)).toBe("Older");
+    expect(dateGroup(noon + 60, noon)).toBe("Today");          // a clock slightly ahead is still today
+  });
+  test("sections keep the list's order and skip empty ones", () => {
+    const tasks = [{ id: "a", state: "completed", updated: at(0) }, { id: "b", state: "completed", updated: at(5) },
+                   { id: "c", state: "completed", created: at(0, 2) }, { id: "d", state: "completed" }];
+    expect(groupByDate(tasks, noon).map((g: { label: string; tasks: { id: string }[] }) => [g.label, g.tasks.map(t => t.id)]))
+      .toEqual([["Today", ["a", "c", "d"]], ["Previous 7 days", ["b"]]]);
+  });
+  test("ages are short and never negative", () => {
+    expect([30, 300, 7200, 3 * 86400, 15 * 86400, 90 * 86400, 800 * 86400].map(s => shortAge(noon - s, noon)))
+      .toEqual(["now", "5m", "2h", "3d", "2w", "3mo", "2y"]);
+    expect(shortAge(noon + 500, noon)).toBe("now");
+  });
+  test("only runs that need a look get a mark", () => {
+    expect(["running", "queued", "failed", "blocked", "interrupted", "paused", "completed", "cancelled"].map(statusKind))
+      .toEqual(["running", "running", "failed", "failed", "failed", "attention", "", ""]);
+  });
+});

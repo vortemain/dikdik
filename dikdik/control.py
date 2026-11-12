@@ -24,13 +24,15 @@ HIGH = [
     (re.compile(r"\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\b"), "deletes files recursively"),
     (re.compile(r"\b(curl|wget|nc|ncat|ssh|scp)\b"), "tries to reach the network"),
     (re.compile(r"\b(pip|npm|bun|cargo|apt|apt-get|yarn|pnpm)\s+(install|add|i)\b"), "installs packages"),
+    (re.compile(r"\b(winget|choco|scoop|brew|dnf|pacman|zypper|snap|rustup|xcode-select)\s+(install|-S|--install|default|toolchain)\b|\bsudo\b", re.I),
+     "installs software on this computer"),
     (re.compile(r"\bchmod\s+(-R\s+)?777\b"), "makes files world-writable"),
     (re.compile(r"\b(mkfs|dd)\b|>\s*/dev/"), "writes to devices"),
     (re.compile(r"\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f)\b"), "rewrites or publishes history"),
 ]
 READ_TOOLS = {"list_files", "read_file", "search_text", "read_skill", "read_plan", "task_tracker", "write_plan", "finish", "delegate",
               "architecture_map", "impacted_tests", "security_scan", "quality_check", "release_gate", "record_requirements",
-              "request_secret", "ask_question"}  # both are themselves questions to the user
+              "request_secret", "ask_question", "environment_check"}  # both are themselves questions to the user
 
 ENV_EXCLUDED = {".env.example", ".env.sample", ".env.template", ".env.defaults"}
 
@@ -42,6 +44,13 @@ def env_secret_read(call: ToolCall) -> bool:
     path = str(call.arguments.get("path", "")).replace("\\", "/").strip("/")
     name = path.rstrip("/").rsplit("/", 1)[-1]
     return re.fullmatch(r"\.env(\..+)?", name) is not None and name not in ENV_EXCLUDED
+
+
+# Browser tools that act on a page (may send data) and those that only look at it or move around.
+BROWSER_WRITE_TOOLS = {"browser_click", "browser_fill", "browser_type", "browser_press", "browser_select", "browser_check",
+                       "browser_drag", "browser_evaluate"}
+BROWSER_READ_TOOLS = {"browser_snapshot", "browser_screenshot", "browser_scroll", "browser_hover", "browser_wait",
+                      "browser_navigate", "browser_resize", "browser_inspect", "browser_console", "browser_network"}
 
 
 def assess(call: ToolCall) -> tuple[str, str]:
@@ -60,10 +69,12 @@ def assess(call: ToolCall) -> tuple[str, str]:
         return "low", "opens a public web page (read-only navigation)"
     if call.name in {"web_fetch", "web_search"}:
         return "low", "fetches public web content (read-only)"
-    if call.name in {"browser_click", "browser_fill", "browser_press", "browser_select"}:
+    if call.name in BROWSER_WRITE_TOOLS:
+        if call.name == "browser_evaluate":
+            return "high", "runs JavaScript in a web page, which may change it or send data"
         return "high", "interacts with a website and may send data or submit a form"
-    if call.name in {"browser_screenshot", "browser_scroll"}:
-        return "low", "observes the current browser page"
+    if call.name in BROWSER_READ_TOOLS:
+        return "low", "observes or navigates the current browser page"
     if call.name.startswith("mcp__"):
         return "medium", "calls an outside tool through MCP"
     if call.name in {"edit_file", "create_file", "record_decision"}:
@@ -76,7 +87,7 @@ def assess(call: ToolCall) -> tuple[str, str]:
     return "medium", "uses a tool"
 
 
-ACTION_TOOLS = {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test", "browser_click", "browser_fill", "browser_press", "browser_select"}
+ACTION_TOOLS = {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"} | BROWSER_WRITE_TOOLS
 
 
 # --- structured permission rules -------------------------------------------------------
@@ -85,7 +96,7 @@ ACTION_TOOLS = {"run_command", "preview_app", "measure_performance", "repeat_com
 # can never add one). An unmatched call falls through to the normal policy.
 RULE_ACTIONS = {"*", "read", "edit", "create", "command", "browse"}
 RULE_GROUPS = {"read": READ_TOOLS, "edit": {"edit_file"}, "create": {"create_file", "record_decision"},
-               "command": {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}, "browse": {"preview_app", "browse_url", "web_fetch", "web_search", "browser_click", "browser_fill", "browser_press", "browser_select", "browser_scroll", "browser_screenshot"}}
+               "command": {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}, "browse": {"preview_app", "browse_url", "web_fetch", "web_search"} | BROWSER_WRITE_TOOLS | BROWSER_READ_TOOLS}
 RULE_SUBJECT = {"list_files": "path", "read_file": "path", "search_text": "path", "edit_file": "path",
                 "create_file": "path", "run_command": "command", "preview_app": "command", "measure_performance": "command", "repeat_command": "command", "load_test": "command", "dast_scan": "command", "fault_test": "command", "browse_url": "url", "web_search": "query"}
 RULE_NAME = re.compile(r"[a-z0-9_.-]{1,60}")
