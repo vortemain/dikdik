@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import platform
+import re
 import secrets
 import select
 import shutil
@@ -21,7 +22,7 @@ import webbrowser
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from .engine import ApplyConflict, Engine, TERMINAL
 from .store import WORKSPACE_CLAUSES
@@ -187,7 +188,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
         def log_message(self, format, *args):
             pass  # Never log authorization, objectives or repository contents.
 
-        def reply(self, status, data, mime="application/json", cookie=None, csp=PAGE_CSP, inline=False):
+        def reply(self, status, data, mime="application/json", cookie=None, csp=PAGE_CSP, inline=False, filename=None):
             body = json.dumps(data).encode() if mime == "application/json" else data
             self.send_response(status)
             if cookie:
@@ -199,9 +200,37 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
             if inline:
                 # Present rather than download (the PDF/media reader needs this).
                 self.send_header("Content-Disposition", "inline")
+            elif filename:
+                safe = re.sub(r'[^A-Za-z0-9._ ()-]', '_', filename)[:150] or 'download'
+                self.send_header("Content-Disposition", f'attachment; filename="{safe}"; filename*=UTF-8\'\'{quote(filename[:150])}')
             self.send_header("Content-Security-Policy", csp)
             self.end_headers()
             self.wfile.write(body)
+
+        def preview_reply(self, target, name, what):
+            """The in-app viewer's data for one file: structure (view), an embedded picture (media),
+            or the file itself for the browser's own PDF and image readers (raw)."""
+            suffix = Path(name).suffix.lower()
+            if what == "media":
+                part = parse_qs(urlsplit(self.path).query).get("part", [""])[0]
+                data, kind = docextract.media(target, part)
+                self.reply(200, data, kind, csp="default-src 'none'; style-src 'unsafe-inline'")
+                return
+            if what == "raw":
+                kinds = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                         ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp"}
+                if suffix not in kinds:
+                    raise KeyError(name)
+                self.reply(200, target.read_bytes(), kinds[suffix], inline=True)
+                return
+            if target.stat().st_size > 48 * 1024 * 1024:
+                raise ValueError("The file is too large to preview; download it instead.")
+            if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}:
+                self.reply(200, {"kind": "image"})
+            elif suffix == ".pdf":
+                self.reply(200, {"kind": "pdf"})
+            else:
+                self.reply(200, docextract.preview(target, name=name))
 
         @property
         def cookie_name(self):
@@ -560,6 +589,20 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if len(parts) == 5 and parts[:3] == ["", "api", "tasks"] and parts[4] == "requirements":
                     self.reply(200, engine.store.requirements(parts[3]))  # KeyError -> 404 below
                     return
+                if len(parts) in (5, 6) and parts[:3] == ["", "api", "tasks"] and parts[4] == "files":
+                    # A chat's own folder: the attachments it was given and the files it created.
+                    if len(parts) == 5:
+                        self.reply(200, {"files": engine.chat_files(parts[3])})
+                        return
+                    wanted = parse_qs(urlsplit(self.path).query).get("path", [""])[0]
+                    target = engine.chat_file(parts[3], wanted)  # KeyError -> 404 below
+                    if parts[5] == "download":
+                        self.reply(200, target.read_bytes(), "application/octet-stream", filename=target.name)
+                        return
+                    if parts[5] in {"view", "media", "raw"}:
+                        self.preview_reply(target, target.name, parts[5])
+                        return
+                    raise KeyError(wanted)
                 if path == "/api/visual-baselines":
                     self.reply(200, {"baselines": engine.visual_baselines()})
                     return
@@ -580,6 +623,14 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     meta, raw = engine.attachments.get(parts[3])
                     self.reply(200, raw, meta["type"] if meta["type"] in IMAGE_TYPES else "application/octet-stream")
                     return
+                if len(parts) == 5 and parts[:3] == ["", "api", "attachments"] and parts[4] in {"view", "media", "raw", "download"}:
+                    meta, _ = engine.attachments.get(parts[3])  # KeyError -> 404
+                    stored = engine.attachments.folder / parts[3]
+                    if parts[4] == "download":
+                        self.reply(200, stored.read_bytes(), "application/octet-stream", filename=meta["name"])
+                        return
+                    self.preview_reply(stored, meta["name"], parts[4])
+                    return
                 if path == "/api/settings/app":
                     self.reply(200, engine.app_settings())
                     return
@@ -594,7 +645,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                             "notifications": {"type": "string", "enum": ["off", "background", "all"]},
                             "notification_previews": {"type": "boolean"},
                             "router": {"type": "string"},
-                            "title_model": {"type": "string"},
+                            "title_model": {"type": "string"}, "image_model": {"type": "string"},
                             "event_retention_seconds": {"type": "integer", "minimum": 0, "maximum": 86400 * 30},
                             "permission_rules": {"type": "array", "items": {"type": "object"}},
                             "formatter": {"type": "object"},
@@ -768,7 +819,10 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                         raise KeyError(rel)
                     if target.stat().st_size > 24 * 1024 * 1024:
                         raise ValueError("The document is too large to read in the viewer.")
-                    self.reply(200, docextract.extract(target))
+                    if query.get("part"):
+                        self.preview_reply(target, target.name, "media")
+                    else:
+                        self.reply(200, docextract.preview(target) if query.get("rich") else docextract.extract(target))
                 elif path == "/api/files/list":
                     query = parse_qs(urlsplit(self.path).query)
                     rel = query.get("path", [""])[0] or "."
@@ -941,6 +995,28 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(201, projects.clone(body))
                 elif path in {"/api/projects/pick", "/api/files/open-in-editor"} and remote:
                     raise ValueError("Not available when Dikdik runs on a server; type the folder path instead")
+                elif re.fullmatch(r"/api/tasks/[0-9a-f]{32}/files/open", path):
+                    if remote:
+                        raise ValueError("Not available when Dikdik runs on a server; download the file instead")
+                    target = engine.chat_file(path.split("/")[3], str((body or {}).get("path") or "") if isinstance(body, dict) else "")
+                    if sys.platform == "win32":
+                        os.startfile(str(target))  # noqa: S606 - the user's own file, opened in its default app
+                    else:
+                        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(target)],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    self.reply(200, {"opened": True})
+                elif re.fullmatch(r"/api/tasks/[0-9a-f]{32}/files/reveal", path):
+                    if remote:
+                        raise ValueError("Not available when Dikdik runs on a server; download the files instead")
+                    task_id = path.split("/")[3]
+                    engine.store.status(task_id)  # ownership check; KeyError -> 404
+                    folder = engine.chat_folder(task_id)
+                    if sys.platform == "win32":
+                        os.startfile(str(folder))  # noqa: S606 - opens our own data folder in Explorer
+                    else:
+                        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    self.reply(200, {"opened": True})
                 elif path == "/api/projects/pick":
                     self.reply(200, {"path": pick_folder(str(body.get("title") or "Choose a project folder")[:80]
                                                          if isinstance(body, dict) else "Choose a project folder")})

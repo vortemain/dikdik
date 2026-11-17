@@ -293,8 +293,14 @@ def _observation(value: dict) -> str:
     return _json({"truncated": True, "preview": text[:10000]})
 
 
-def _drop_images(messages: list[dict], only_screenshots: bool = False) -> bool:
-    """Replace image parts with a short note, in place; True when any were removed."""
+def _drop_images(messages: list[dict], only_screenshots: bool = False,
+                 describe: Callable[[list[str]], list[str]] | None = None) -> bool:
+    """Replace image parts with a short note, in place; True when any were removed.
+
+    With ``describe`` (a text-only model), each image becomes a text reading of it
+    instead: OCR'd text and, when a vision-capable helper model is configured, a
+    description, so the model still works with what the image shows.
+    """
     removed = False
     for message in messages:
         content = message.get("content")
@@ -304,7 +310,17 @@ def _drop_images(messages: list[dict], only_screenshots: bool = False) -> bool:
         if only_screenshots and not str(first).startswith(SCREENSHOT_NOTE):
             continue  # the user's own attached images stay
         kept = [p for p in content if not (isinstance(p, dict) and p.get("type") == "image_url")]
-        message["content"] = kept + [{"type": "text", "text": "[image removed from context]"}]
+        urls = [p.get("image_url", {}).get("url", "") for p in content if isinstance(p, dict) and p.get("type") == "image_url"]
+        readings: list[str] = []
+        if describe is not None:
+            try:
+                readings = [str(text) for text in describe(urls)]
+            except Exception:  # noqa: BLE001 - a failed reading falls back to the plain note
+                readings = []
+        if readings:
+            message["content"] = kept + [{"type": "text", "text": "\n\n".join(readings)}]
+        else:
+            message["content"] = kept + [{"type": "text", "text": "[image removed from context]"}]
         removed = True
     return removed
 
@@ -662,7 +678,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
               shell_note: str = "",
               summary_model: AgentModel | None = None,
               shell_tool: dict | None = None,
-              on_write: Callable[[dict[str, str]], None] | None = None) -> AgentOutcome:
+              on_write: Callable[[dict[str, str]], None] | None = None,
+              describe_images: Callable[[list[str]], list[str]] | None = None) -> AgentOutcome:
     """Deadline/cancellation are checked between steps, not during blocking callbacks.
 
     ``original`` is the untouched source (diff base, protected tests); ``start`` is the
@@ -1147,12 +1164,13 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
             if stop:
                 return stop
             reported = record_usage(exc.usage)
-            if exc.kind in {"bad_request", "not_found"} and vision and _drop_images(messages):
+            if exc.kind in {"bad_request", "not_found"} and vision and _drop_images(messages, describe=describe_images):
                 # Most likely a text-only model (OpenRouter answers 404 "no endpoints support image
                 # input"): continue without images rather than fail the task.
                 vision = False
                 context_bytes = context_size(messages)
-                event("recovery", {"action": "continue_without_images", "reason": "The model refused a request with images"})
+                event("recovery", {"action": "continue_without_images", "reason": "The model refused a request with images",
+                                   "described": describe_images is not None})
                 continue
             if exc.kind == "context_length" and context_shrinks < 2 and size > 32 * 1024:
                 # The provider's real window is smaller than assumed: work within 70% of what

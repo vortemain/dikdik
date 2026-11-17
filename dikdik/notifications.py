@@ -8,6 +8,7 @@ import re
 import threading
 from urllib.parse import urlsplit
 from . import sql
+from .store import CHAT_SCOPE
 
 
 KINDS = {"completed", "failed", "blocked", "paused", "confirmation_requested", "question_requested", "secret_requested"}
@@ -133,8 +134,8 @@ class DesktopNotifications:
             high = db.execute("SELECT COALESCE(MAX(seq),0) FROM events").fetchone()[0]
             rows = db.execute(f"SELECT e.seq,e.task_id,e.kind,e.data,t.state,t.title,t.request,t.result,t.workspace "
                               f"FROM events e JOIN tasks t ON t.id=e.task_id WHERE e.seq>? AND e.seq<=? "
-                              f"AND e.kind IN ({sql.marks(len(KINDS))}) AND t.workspace=? ORDER BY e.seq LIMIT 100",
-                              (self._cursor, high, *sorted(KINDS), store.workspace)).fetchall()
+                              f"AND e.kind IN ({sql.marks(len(KINDS))}) AND (t.workspace=? OR t.workspace=?) ORDER BY e.seq LIMIT 100",
+                              (self._cursor, high, *sorted(KINDS), store.workspace, CHAT_SCOPE)).fetchall()
             events = []
             for row in rows:
                 data = json.loads(row["data"])

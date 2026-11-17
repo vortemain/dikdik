@@ -40,7 +40,7 @@ test("actual polling retains file selection and control nodes, with safe fallbac
   const nodes = new Map<string, Node>();
   for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url", "attach-input", "condenser", "palette-input", "meta-folder", "meta-tags", "sounds", "notification-previews", "git-name", "git-email", "secrets-approval", "agent-critic", "agent-memory", "agent-secrets", "terminal-cwd", "terminal-command"]) nodes.set(id, new Input());
   for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-back", "browser-forward", "browser-reload", "browser-external-empty", "browser-live-stop", "planner-create", "planner-submit", "planner-cancel", "pause", "git-save", "terminal-new", "terminal-copy", "terminal-clear", "terminal-stop", "terminal-run", "browser-text-toggle", "browser-example", "notification-test"]) nodes.set(id, new Button());
-  for (const id of ["run-mode", "mode", "verification", "confirmation-policy", "task-sort", "task-since", "task-scope", "title-model", "browser-history", "browser-zoom", "notification-mode"]) nodes.set(id, new Select());
+  for (const id of ["run-mode", "mode", "verification", "confirmation-policy", "task-sort", "task-since", "task-scope", "title-model", "image-model", "browser-history", "browser-zoom", "notification-mode"]) nodes.set(id, new Select());
   for (const id of ["edits", "objective", "planner-objective"]) nodes.set(id, new Textarea());
   const node = (id: string): Node => {
     if (!nodes.has(id)) nodes.set(id, new Node());
@@ -60,6 +60,11 @@ test("actual polling retains file selection and control nodes, with safe fallbac
   const tick = () => new Promise(resolve => setTimeout(resolve, 0));
   try {
     install("HTMLElement", Node); install("HTMLButtonElement", Button); install("HTMLInputElement", Input);
+    // This conversation is a code task: open the sidebar on the Code tab (Chat is the default).
+    // Other saved choices keep the values this test sets on the controls (classic run mode).
+    const stored = new Map<string, string>([["dikdik.conversation.v2", "code"], ["dikdik.runMode.v2", "classic"]]);
+    install("localStorage", { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); },
+      removeItem: (key: string) => { stored.delete(key); } });
     install("HTMLSelectElement", Select); install("HTMLTextAreaElement", Textarea);
     install("document", { getElementById: node, createElement: (tag: string) => tag === "button" ? new Button() : new Node(), createElementNS: () => new Node() });
     install("setInterval", (callback: () => void) => { poll = callback; return 1; });

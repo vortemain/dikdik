@@ -442,7 +442,22 @@ TEXT_INLINE_LIMIT = 64 * 1024
 # Workspace preview images stay bounded for the Files pane; attachments can be larger documents.
 WORKSPACE_IMAGE_LIMIT = 3 * 1024 * 1024
 # Documents the model cannot read as raw bytes: their extracted text is inlined instead.
-DOCUMENT_SUFFIXES = {".docx", ".xlsx", ".pptx", ".pdf"}
+DOCUMENT_SUFFIXES = {".docx", ".docm", ".dotx", ".xlsx", ".xlsm", ".pptx", ".pdf", ".odt", ".ods", ".odp", ".rtf", ".epub"}
+# How much of each attached document is pasted into the message itself. A conversation
+# that can read files (chat) gets a preview and reads the rest with read_document.
+PREVIEW_CHARS = 12_000
+
+
+def attachment_file_name(name: str) -> str:
+    """A safe, readable file name for an attachment copied into a working folder."""
+    clean = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(name)).strip().strip(".") or "attachment"
+    clean = re.sub(r"\s+", " ", clean)
+    if clean.startswith("."):
+        clean = "_" + clean[1:]
+    stem, dot, suffix = clean.rpartition(".")
+    if dot and len(clean) > 120:
+        clean = stem[:110] + "." + suffix[:10]
+    return clean[:120]
 
 
 class Attachments:
@@ -487,8 +502,40 @@ class Attachments:
             raise KeyError(attachment_id)
         return dict(row), (self.folder / attachment_id).read_bytes()
 
-    def resolve(self, ids) -> tuple[list[dict], list[str], str]:
-        """Metadata, image data URLs and inlined text for a message's attachments."""
+    def materialize(self, ids, folder: Path) -> list[dict]:
+        """Copy a message's attachments into `folder` under their own names; returns {name, path, type, size}.
+
+        The model can then open them with its file tools (read_document, statistics)
+        instead of seeing only a pasted excerpt. A file with the same name and bytes is
+        reused; a different file with the same name gets a numbered suffix.
+        """
+        if not isinstance(ids, list) or not ids:
+            return []
+        folder.mkdir(parents=True, exist_ok=True)
+        placed = []
+        for attachment_id in ids:
+            try:
+                row, raw = self.get(attachment_id)
+            except (KeyError, OSError):
+                continue
+            name = attachment_file_name(row["name"])
+            target = folder / name
+            stem, suffix = Path(name).stem, Path(name).suffix
+            counter = 2
+            while target.exists() and target.read_bytes() != raw:
+                target = folder / f"{stem} ({counter}){suffix}"
+                counter += 1
+            if not target.exists():
+                target.write_bytes(raw)
+            placed.append({"name": row["name"], "path": target.name, "type": row["type"], "size": row["size"]})
+        return placed
+
+    def resolve(self, ids, preview_only: bool = False, folder_note: str = "") -> tuple[list[dict], list[str], str]:
+        """Metadata, image data URLs and inlined text for a message's attachments.
+
+        `preview_only` pastes the first part of each document and says where the whole
+        file is (`folder_note` + its name), for runs whose tools can read it in full.
+        """
         if ids in (None, []):
             return [], [], ""
         if not isinstance(ids, list) or len(ids) > 10:
@@ -506,19 +553,25 @@ class Attachments:
             if row["type"] in IMAGE_TYPES:
                 images.append(f"data:{row['type']};base64,{base64.b64encode(raw).decode()}")
                 continue
+            limit = PREVIEW_CHARS if preview_only else TEXT_INLINE_LIMIT
+            where = f" The whole file is `{folder_note}{attachment_file_name(row['name'])}` in your working folder." if preview_only else ""
             if Path(row["name"]).suffix.lower() in DOCUMENT_SUFFIXES:
-                extracted = attachment_text(self.folder / attachment_id, row["type"])
-                clipped = extracted[:TEXT_INLINE_LIMIT]
-                texts.append(f"\n\nAttached document `{row['name']}` (untrusted extracted text):\n```\n{clipped}\n```"
-                             + ("\n(truncated)" if len(extracted) > TEXT_INLINE_LIMIT else ""))
+                # The bytes are stored under an opaque id, so the real name decides which reader runs.
+                extracted = attachment_text(self.folder / attachment_id, row["type"], name=row["name"], limit=10_000_000)
+                clipped = extracted[:limit]
+                shown = (f"\n(truncated) (Only the first {limit:,} characters are shown here."
+                         + (" Read the rest with read_document.)" if preview_only else ")")) if len(extracted) > limit else ""
+                texts.append(f"\n\nAttached document `{row['name']}` ({len(extracted):,} characters of text; untrusted content):{where}"
+                             f"\n```\n{clipped}\n```{shown}")
                 continue
             try:
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
-                texts.append(f"\n\nAttached file `{row['name']}` ({row['size']} bytes) is binary and was not included.")
+                texts.append(f"\n\nAttached file `{row['name']}` ({row['size']} bytes) is binary; its content is not shown here.{where}")
                 continue
-            clipped = text[:TEXT_INLINE_LIMIT]
-            texts.append(f"\n\nAttached file `{row['name']}` (untrusted data):\n```\n{clipped}\n```" + ("\n(truncated)" if len(text) > TEXT_INLINE_LIMIT else ""))
+            clipped = text[:limit]
+            texts.append(f"\n\nAttached file `{row['name']}` (untrusted data):{where}\n```\n{clipped}\n```"
+                         + (f"\n(truncated) (Only the first {limit:,} characters are shown here.)" if len(text) > limit else ""))
         return meta, images, "".join(texts)
 
 

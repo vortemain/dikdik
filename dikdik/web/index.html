@@ -31,6 +31,9 @@
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></symbol>
     <symbol id="i-file-plus" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M12 11v6m-3-3h6"/></symbol>
     <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16Z"/><path d="m13.5 6.5 4 4"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 12.5a7.5 7.5 0 0 1-11.1 6.6L4 20.5l1.4-4.6A7.5 7.5 0 1 1 20 12.5Z"/><path d="M8.5 12.5h.01M12.5 12.5h.01M16.5 12.5h.01"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8.5 7-5 5 5 5M15.5 7l5 5-5 5M13.5 4.5l-3 15"/></symbol>
+    <symbol id="i-compose" viewBox="0 0 24 24"><path d="M12 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V12"/><path d="M17.6 3.9a2 2 0 0 1 2.8 2.8L12 15.1l-3.6.8.8-3.6Z"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
     <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
     <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3Z"/></symbol>
@@ -155,18 +158,22 @@
     </header>
     <aside class="sidebar" aria-label="Tasks">
       <div class="sidebar-head">
+        <div id="conversation-kind" class="mode-tabs" role="group" aria-label="Conversation type">
+          <button type="button" data-conversation="chat" aria-pressed="false" title="Chat — research, analysis, documents and data. Not tied to a project.">
+            <svg class="i"><use href="#i-chat"/></svg><span>Chat</span>
+          </button>
+          <button type="button" data-conversation="code" aria-pressed="false" title="Code — an agent that builds and changes the project folder, runs commands and tests.">
+            <svg class="i"><use href="#i-code"/></svg><span>Code</span>
+          </button>
+        </div>
+        <button id="new-task" class="new-task" type="button"><svg class="i"><use href="#i-compose"/></svg><span id="new-task-label">New chat</span><kbd>Ctrl ⇧ O</kbd></button>
         <button id="project-picker" class="project-picker" type="button" title="Switch, open, clone or create a project" aria-haspopup="dialog">
           <span class="project-picker-icon"><svg class="i"><use href="#i-folder"/></svg></span>
           <span class="project-picker-text"><small>Project</small><strong id="project-picker-name">—</strong></span>
           <svg class="i project-picker-chevron"><use href="#i-chevron"/></svg>
         </button>
-        <button id="new-task" class="new-task" type="button"><svg class="i"><use href="#i-plus"/></svg><span>New task</span><kbd>Ctrl ⇧ O</kbd></button>
-        <div id="conversation-kind" class="segmented conversation-kind" role="group" aria-label="Conversation type">
-          <button type="button" data-conversation="code" title="Agentic coding in this workspace — edits, commands, tests">Code</button>
-          <button type="button" data-conversation="chat" title="Research conversations — agentic answers with sources, no file changes">Chat</button>
-        </div>
         <div class="task-search-row">
-          <label class="task-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Search tasks</span><input id="task-search" type="search" placeholder="Search tasks" autocomplete="off"></label>
+          <label class="task-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only" id="task-search-label">Search chats</span><input id="task-search" type="search" placeholder="Search chats" autocomplete="off"></label>
           <button id="filter-toggle" class="ghost icon filter-toggle" type="button" aria-pressed="false" aria-controls="list-tools" aria-label="Sort and filter tasks" title="Sort and filter"><svg class="i"><use href="#i-sliders"/></svg></button>
         </div>
         <div id="list-tools" class="list-tools" hidden>
@@ -220,7 +227,7 @@
                 <div id="welcome-recent" class="welcome-recent"></div>
               </section>
             </div>
-            <p class="welcome-keys"><span><kbd>Ctrl</kbd><kbd>K</kbd> Commands</span><span><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>O</kbd> New task</span><span><kbd>/</kbd> Skills and commands</span></p>
+            <p class="welcome-keys"><span><kbd>Ctrl</kbd><kbd>K</kbd> Commands</span><span><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>O</kbd> <span id="welcome-new-key">New chat</span></span><span><kbd>/</kbd> Skills and commands</span></p>
           </div>
         </section>
         <ol id="message-stream" class="message-stream" aria-label="Conversation messages"></ol>
@@ -484,6 +491,7 @@
         <div class="setting-row setting-stack"><div><h4>Git identity</h4><p>Name and email for commits made from the Git tab. Leave blank to use your Git configuration.</p></div>
           <form id="git-identity" class="inline-form"><label class="sr-only" for="git-name">Git name</label><input id="git-name" maxlength="100" placeholder="Your Name"><label class="sr-only" for="git-email">Git email</label><input id="git-email" type="email" maxlength="254" placeholder="you@example.com"><button id="git-save" class="small" type="submit" disabled>Save</button></form></div>
         <div class="setting-row"><div><h4>Conversation titles</h4><p>After the first finished turn, name the conversation with a short model-written title. Only conversations that already share content with a model are titled.</p></div><select id="title-model" aria-label="Title model"><option value="auto">The conversation’s model</option><option value="off">Off — use my first message</option></select></div>
+        <div class="setting-row"><div><h4>Read images with</h4><p>For models that cannot see images. Dikdik always reads the text in images on this computer (Windows OCR, or Tesseract on macOS/Linux); a model that can see also describes tables, charts and screenshots for the conversation’s model.</p></div><select id="image-model" aria-label="Image reading model"><option value="auto">Automatic</option><option value="off">On-device text only</option></select></div>
         <div class="setting-row"><div><h4>Browser tools</h4><p>Enable public web captures. Each task or manual capture still needs your approval.</p><p id="browser-availability" class="hint"></p></div><label class="check"><input id="browser-enabled" type="checkbox">Enabled</label></div>
         <div class="setting-row"><div><h4>Workspace</h4><p>The only folder Dikdik may read. Candidates are written to the private data directory.</p></div></div>
         <dl class="kv"><dt>Project</dt><dd id="settings-project">—</dd><dt>Inventory</dt><dd id="settings-inventory">—</dd><dt>Indexer</dt><dd id="settings-indexer">—</dd><dt>Network</dt><dd>Loopback only (127.0.0.1)</dd><dt>Sign-in</dt><dd>Remembered in this browser for 30 days. Restart with <code>--rotate-token</code> to sign out everywhere.</dd></dl>

@@ -25,9 +25,10 @@ import { make, icon, setClass, storageGet, storageSet, wide, clock, copyText, co
 import { codeBlock, diffLines, tokenNodes, languageFor, looksLikeDiff, safePageLink } from './code-render';
 import { TOOL_LABELS, detailField, toolName, stepLabel, siteChip, webPageCard, renderTaskChecklistWidget, renderTestChecksWidget, renderPropertiesUI, renderStructuredUI, renderOutputUI, createChatWidgets, type StepLabel } from './chat-widgets';
 import { docKind, docViewer, DOC_KIND_LABELS, type DocKind } from './doc-viewer';
+import { openDocPreview, type PreviewSource } from './doc-preview';
 import { createAskDrawer } from './ask-drawer';
-import { createConversationMode } from './conversation-mode';
-import { startGreeting, suggestionsFor, renderSuggestions, factsFromFiles } from './welcome';
+import { createConversationMode, isChatConversation } from './conversation-mode';
+import { startGreeting, suggestionsFor, chatSuggestions, renderSuggestions, factsFromFiles } from './welcome';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
   const found = document.getElementById(id);
@@ -170,7 +171,10 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   if (state === "completed" && (result as { turn_changed?: unknown } | undefined)?.turn_changed === false) {
     // An answer-only turn: the reply says it all, so just note that nothing changed.
     li.className = "msg msg-system msg-turn-note";
-    const note = make("p", "turn-note", "No files changed");
+    const created = (result as { created_files?: unknown } | undefined)?.created_files;
+    const chatTurn = Array.isArray((result as { chat_files?: unknown } | undefined)?.chat_files);
+    const note = make("p", "turn-note", !chatTurn ? "No files changed"
+      : Array.isArray(created) && created.length ? `Created ${created.length} file${created.length === 1 ? "" : "s"} · download above` : "Answered");
     if (usageText(msg.details)) note.title = usageText(msg.details);  // the numbers are there on hover, not in the way
     const seq = Number(msg.id.replace("terminal-", ""));
     if (selected && Number.isInteger(seq)) {
@@ -334,12 +338,73 @@ function attachmentCard(msg: ChatMessage): HTMLLIElement {
       open.onclick = () => openLightbox(image.src, file.name);
       grid.append(open);
     } else {
-      const chip = make("span", "attachment-chip"); chip.append(icon("file"), make("span", "", file.name));
+      const chip = make("button", "attachment-chip attachment-preview") as HTMLButtonElement; chip.type = "button";
+      chip.title = `Preview ${file.name}`;
+      chip.append(icon("file"), make("span", "", file.name));
+      chip.onclick = () => { void openDocPreview(attachmentSource(file.id, file.name), previewDeps); };
       grid.append(chip);
     }
   }
   li.append(grid);
   return li;
+}
+/** A file the chat created (a report, a workbook, a dataset): download it, or show it in its folder. */
+function createdFileCard(msg: ChatMessage): HTMLLIElement {
+  const path = detailField(msg.details, "path"), bytes = Number((msg.details as Record<string, unknown> | undefined)?.bytes) || 0;
+  const name = path.split("/").pop() || path;
+  const task = selected ?? "";
+  const li = make("li", "msg msg-file"); li.id = msg.id;
+  const card = make("div", "file-card");
+  const badge = make("span", `file-card-icon file-kind-${fileKind(name)}`); badge.append(icon(fileKind(name) === "sheet" ? "grid" : fileKind(name) === "image" ? "eye" : "file"));
+  const meta = make("div", "file-card-meta");
+  const title = make("button", "file-card-name") as HTMLButtonElement; title.type = "button";
+  title.textContent = name; title.title = `Preview ${name}`;
+  title.onclick = () => { void openDocPreview(chatFileSource(task, path), previewDeps); };
+  meta.append(title, make("span", "file-card-sub", `${fileKindLabel(name)}${bytes ? ` · ${formatBytes(bytes)}` : ""}`));
+  const actions = make("div", "file-card-actions");
+  const preview = make("button", "small") as HTMLButtonElement; preview.type = "button";
+  preview.append(icon("eye"), make("span", "", "Preview"));
+  preview.onclick = () => { void openDocPreview(chatFileSource(task, path), previewDeps); };
+  actions.append(preview);
+  const download = make("a", "button small primary-soft") as HTMLAnchorElement;
+  download.href = `/api/tasks/${encodeURIComponent(task)}/files/download?path=${encodeURIComponent(path)}`;
+  download.setAttribute("download", name);
+  download.append(icon("download"), make("span", "", "Download"));
+  actions.append(download);
+  const reveal = make("button", "ghost small") as HTMLButtonElement; reveal.type = "button";
+  reveal.title = "Open the folder that holds this chat's files";
+  reveal.append(icon("folder-open"), make("span", "", "Show in folder"));
+  reveal.onclick = () => { void request(`/api/tasks/${encodeURIComponent(task)}/files/reveal`, "POST", {}).catch(error => message(error instanceof Error ? error.message : String(error), true)); };
+  actions.append(reveal);
+  card.append(badge, meta, actions);
+  li.append(card);
+  return li;
+}
+const previewDeps = { make, icon, api: <T,>(url: string) => api<T>(url), message };
+function chatFileSource(task: string, path: string): PreviewSource {
+  const base = `/api/tasks/${encodeURIComponent(task)}/files`, at = `path=${encodeURIComponent(path)}`;
+  return {
+    name: path.split("/").pop() || path, viewUrl: `${base}/view?${at}`, rawUrl: `${base}/raw?${at}`,
+    mediaUrl: part => `${base}/media?${at}&part=${encodeURIComponent(part)}`, downloadUrl: `${base}/download?${at}`,
+    openInApp: () => request(`${base}/open`, "POST", { path }).then(() => undefined),
+  };
+}
+function attachmentSource(id: string, name: string): PreviewSource {
+  const base = `/api/attachments/${encodeURIComponent(id)}`;
+  return { name, viewUrl: `${base}/view`, rawUrl: `${base}/raw`, mediaUrl: part => `${base}/media?part=${encodeURIComponent(part)}`,
+    downloadUrl: `${base}/download` };
+}
+function fileKind(name: string): string {
+  const ext = name.toLowerCase().split(".").pop() ?? "";
+  return ["docx", "doc", "odt", "rtf", "pdf", "md", "txt"].includes(ext) ? "doc" : ["xlsx", "xls", "csv", "tsv", "ods"].includes(ext) ? "sheet"
+    : ["png", "jpg", "jpeg", "gif", "svg", "webp"].includes(ext) ? "image" : "other";
+}
+function fileKindLabel(name: string): string {
+  const ext = name.toLowerCase().split(".").pop() ?? "";
+  return ({ docx: "Word document", pdf: "PDF", xlsx: "Excel workbook", xls: "Excel 97-2003 workbook", ods: "OpenDocument spreadsheet", tsv: "TSV table", csv: "CSV table", md: "Markdown", txt: "Text", html: "Web page", json: "JSON", png: "Image", pptx: "PowerPoint" } as Record<string, string>)[ext] ?? `${ext.toUpperCase()} file`;
+}
+function formatBytes(bytes: number): string {
+  return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 /** The agent asked for a secret: typed here, sealed on the server, never shown to the model or kept in the chat. */
 function secretCard(msg: ChatMessage): HTMLLIElement {
@@ -463,6 +528,7 @@ function rewindButton(msg: ChatMessage): HTMLButtonElement {
 function renderMessage(msg: ChatMessage): HTMLLIElement | null {
   if (QUIET_KINDS.has(msg.kind)) return quietStep(msg);
   if (msg.kind === "attachments") { lastRole = "user"; return attachmentCard(msg); }
+  if (msg.kind === "file_created") { lastRole = "assistant"; return createdFileCard(msg); }
   if (msg.kind === "confirmation_requested") { lastRole = "system"; return confirmationCard(msg); }
   if (msg.kind === "secret_requested") { lastRole = "system"; return secretCard(msg); }
   if (msg.kind === "secret_answered") {
@@ -1722,9 +1788,10 @@ async function showDocViewer(path: string, kind: DocKind): Promise<void> {
   askDrawer.reset();
   if (kind === "pdf") { docViewer.pdf(view, make, path); return; }
   try {
-    const data = await api<Record<string, unknown>>(`/api/files/doc?path=${encodeURIComponent(path)}`);
-    if (kind === "docx") docViewer.word(view, make, data);
-    else if (kind === "pptx") docViewer.slides(view, make, data);
+    const data = await api<Record<string, unknown>>(`/api/files/doc?path=${encodeURIComponent(path)}&rich=1`);
+    const media = { media: (part: string) => `/api/files/doc?path=${encodeURIComponent(path)}&part=${encodeURIComponent(part)}` };
+    if (kind === "docx") docViewer.word(view, make, data, media);
+    else if (kind === "pptx") docViewer.slides(view, make, data, media);
     else docViewer.grid(view, make, data);
   } catch (error) {
     docViewer.error(view, make, error instanceof Error ? error.message : "This document could not be read.");
@@ -1959,7 +2026,7 @@ function newTask(): void {
   viewEpoch++;
   selected = null; watching = false; reviewTask = null; reviewKey = ""; selectedState = "";
   resetConversation();
-  el("chat-title").textContent = "New task";
+  el("chat-title").textContent = isChat() ? "New chat" : "New task";
   setTitle("");
   setState("");
   markCurrent();
@@ -2182,7 +2249,9 @@ function renderHistory(): void {
   const filtering = (select("task-sort").value || "recent") !== "recent" || (select("task-since").value || "0") !== "0" || (select("task-scope").value || "all") !== "all";
   el("list-tools").hidden = !filtersOpen && !filtering;
   el("filter-toggle").setAttribute("aria-pressed", String(filtersOpen || filtering));
-  const view = organiseTasks(lastTasks, {
+  const chatTab = isChat();
+  const listed = lastTasks.filter(task => isChatConversation(task) === chatTab);
+  const view = organiseTasks(listed, {
     query, tag: activeTag, sort: (select("task-sort").value || "recent") as TaskSort, sinceDays: Number(select("task-since").value) || 0,
     showArchived, selected, now: Date.now() / 1000, scope: (select("task-scope").value || "all") as TaskScope,
   });
@@ -2229,7 +2298,8 @@ function renderHistory(): void {
     older.onclick = () => { select("task-since").value = "0"; renderHistory(); };
     nodes.push(older);
   }
-  if (!nodes.length) nodes.push(make("div", "conv-empty", query || activeTag ? "No matching tasks" : "No tasks yet"));
+  if (!nodes.length) nodes.push(make("div", "conv-empty", query || activeTag ? (chatTab ? "No matching chats" : "No matching tasks")
+    : chatTab ? "No chats yet. Ask anything — attach a document, a dataset or a PDF." : "No tasks yet in this project"));
   el("history").replaceChildren(...nodes);
   renderWelcomeRecent();
   el("recent-head").hidden = byDate || view.pinned.length > 0 || view.folders.length > 0;
@@ -2254,7 +2324,7 @@ async function loadHistory(): Promise<void> {
 /** The welcome screen's "Pick up where you left off": the latest few conversations. */
 function renderWelcomeRecent(): void {
   const now = Date.now() / 1000;
-  const recent = lastTasks.filter(task => !task.session && !task.archived)
+  const recent = lastTasks.filter(task => !task.session && !task.archived && isChatConversation(task) === isChat())
     .sort((a, b) => (b.updated ?? b.created ?? 0) - (a.updated ?? a.created ?? 0)).slice(0, 4);
   el("welcome-recent-section").hidden = recent.length === 0;
   el("welcome-recent").replaceChildren(...recent.map(task => {
@@ -2474,6 +2544,9 @@ async function observe(force = false): Promise<void> {
       if (task.request.mode === 'plan') select('mode').value = 'plan';
       else if (select('mode').value === 'plan') select('mode').value = 'agent';
       observedTaskMode = task.request.mode || 'unknown'; syncMode(); syncComposer();
+      // Opening a conversation shows its own tab (a chat from search, a notification or a link).
+      const openKind = task.request.mode === 'chat' ? 'chat' : 'code';
+      if (openKind !== conversationMode.kind()) conversationMode.set(openKind, false); else applyConversationMode();
     }
     renderTerminal();
     autoOpenBrowser(liveEvents);
@@ -3051,6 +3124,13 @@ el('draft-conflict').addEventListener('toggle', autosize);
 // --- Chat vs Code: state and selector wiring live in ./conversation-mode ------------
 const conversationMode = createConversationMode({
   select, input, el, setClass, applyRunMode, syncComposer, newTask, message,
+  selectedKind: () => {
+    if (!selected) return null;
+    if (observedTaskMode) return observedTaskMode === 'chat' ? 'chat' : 'code';
+    const summary = lastTasks.find(task => task.id === selected);
+    return summary && isChatConversation(summary) ? 'chat' : 'code';
+  },
+  refresh: () => { renderHistory(); refreshWelcomeSuggestions(); if (!selected) el("chat-title").textContent = conversationMode.isChat() ? "New chat" : "New task"; },
 });
 const isChat = conversationMode.isChat;
 function setOptions(open: boolean): void {
@@ -3132,7 +3212,7 @@ function refreshWelcomeSuggestions(): void {
   const container = document.getElementById("welcome-suggestions");
   if (!container) return;
   const facts = factsFromFiles(projectName, projectFiles, lastPythonTests);
-  const suggestions = suggestionsFor(facts);
+  const suggestions = isChat() ? chatSuggestions() : suggestionsFor(facts);
   renderSuggestions(container, suggestions, prompt => {
     textarea("objective").value = prompt;
     composerDrafts.update(textarea('objective').value);
@@ -3659,6 +3739,12 @@ async function loadAppSettings(): Promise<void> {
   }));
   picker.value = settings.title_model ?? "auto";
   if (picker.value !== (settings.title_model ?? "auto")) picker.value = "auto";  // its profile was deleted
+  const imagePicker = select("image-model");
+  imagePicker.replaceChildren(...[["auto", "Automatic — a configured model that can see"], ["off", "On-device text only (OCR)"], ...profiles.map(p => [p.id, `${p.name} (${p.model})`])].map(([value, label]) => {
+    const option = make("option", "", label); option.value = value ?? ""; return option;
+  }));
+  imagePicker.value = (settings as { image_model?: string }).image_model ?? "auto";
+  if (imagePicker.value !== ((settings as { image_model?: string }).image_model ?? "auto")) imagePicker.value = "auto";
 }
 /** Save is enabled only while the fields differ from what is stored. */
 function syncGitSave(): void {
@@ -3699,7 +3785,7 @@ globalThis.addEventListener?.("dikdik-open-notification", event => {
       await composerDrafts.flush();
       if (composerDrafts.hasUnsaved()) { message("Save or resolve your draft before opening this notification.", true); return; }
       const projects = await api<{ current: { path: string } }>("/api/projects");
-      if (projects.current.path !== detail.project) {
+      if (detail.project !== "chat:" && projects.current.path !== detail.project) {
         await request("/api/projects/open", "POST", { path: detail.project });
         globalThis.location.assign(`${globalThis.location.pathname}?task=${encodeURIComponent(String(detail.task))}`);
       } else selectTask(String(detail.task));
@@ -4054,6 +4140,7 @@ el("git-identity").addEventListener("submit", event => {
 input("git-name").addEventListener("input", syncGitSave);
 input("git-email").addEventListener("input", syncGitSave);
 select("title-model").addEventListener("change", () => { void saveAppSetting({ title_model: select("title-model").value }); });
+select("image-model").addEventListener("change", () => { void saveAppSetting({ image_model: select("image-model").value }); });
 /** After the first finished turn of an untitled conversation, ask the server for a short title once. */
 function maybeTitle(task: string, state: string): void {
   if (state !== "completed" || titled.has(task)) return;

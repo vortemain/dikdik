@@ -198,6 +198,8 @@ export interface TaskSummary {
   objective?: string; title?: string; created?: number; updated?: number;
   pinned?: boolean; archived?: boolean; mode?: string;
   folder?: string; tags?: string[];
+  /** "chat" for conversations that belong to no project (listed from every project). */
+  scope?: string;
   /** A terminal or browser session opened from a panel; not a conversation. */
   session?: string;
 }
@@ -635,6 +637,10 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [];
     case 'draft':
       return [];
+    case "file_created":
+      return typeof d.path === "string" && d.path
+        ? [{ ...base, role: "assistant", title: "Created a file", details: { path: textOf(d.path, 500), bytes: numOrUndef(d.bytes) } }]
+        : [];
     case "attachments": {
       const files = attachmentList(d.files);
       return files.length ? [{ id: `user-${seq}`, role: "user", time, kind, title: "Attachments", details: files }] : [];

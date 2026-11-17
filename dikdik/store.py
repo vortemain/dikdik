@@ -14,7 +14,11 @@ from .migrations import migrate
 
 
 TAG = re.compile(r"[\w][\w -]{0,31}")
-WORKSPACE_CLAUSES = frozenset({"1=1", "workspace=?", "t.workspace=?"})  # everything _mine() can return
+WORKSPACE_CLAUSES = frozenset({"1=1", "workspace=?", "t.workspace=?", "(workspace=? OR workspace=?)",
+                               "(t.workspace=? OR t.workspace=?)"})  # everything _mine() can return
+# Chat conversations belong to no project: they are stored under this scope and are
+# listed from every project, like conversations on claude.ai.
+CHAT_SCOPE = "chat:"
 TASK_TABLES = ("bash_events", "browser_snapshots", "task_progress", "requirements")
 
 
@@ -119,7 +123,7 @@ class Store:
         """SQL condition (and its parameter) limiting tasks to the bound project."""
         if self.workspace is None:
             return "1=1", ()
-        return f"{alias}workspace=?", (self.workspace,)
+        return f"({alias}workspace=? OR {alias}workspace=?)", (self.workspace, CHAT_SCOPE)
 
     def _owned(self, db, task):
         where, params = self._mine()
@@ -139,7 +143,7 @@ class Store:
         task = uuid.uuid4().hex
         with self.connect() as db:
             db.execute("INSERT INTO tasks(id,created,state,request,workspace) VALUES(?,?,?,?,?)",
-                       (task, time.time(), "queued", json.dumps(request), self.workspace))
+                       (task, time.time(), "queued", json.dumps(request), CHAT_SCOPE if request.get("mode") == "chat" else self.workspace))
             db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, time.time(), "queued", json.dumps({"objective": request["objective"]})))
         return task
 
@@ -189,7 +193,7 @@ class Store:
         with self.connect() as db:
             tasks = []
             where, params = self._mine()
-            rows = db.execute("SELECT id,created,state,request,title,pinned,archived,folder,tags,"
+            rows = db.execute("SELECT id,created,state,request,title,pinned,archived,folder,tags,workspace,"
                               "(SELECT MAX(time) FROM events WHERE task_id=tasks.id) AS updated "
                               f"FROM tasks WHERE {sql.clause(where, WORKSPACE_CLAUSES)} ORDER BY pinned DESC, updated DESC LIMIT 500", params)
             for row in rows:
@@ -198,6 +202,7 @@ class Store:
                 tasks.append({"id": row["id"], "created": row["created"], "updated": row["updated"] or row["created"],
                               "state": row["state"], "objective": str(request.get("objective", ""))[:200],
                               "title": row["title"] or "", "mode": request.get("mode"),
+                              **({"scope": "chat"} if row["workspace"] == CHAT_SCOPE else {}),
                               "pinned": bool(row["pinned"]), "archived": bool(row["archived"]),
                               "folder": row["folder"] or "", "tags": json.loads(row["tags"]) if row["tags"] else [],
                               **({"session": session} if (session := _session_kind(request)) else {})})

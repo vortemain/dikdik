@@ -693,7 +693,7 @@ class ControlTests(unittest.TestCase):
 
     # --- settings -------------------------------------------------------------------------------------
     def test_app_settings(self):
-        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": True, "notifications": "background", "notification_previews": False, "router": "", "title_model": "auto", "event_retention_seconds": 0, "permission_rules": [], "formatter": {"enabled": False, "command": ""}, "warming": {"enabled": False, "interval_seconds": 240, "duration_seconds": 1800}, "local_limits": {"memory_mb": 8192, "processes": 1024}})
+        self.assertEqual(self.engine.app_settings(), {"confirmation": "never", "condenser": True, "git_name": "", "git_email": "", "sounds": True, "notifications": "background", "notification_previews": False, "router": "", "title_model": "auto", "image_model": "auto", "event_retention_seconds": 0, "permission_rules": [], "formatter": {"enabled": False, "command": ""}, "warming": {"enabled": False, "interval_seconds": 240, "duration_seconds": 1800}, "local_limits": {"memory_mb": 8192, "processes": 1024}})
         self.assertEqual(self.engine.update_app_settings({"confirmation": "risky"})["confirmation"], "risky")
         for bad in ({"confirmation": "sometimes"}, {"condenser": "yes"}, {"theme": "dark"}, {}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):

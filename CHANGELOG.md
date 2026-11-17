@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.5.0 — 2026-11-17
+
+Preview documents inside Dikdik:
+- Files a chat creates and files you attach open in a large preview: Word documents
+  as formatted pages (bold/italic, alignment, numbered lists, tables, footnotes,
+  embedded pictures, and charts drawn from their own data), spreadsheets as full
+  grids with sheet tabs, slides with their pictures, PDFs and images in the
+  browser's own viewers. Download, or Open in Word/Excel on this computer.
+- The workspace document reader uses the same rich rendering.
+- Spreadsheets and CSV/TSV files open in a real spreadsheet view on every screen:
+  column letters and row numbers that stay put while you scroll, a frozen header row,
+  numbers aligned right, a cell bar showing the full value of the selected cell,
+  search, and sheet tabs. (Before, wide sheets squeezed every column to one letter.)
+- Legacy Excel 97-2003 workbooks (.xls) are read too — text, numbers, dates, formula
+  results, booleans and errors — for previews, `read_document` and `statistics`.
+
+Images work with every model, including text-only ones:
+- Text in images is read on this computer with the OCR built into Windows (or
+  Tesseract on macOS/Linux) — nothing to install on Windows.
+- If any configured model can see images, it describes tables, charts and
+  screenshots for the conversation's model (Settings → General → Read images with).
+- When a model refuses images, each image becomes that text reading instead of
+  being dropped, and the model is remembered so later turns skip the failed request.
+- New `read_image` tool: images, pictures inside Word/PowerPoint/Excel files, and
+  scanned PDF pages. `read_document` OCRs scanned PDFs automatically.
+
+Chats belong to no project:
+- The sidebar opens on two clear tabs, **Chat** and **Code**. A new chat starts
+  straight away — no project to pick — and the Chat tab lists only chats (from any
+  project); the Code tab shows the project picker and that project's tasks.
+- Each chat has its own private folder. Attachments are saved there under their real
+  names, and files the chat creates appear in the conversation as download cards
+  with "Show in folder".
+
+Documents and research:
+- Fixed: attached Word, Excel and PDF files reached the model as "could not read"
+  (they were stored without an extension, so no reader was chosen). Spreadsheets were
+  also cut to 40 columns; the model now sees every column and row.
+- New `read_document` tool: the full text of Word, PDF, Excel, PowerPoint,
+  OpenDocument, RTF, EPUB and HTML files, paged, with an outline and phrase search.
+  PDFs are decoded with their own font maps (Word/LaTeX exports, compressed object
+  streams); scanned PDFs are reported as needing OCR instead of returning noise.
+- New `statistics` tool: frequencies, descriptives, Likert summaries with composite
+  scores and Cronbach's alpha, crosstabs with chi-square/Cramér's V/Fisher, t-test,
+  Mann-Whitney, ANOVA, Kruskal-Wallis, Pearson/Spearman, and linear or logistic
+  regression. Answers like "4 = Agree" or "Strongly agree" are coded automatically.
+  Results match SciPy and statsmodels.
+- New `create_document` tool: real Word files from Markdown (title page, table of
+  contents, captions, tables, page numbers and native, editable Word charts), Excel
+  workbooks, and text formats.
+- The chat prompt now works like a careful researcher: every number comes from a
+  tool or a cited source, full test reporting (statistic, df, p, effect size), and
+  complete deliverables instead of asking the user to paste their files.
+
 ## 0.4.0 — 2026-11-17
 
 Chat mode — a new way to use Dikdik:

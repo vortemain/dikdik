@@ -144,6 +144,48 @@ export function suggestionsFor(facts: ProjectFacts): Suggestion[] {
   return tips.slice(0, 6);
 }
 
+/** Starting points for a chat: no project involved, so they are about the user's own work. */
+export function chatSuggestions(): Suggestion[] {
+  return [
+    {
+      prompt: "I'm attaching my survey data and my research proposal. Analyze the data against my objectives and write the results and discussion chapters as a Word document.",
+      label: "Analyze my research data",
+      iconId: "chart",
+      hint: "survey · thesis · stats",
+    },
+    {
+      prompt: "Read the attached document and give me a structured summary: purpose, key arguments, evidence, and weaknesses.",
+      label: "Summarize a document",
+      iconId: "file",
+      hint: "Word · PDF · Excel",
+    },
+    {
+      prompt: "Research the latest evidence on this topic, compare the main sources, and cite them: ",
+      label: "Research a topic",
+      iconId: "search",
+      hint: "web + sources",
+    },
+    {
+      prompt: "Explain this concept step by step, with a worked example, as if I'm a student meeting it for the first time: ",
+      label: "Explain a concept",
+      iconId: "book",
+      hint: "science · maths · stats",
+    },
+    {
+      prompt: "Write a well-structured report on the following, as a Word document with headings, tables and references: ",
+      label: "Write a report",
+      iconId: "pencil",
+      hint: ".docx deliverable",
+    },
+    {
+      prompt: "Which statistical test should I use for my study? Here is my design and my variables: ",
+      label: "Choose a statistical test",
+      iconId: "target",
+      hint: "methods advice",
+    },
+  ];
+}
+
 /** Render suggestions into a container. Each is a pill with an icon + label + hint. */
 export function renderSuggestions(container: HTMLElement, suggestions: Suggestion[], onPick: (prompt: string) => void): void {
   container.replaceChildren();

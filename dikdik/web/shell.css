@@ -68,6 +68,19 @@
 .sidebar-head .new-task:hover:not(:disabled) { background: var(--surface-2); border-color: var(--line-strong); }
 .sidebar-head .new-task kbd { margin-left: auto; opacity: 0; transition: opacity .12s; }
 .sidebar-head .new-task:hover kbd, .sidebar-head .new-task:focus-visible kbd { opacity: 1; }
+.sidebar-head .new-task .i { color: var(--accent); }
+
+/* Chat / Code: two equal tabs at the top of the sidebar. The open one reads as a raised card. */
+.mode-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; margin-bottom: 4px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-3); }
+.mode-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 32px; margin: 0; padding: 0 10px;
+  border: 0; border-radius: 8px; background: transparent; box-shadow: none; color: var(--muted); font-size: 13.5px; font-weight: 500; transition: background .12s, color .12s; }
+.mode-tabs button .i { width: 16px; height: 16px; flex: 0 0 auto; }
+.mode-tabs button:hover:not([aria-pressed="true"]) { background: var(--hover); color: var(--ink); }
+.mode-tabs button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgb(0 0 0 / .08), 0 0 0 1px var(--line); }
+.mode-tabs button[aria-pressed="true"] .i { color: var(--accent); }
+.mode-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Hidden project controls in Chat stay hidden even where a class sets display. */
+.sidebar-head [hidden], .topbar-title [hidden], .welcome-project[hidden] { display: none !important; }
 .task-search-row { display: flex; align-items: center; gap: 2px; }
 .task-search-row .task-search { flex: 1 1 auto; margin: 0; }
 .task-search-row .task-search input { height: 32px; padding: 0 10px 0 32px; border-color: transparent; background: transparent; font-size: 13.5px; }
