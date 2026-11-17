@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 
 from .agent import ToolCall, _tool
+from .docextract import attachment_text
 from .providers import chat_completion
 from . import migrations
 
@@ -435,9 +436,13 @@ def judge(config, goal: str, history: list[dict]) -> dict:
 
 
 # --- attachments --------------------------------------------------------------------------
-ATTACHMENT_LIMIT = 3 * 1024 * 1024
+ATTACHMENT_LIMIT = 10 * 1024 * 1024
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 TEXT_INLINE_LIMIT = 64 * 1024
+# Workspace preview images stay bounded for the Files pane; attachments can be larger documents.
+WORKSPACE_IMAGE_LIMIT = 3 * 1024 * 1024
+# Documents the model cannot read as raw bytes: their extracted text is inlined instead.
+DOCUMENT_SUFFIXES = {".docx", ".xlsx", ".pptx", ".pdf"}
 
 
 class Attachments:
@@ -464,7 +469,7 @@ class Attachments:
         if raw is None:
             raise ValueError("Attachment data must be base64")
         if not raw or len(raw) > ATTACHMENT_LIMIT:
-            raise ValueError("Attachments must be 1 byte to 3 MB")
+            raise ValueError("Attachments must be 1 byte to 10 MB")
         if kind in IMAGE_TYPES and not _looks_like_image(raw, kind):
             raise ValueError("That file is not the image type it claims to be")
         attachment_id = uuid.uuid4().hex
@@ -496,10 +501,16 @@ class Attachments:
                 raise ValueError("An attachment is missing; attach it again") from None
             total += row["size"]
             if total > ATTACHMENT_LIMIT:
-                raise ValueError("Attachments total more than 3 MB")
+                raise ValueError("Attachments total more than 10 MB")
             meta.append({k: row[k] for k in ("id", "name", "type", "size")})
             if row["type"] in IMAGE_TYPES:
                 images.append(f"data:{row['type']};base64,{base64.b64encode(raw).decode()}")
+                continue
+            if Path(row["name"]).suffix.lower() in DOCUMENT_SUFFIXES:
+                extracted = attachment_text(self.folder / attachment_id, row["type"])
+                clipped = extracted[:TEXT_INLINE_LIMIT]
+                texts.append(f"\n\nAttached document `{row['name']}` (untrusted extracted text):\n```\n{clipped}\n```"
+                             + ("\n(truncated)" if len(extracted) > TEXT_INLINE_LIMIT else ""))
                 continue
             try:
                 text = raw.decode("utf-8")
@@ -535,7 +546,7 @@ def workspace_images(root: Path, limit: int = 500) -> list[str]:
                     walk(Path(entry.path), depth + 1)
             elif Path(entry.name).suffix.lower() in IMAGE_SUFFIXES:
                 try:
-                    if entry.stat(follow_symlinks=False).st_size <= ATTACHMENT_LIMIT:
+                    if entry.stat(follow_symlinks=False).st_size <= WORKSPACE_IMAGE_LIMIT:
                         found.append(Path(entry.path).resolve().relative_to(base).as_posix())
                 except (OSError, ValueError):
                     continue
@@ -555,7 +566,7 @@ def workspace_image(root: Path, path) -> tuple[str, bytes]:
     if kind is None or target.is_symlink() or any(part.startswith(".") for part in Path(path).parts):
         raise KeyError(path)
     resolved = target.resolve()
-    if root.resolve() not in resolved.parents or not resolved.is_file() or resolved.stat().st_size > ATTACHMENT_LIMIT:
+    if root.resolve() not in resolved.parents or not resolved.is_file() or resolved.stat().st_size > WORKSPACE_IMAGE_LIMIT:
         raise KeyError(path)
     raw = resolved.read_bytes()
     if not _looks_like_image(raw, kind):

@@ -352,6 +352,7 @@ class ServerApiTests(unittest.TestCase):
         status, body = self.anonymous("/api/pair", {})
         self.assertEqual(status, 401)
         self.assertNotIn("code", body)
+        # An API key must not escalate to the owner token, even in local mode.
         status, body = self.call("POST", "/api/keys", {"name": "ops", "scopes": ["admin"]})
         key = json.loads(body)["token"]
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)

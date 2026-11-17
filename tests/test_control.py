@@ -659,7 +659,7 @@ class ControlTests(unittest.TestCase):
         text = self.engine.attachments.add({"name": "notes.txt", "type": "text/plain", "data": base64.b64encode(b"Use integers only.").decode()})
         image = self.engine.attachments.add({"name": "screen.png", "type": "image/png", "data": base64.b64encode(PNG).decode()})
         for bad in ({"name": "../x", "type": "text/plain", "data": "eA=="}, {"name": "a.png", "type": "image/png", "data": base64.b64encode(b"not png").decode()},
-                    {"name": "a", "type": "text/plain", "data": "!!"}, {"name": "big", "type": "text/plain", "data": base64.b64encode(b"x" * (3 * 1024 * 1024 + 1)).decode()}):
+                    {"name": "a", "type": "text/plain", "data": "!!"}, {"name": "big", "type": "text/plain", "data": base64.b64encode(b"x" * (10 * 1024 * 1024 + 1)).decode()}):
             with self.subTest(bad=bad["name"]), self.assertRaises(ValueError):
                 self.engine.attachments.add(bad)
         model = Script([ModelResponse("Seen.", [])])

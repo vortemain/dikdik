@@ -27,7 +27,7 @@ from .engine import ApplyConflict, Engine, TERMINAL
 from .store import WORKSPACE_CLAUSES
 from . import __version__ as DIKDIK_VERSION
 from .control import IMAGE_TYPES, workspace_image, workspace_images
-from . import gitops
+from . import docextract, gitops
 from .repository import INDEXER, approved_root, inventory, metadata, workspace_metadata
 from .server_routes import ROUTE_PREFIXES, build_routes
 from .gateway import Gateway
@@ -187,7 +187,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
         def log_message(self, format, *args):
             pass  # Never log authorization, objectives or repository contents.
 
-        def reply(self, status, data, mime="application/json", cookie=None, csp=PAGE_CSP):
+        def reply(self, status, data, mime="application/json", cookie=None, csp=PAGE_CSP, inline=False):
             body = json.dumps(data).encode() if mime == "application/json" else data
             self.send_response(status)
             if cookie:
@@ -196,6 +196,9 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            if inline:
+                # Present rather than download (the PDF/media reader needs this).
+                self.send_header("Content-Disposition", "inline")
             self.send_header("Content-Security-Policy", csp)
             self.end_headers()
             self.wfile.write(body)
@@ -742,6 +745,30 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                         raise KeyError(rel)
                     raw = target.read_bytes()
                     self.reply(200, raw, "application/octet-stream")
+                elif path == "/api/files/raw":
+                    # Serve a workspace file with its real content type so the
+                    # browser's own readers (PDF, media) can present it.
+                    import mimetypes
+                    query = parse_qs(urlsplit(self.path).query)
+                    rel = query.get("path", [""])[0]
+                    target = workspace_path(engine.root, rel)
+                    if not target.is_file():
+                        raise KeyError(rel)
+                    kind, _ = mimetypes.guess_type(target.name)
+                    if not kind:
+                        kind = "application/octet-stream"
+                    raw = target.read_bytes()
+                    self.reply(200, raw, kind, inline=True)
+                elif path == "/api/files/doc":
+                    # Structured view of a document (docx/xlsx/pptx/pdf/csv).
+                    query = parse_qs(urlsplit(self.path).query)
+                    rel = query.get("path", [""])[0]
+                    target = workspace_path(engine.root, rel)
+                    if not target.is_file():
+                        raise KeyError(rel)
+                    if target.stat().st_size > 24 * 1024 * 1024:
+                        raise ValueError("The document is too large to read in the viewer.")
+                    self.reply(200, docextract.extract(target))
                 elif path == "/api/files/list":
                     query = parse_qs(urlsplit(self.path).query)
                     rel = query.get("path", [""])[0] or "."
@@ -822,6 +849,16 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if self.same_origin():
                     self.session_request()
                 return
+            if path == "/api/session/local":
+                # Local mode only: auto-sign-in so the user never pastes a token.
+                # CSRF is blocked by same_origin(); remote mode is refused (use /api/session).
+                if self.same_origin() and not remote:
+                    session_token_value = expected.decode("utf-8").removeprefix("Bearer ")
+                    cookie = f"{self.cookie_name}={session_token_value}; Path=/; Max-Age={SESSION_AGE}; HttpOnly; SameSite=Strict"
+                    self.reply(200, {"signed_in": True}, cookie=cookie)
+                else:
+                    self.reply(403, {"error": "Local sign-in is only available on a local server"})
+                return
             if path == "/api/pair/verify":
                 if self.same_origin():
                     self.pair_verify()
@@ -832,7 +869,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if self.headers.get("Transfer-Encoding"):
                     raise ValueError("Chunked requests unsupported")
                 length = int(self.headers.get("Content-Length", "0"))
-                limit = 4_400_000 if path == "/api/attachments" else 262144  # 3 MB of files, base64-encoded
+                limit = 14_000_000 if path == "/api/attachments" else 262144  # 10 MB of files, base64-encoded
                 if length > limit:
                     raise ValueError(f"Request must contain at most {limit} bytes")
                 body = json.loads(self.rfile.read(length)) if length else {}
@@ -1083,6 +1120,8 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                         self.reply(200, engine.condense(task, body.get("approve_external")))
                     elif action == "fork":
                         self.reply(201, engine.fork(task, body))
+                    elif action == "rewind":
+                        self.reply(200, engine.rewind(task, body))
                     elif action == "secret":
                         self.reply(200, {"answered": engine.answer_secret(task, body)})
                     elif action == "question":
@@ -1370,9 +1409,14 @@ def main(*, desktop: bool = False):
     logs.log("server_started", version=DIKDIK_VERSION, port=server.server_port, remote=bool(remote), indexer=INDEXER)
     # The token rides in the URL fragment, which browsers never send to a server.
     link = f"{url}/#token={token}"
-    print(f"Dikdik is running at {url}\nProject: {root}"
-          + (f"\n{note}" if note else "")
-          + f"\nSign-in link (needed once per browser): {link}", flush=True)
+    if remote:
+        print(f"Dikdik is running at {url}\nProject: {root}"
+              + (f"\n{note}" if note else "")
+              + f"\nSign-in link (needed once per browser): {link}", flush=True)
+    else:
+        print(f"Dikdik is running at {url}\nProject: {root}"
+              + (f"\n{note}" if note else "")
+              + f"\nOpen this in your browser: {link}", flush=True)
     if not args.no_browser and not remote and not args.desktop:
         webbrowser.open(link)
     try:

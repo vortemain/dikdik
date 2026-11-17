@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.4.0 — 2026-11-17
+
+Chat mode — a new way to use Dikdik:
+- A Chat / Code selector in the sidebar switches between agentic coding (edits,
+  commands, tests) and research conversations (web research, data analysis, file
+  creation, diagrams). Chat mode can read and create files, analyze data tables,
+  research the web with sources, and — with explicit approval — run shell commands
+  for data work. Each command needs your approval, the same as code mode.
+- The chat agent has a rigorous, education-aware system prompt: it detects whether
+  you're a student, researcher, or developer and adjusts depth accordingly. It
+  explains concepts step by step, cites sources as plain URLs, distinguishes
+  reasoning from estimates, and creates files (notes, analysis, documentation)
+  when they would help.
+
+Document viewers:
+- Dikdik now renders PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx), CSV
+  and TSV files in the editor with a real document viewer — not raw text. PDF
+  opens in a same-origin iframe; Word shows headings, paragraphs and tables;
+  Excel and CSV show a grid with sheet tabs; PowerPoint shows slide cards.
+  A new stdlib-only `docextract.py` extracts text from these formats.
+
+Ask about a file:
+- A side drawer under any open file lets you ask questions about it. If a
+  conversation is open, it's a side question answered from that conversation;
+  if none is open, a chat conversation carries the Q&A. Selected text is
+  included as context.
+
+Rewind:
+- Rewind any conversation to just before one of your messages. The message and
+  everything after it is removed; your files are untouched. A "Conversation
+  rewound" note marks where the conversation was rewound.
+
+Mermaid diagrams:
+- ```` ```mermaid ```` code blocks in agent responses render as professional SVG
+  flowcharts and sequence diagrams — no dependencies, pure vanilla TypeScript.
+
+Adaptive welcome:
+- The welcome screen rotates through greetings in French and English and shows
+  context-aware suggestions that adapt to the workspace (data files → "Analyze
+  my data", tests → "Review my tests", markdown → "Explain this project").
+
+Local sign-in:
+- Opening Dikdik on your own computer no longer shows the "paste a sign-in
+  token" page. The browser auto-signs-in via a CSRF-protected local endpoint;
+  the token is still required for remote deployments.
+
+Attachments:
+- The 3 MB attachment limit is now 10 MB. Document attachments (.docx, .xlsx,
+  .pptx, .pdf, .csv) have their text extracted and inlined for the model instead
+  of being skipped as binary. The file-type restriction on the attach input
+  was removed — any file type can be attached.
+
+Module split:
+- `app.ts` was split from ~5000 lines into 8 focused modules: `dom.ts`,
+  `code-render.ts`, `chat-widgets.ts`, `doc-viewer.ts`, `ask-drawer.ts`,
+  `conversation-mode.ts`, `welcome.ts`, `mermaid.ts`.
+
+Thinking fold:
+- Agent noise ("inspected files", "using skills", "model routed", "thinking")
+  is collapsed into a single "Thinking" block instead of cluttering the
+  conversation.
+
+Statistical analysis:
+- `analyze_data` tool: CSV/TSV/JSON/XLSX statistics (counts, means, medians,
+  standard deviation, quartiles, group-by aggregates, Pearson correlations).
+
+Web cards:
+- `web_fetch` and `web_search` results render as rich cards with source chips,
+  page titles, metadata and extracted text — not raw JSON.
+
 ## 0.3.8 — 2026-11-12
 
 Browser:

@@ -1,6 +1,6 @@
 import { terminalRuns, type TerminalRun } from "./terminal-format";
 
-export type Mode = "offline" | "model" | "agent" | "plan";
+export type Mode = "offline" | "model" | "agent" | "plan" | "chat";
 export type Verification = "syntax" | "local";
 export interface Edit { path: string; before: string; after: string }
 export interface TaskRequest {
@@ -218,14 +218,14 @@ export function modePolicy(mode: Mode, verification: Verification) {
   return {
     showEdits: mode === "offline",
     requiresExternal: mode !== "offline",
-    // Working directly in the folder on this computer is an agent-mode feature.
-    verification: mode === 'plan' || (verification === "local" && mode !== "agent") ? 'syntax' as const : verification,
+    // Chat and plan are read-only conversations; they never lock or need execution.
+    verification: mode === 'plan' || mode === "chat" || (verification === "local" && mode !== "agent") ? 'syntax' as const : verification,
     locksVerification: mode === 'plan',
-    requiresExecution: mode !== 'plan' && verification === "local" && mode === "agent",
+    requiresExecution: mode !== 'plan' && mode !== "chat" && verification === "local" && mode === "agent",
   };
 }
 export function parseMode(value: string): Mode {
-  if (value === "offline" || value === "model" || value === "agent" || value === 'plan') return value;
+  if (value === "offline" || value === "model" || value === "agent" || value === 'plan' || value === "chat") return value;
   throw new Error("Select a supported proposal source.");
 }
 export function parseVerification(value: string): Verification {
@@ -547,7 +547,7 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
         return [{ ...base, role: "tool", kind: "agent_tool_call", title: `Tool call: ${name}`, details: typeof args === "object" && args !== null ? args : undefined }];
       }
       if (d.phase === "end") {
-        return [{ ...base, role: "tool", kind: "agent_tool_result", title: `Tool result: ${name}`, body: observationText(name, d.observation), ...(name === "web_search" ? { details: d.observation } : {}), ...(d.failed === true ? { state: "tool_failed" } : {}) }];
+        return [{ ...base, role: "tool", kind: "agent_tool_result", title: `Tool result: ${name}`, body: observationText(name, d.observation), ...(name === "web_search" || name === "web_fetch" ? { details: d.observation } : {}), ...(d.failed === true ? { state: "tool_failed" } : {}) }];
       }
       return [];
     }
@@ -661,6 +661,8 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [{ ...base, role: "system", title: "Condensed the earlier conversation", body: textOf(d.summary, 8000) }];
     case "resumed":
       return [{ ...base, role: "system", title: "Resumed", details: { from_state: textOf(d.from_state, 40) } }];
+    case "rewound":
+      return [{ ...base, role: "system", title: "Conversation rewound", body: d.title ? `Removed everything after “${textOf(d.title, 120)}”.` : "Later messages in this conversation were removed.", details: { from_seq: numOrUndef(d.from_seq) } }];
     case "pause_requested":
       return [{ ...base, role: "system", title: "Pausing after this step" }];
     case "forked":

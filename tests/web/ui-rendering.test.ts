@@ -25,24 +25,25 @@ test("sidebar task layout has spiral loading for active tasks and removes dot fo
 
 test("structured UI replaces raw JSON code blocks for tool, staff, and checklist updates", () => {
   const appTs = readFileSync("dikdik/web/app.ts", "utf8");
+  const widgetsTs = readFileSync("dikdik/web/chat-widgets.ts", "utf8");
   const css = readFileSync("dikdik/web/style.css", "utf8");
 
-  // Functions for structured UI exist
-  expect(appTs).toContain("function renderTaskChecklistWidget(");
-  expect(appTs).toContain("function renderTestChecksWidget(");
-  expect(appTs).toContain("function renderPropertiesUI(");
-  expect(appTs).toContain("function renderStructuredUI(");
-  expect(appTs).toContain("function renderOutputUI(");
-  expect(appTs).toContain("function renderEvidenceCard(");
+  // Functions for structured UI exist in chat-widgets.ts (extracted from app.ts)
+  expect(widgetsTs).toContain("function renderTaskChecklistWidget(");
+  expect(widgetsTs).toContain("function renderTestChecksWidget(");
+  expect(widgetsTs).toContain("function renderPropertiesUI(");
+  expect(widgetsTs).toContain("function renderStructuredUI(");
+  expect(widgetsTs).toContain("function renderOutputUI(");
+  expect(widgetsTs).toContain("renderEvidenceCard");
 
   // Tool results are paired through renderOutputUI instead of dumping raw JSON
-  expect(appTs).toContain("call.body.append(renderOutputUI(msg.body, name, label));");
+  expect(appTs).toContain("renderOutputUI(msg.body, name, label)");
 
   // Result card evidence uses renderEvidenceCard instead of JSON.stringify
-  expect(appTs).toContain("evidence.append(summary, renderEvidenceCard(msg.details));");
+  expect(appTs).toContain("renderEvidenceCard(msg.details)");
 
   // Confirmation card uses renderStructuredUI instead of JSON.stringify
-  expect(appTs).toContain("renderStructuredUI(args, { title: \"Arguments\" })");
+  expect(appTs).toContain("renderStructuredUI(args");
 
   // CSS includes structured component classes
   expect(css).toContain(".tracker-widget");

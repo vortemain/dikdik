@@ -10,7 +10,7 @@ import { confirmDialog, inputDialog, formDialog, showSecret } from "./dialogs";
 import { skillsPane } from "./skills-pane";
 import { pluginsPane } from "./plugins-pane";
 import { mcpPane } from "./mcp-pane";
-import { boundedFilePreview, detectLanguage, fileFacts, highlight, highlightLines, languageLabel, supportedLanguages, projectStack, type Token } from "./highlight";
+import { boundedFilePreview, detectLanguage, fileFacts, highlight, highlightLines, languageLabel, supportedLanguages, projectStack } from "./highlight";
 import { providersPane } from "./providers-pane";
 import { fileIcon, folderIcon, providerIcon, providerId, refreshFileIcons, vscodeLogo, dikdikLogo } from "./icons";
 import { fileTree, groupByDate, organiseTasks, parentFolders, parseTags, rankCommands, shortAge, splitDiff, statusKind, toolFileChanges, workspacePath, type LiveChange } from "./organise";
@@ -21,6 +21,13 @@ import { TerminalRenderer } from './terminal-render';
 import { ToolSession } from './tool-session';
 import { runningTerminalCommands } from './contracts';
 import { frameBatch } from './render-scheduler';
+import { make, icon, setClass, storageGet, storageSet, wide, clock, copyText, copyButton } from './dom';
+import { codeBlock, diffLines, tokenNodes, languageFor, looksLikeDiff, safePageLink } from './code-render';
+import { TOOL_LABELS, detailField, toolName, stepLabel, siteChip, webPageCard, renderTaskChecklistWidget, renderTestChecksWidget, renderPropertiesUI, renderStructuredUI, renderOutputUI, createChatWidgets, type StepLabel } from './chat-widgets';
+import { docKind, docViewer, DOC_KIND_LABELS, type DocKind } from './doc-viewer';
+import { createAskDrawer } from './ask-drawer';
+import { createConversationMode } from './conversation-mode';
+import { startGreeting, suggestionsFor, renderSuggestions, factsFromFiles } from './welcome';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
   const found = document.getElementById(id);
@@ -73,96 +80,11 @@ let exposedSecrets = 0;
 let pendingFolder: string | null = null;  // a new task started from a folder's "+" goes there
 const composerSize = new ComposerSize();
 
-// --- small DOM helpers ----------------------------------------------------
-function make<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text) node.textContent = text;
-  return node;
-}
-function icon(name: string): SVGSVGElement {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("class", "i"); svg.setAttribute("aria-hidden", "true");
-  const use = document.createElementNS(ns, "use");
-  use.setAttribute("href", `#i-${name}`);
-  svg.append(use);
-  return svg;
-}
-function setClass(node: HTMLElement, name: string, on: boolean): void {
-  const names = new Set((node.className || "").split(/\s+/).filter(Boolean));
-  if (on) names.add(name); else names.delete(name);
-  node.className = [...names].join(" ");
-}
-function storageGet(key: string): string | null {
-  try { return globalThis.localStorage?.getItem(key) ?? null; } catch { return null; }
-}
-function storageSet(key: string, value: string): void {
-  try { globalThis.localStorage?.setItem(key, value); } catch { /* private mode: preference just isn't remembered */ }
-}
-function wide(query: string): boolean {
-  return typeof globalThis.matchMedia === "function" && globalThis.matchMedia(query).matches;
-}
-function clock(seconds: number): string {
-  return new Date(seconds * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
+// --- small DOM helpers, clipboard, code rendering: imported from ./dom and ./code-render ---
 
-// --- copy to clipboard ----------------------------------------------------
-async function copyText(text: string, control: HTMLButtonElement): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const area = make("textarea"); area.value = text; area.className = "sr-only";
-    document.body.append(area); area.select(); document.execCommand("copy"); area.remove();
-  }
-  const label = control.querySelector("span");
-  control.replaceChildren(icon("check"), make("span", "", "Copied"));
-  setClass(control, "copied", true);
-  setTimeout(() => { control.replaceChildren(icon("copy"), label ?? make("span", "", "Copy")); setClass(control, "copied", false); }, 1600);
-}
-function copyButton(getText: () => string, label = "Copy"): HTMLButtonElement {
-  const control = make("button", "copy");
-  control.type = "button";
-  control.setAttribute("aria-label", "Copy to clipboard");
-  control.append(icon("copy"), make("span", "", label));
-  control.onclick = () => { void copyText(getText(), control); };
-  return control;
-}
+// --- copy to clipboard: imported from ./dom ---
 
-// --- code blocks and diffs --------------------------------------------------
-function languageFor(path: unknown): string {
-  return typeof path === "string" ? detectLanguage(path).lang : "";
-}
-function looksLikeDiff(text: string): boolean {
-  return /^(diff --git |--- |@@ )/m.test(text) && /^[+-]/m.test(text);
-}
-/** Diff lines as spans; joined textContent equals the input exactly. */
-function diffLines(text: string): HTMLElement[] {
-  const lines = text.split("\n");
-  return lines.map((line, index) => {
-    const kind = line.startsWith("@@") ? "hunk"
-      : /^(diff --git|index |--- |\+\+\+ |new file mode|deleted file mode)/.test(line) ? "meta"
-      : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "ctx";
-    return make("span", `dl dl-${kind}`, line + (index < lines.length - 1 ? "\n" : ""));
-  });
-}
-/** Coloured spans for highlighter tokens; plain text stays a text node. */
-function tokenNodes(tokens: Token[]): Node[] {
-  return tokens.map(([kind, value]) => kind ? make("span", `tok tok-${kind}`, value) : document.createTextNode(value));
-}
-function codeBlock(text: string, lang = "", options: { wrap?: boolean; filename?: string } = {}): HTMLElement {
-  const block = make("div", options.wrap ? "code-block wrap" : "code-block");
-  const head = make("div", "code-head");
-  const label = make("span", "code-lang", options.filename || lang || "text");
-  label.prepend(fileIcon(options.filename || `snippet.${lang}`, lang));
-  head.append(label, copyButton(() => text));
-  const pre = make("pre"), code = make("code");
-  if (lang === "diff" || (!lang && looksLikeDiff(text))) code.append(...diffLines(text));
-  else code.append(...tokenNodes(highlight(text, lang)));
-  pre.append(code);
-  block.append(head, pre);
-  return block;
-}
+// --- code blocks, diffs, rich text: pure helpers imported from ./code-render ---
 
 // Shared, DOM-only response formatting across chat and file previews.
 function richText(text: string): HTMLElement {
@@ -208,443 +130,11 @@ function responseCodeBlock(source: string, language: string): HTMLElement {
   return block;
 }
 
-// --- chat rendering -------------------------------------------------------
-interface StepLabel { icon: string; title: string; arg: string }
-const TOOL_LABELS: Record<string, [string, string, string]> = {
-  read_file: ["file", "Read", "path"],
-  list_files: ["list", "Listed files", "query"],
-  search_text: ["search", "Searched", "text"],
-  edit_file: ["pencil", "Edited", "path"],
-  create_file: ["file-plus", "Created", "path"],
-  run_tests: ["terminal", "Ran checks", ""],
-  run_command: ["terminal", "Ran", "command"],
-  finish: ["flag", "Finished", ""],
-  task_tracker: ["list", "Updated the task list", ""],
-  write_plan: ["pencil", "Wrote the plan", ""],
-  read_plan: ["book", "Read the plan", ""],
-  browse_url: ["globe", "Opened", "url"],
-  web_search: ["search", "Researched with Tavily", "query"],
-};
-function detailField(details: unknown, key: string): string {
-  if (typeof details !== "object" || details === null || !(key in details)) return "";
-  const value = (details as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : typeof value === "number" ? String(value) : "";
-}
-function toolName(msg: ChatMessage): string {
-  return (msg.title ?? "").replace(/^Tool (call|result): /, "");
-}
-function stepLabel(msg: ChatMessage): StepLabel {
-  const details = msg.details;
-  switch (msg.kind) {
-    case "agent_tool_call": {
-      const name = toolName(msg);
-      if (name.startsWith("mcp__")) {
-        const [, server = "", tool = ""] = name.split("__");
-        return { icon: "plug", title: `${server} · ${tool}`, arg: "" };
-      }
-      const known = TOOL_LABELS[name];
-      if (!known) return { icon: "terminal", title: name || "Tool", arg: "" };
-      const arg = known[2] ? detailField(details, known[2]) || detailField(details, "query") || detailField(details, "pattern") : "";
-      return { icon: known[0], title: known[1], arg };
-    }
-    case "agent_tool_result": return { icon: msg.state === "tool_failed" ? "alert" : "terminal", title: `${msg.state === "tool_failed" ? "Agent error" : "Output"} · ${toolName(msg)}`, arg: (msg.body ?? "").split("\n")[0] ?? "" };
-    case "inspected": return { icon: "folder", title: "Inspected repository", arg: detailField(details, "file_count") ? `${detailField(details, "file_count")} files` : "" };
-    case "execution": return { icon: "terminal", title: "Running tests", arg: detailField(details, "command") };
-    case "syntax": return { icon: detailField(details, "status") === "passed" ? "check" : "alert", title: msg.title ?? "Syntax check", arg: detailField(details, "status") };
-    case "agent_repair": return { icon: "refresh", title: "Repair attempt", arg: detailField(details, "reason") };
-    case "agent_started": return { icon: "sparkle", title: "Started agent", arg: "" };
-    case "agent_finished": return { icon: "flag", title: "Agent finished", arg: detailField(details, "state") };
-    case "proposal": return { icon: "pencil", title: "Proposed edits", arg: "" };
-    case "applied": return { icon: "check", title: msg.title ?? "Applied", arg: (msg.body ?? "").split("\n").join(", ") };
-    case "skills": return { icon: "book", title: "Using skills", arg: (msg.body ?? "").split("\n").join(", ") };
-    case "mcp": return { icon: "plug", title: "Connected MCP servers", arg: `${(msg.body ?? "").split("\n").join(", ")} · ${detailField(details, "tools") || 0} tools` };
-    case "cancellation_requested": return { icon: "stop", title: "Cancellation requested", arg: "" };
-    case "interrupt_requested": return { icon: "stop", title: "Stopping the current action", arg: "" };
-    case "recovery_cleanup": return { icon: "alert", title: "Recovered after restart", arg: detailField(details, "warning") };
-    case "hook_blocked": return { icon: "shield", title: "Blocked by a project hook", arg: msg.body ?? "" };
-    case "agent_thinking": return { icon: "sparkle", title: "Thinking", arg: "" };
-    case "model_routed": return { icon: "cpu", title: msg.title ?? "Routed", arg: msg.body ?? "" };
-    case "secret_answered": return { icon: "key", title: msg.title ?? "Secret", arg: "" };
-    case "critic": return { icon: msg.title === "Critic: looks done" ? "check" : "alert", title: msg.title ?? "Critic", arg: (msg.body ?? "").split("\n")[0] ?? "" };
-    case "sandbox_secrets": return { icon: "key", title: "Secrets available to commands", arg: msg.body ?? "" };
-    case "confirmation_resolved": return { icon: msg.title === "Approved" ? "check" : "x", title: `${msg.title} · ${detailField(details, "id") ? "action" : ""}`.replace(/ · $/, ""), arg: detailField(details, "reason") };
-    case "subagent": return { icon: "sparkle", title: msg.title ?? "Subagent", arg: (msg.body ?? "").split("\n")[0] ?? "" };
-    case "condensed": return { icon: "list", title: msg.title ?? "Condensed", arg: "" };
-    case "resumed": return { icon: "play", title: "Resumed", arg: detailField(details, "from_state") ? `from ${detailField(details, "from_state")}` : "" };
-    case "pause_requested": return { icon: "pause", title: "Pausing after this step", arg: "" };
-    case "forked": return { icon: "branch", title: "Forked from another conversation", arg: "" };
-    case "goal_status": return { icon: "target", title: msg.title ?? "Goal", arg: (msg.body ?? "").split("\n")[0] ?? "" };
-    case "goal_turn": return { icon: "target", title: "Next goal turn", arg: (msg.body ?? "").split("\n")[0] ?? "" };
-    default: return { icon: "terminal", title: msg.title ?? "Step", arg: "" };
-  }
-}
-function renderTaskChecklistWidget(tasks: ChecklistItem[], title?: string): HTMLElement {
-  const card = make("div", "tracker-widget");
-  const head = make("div", "tracker-header");
-  const doneCount = tasks.filter(t => t.status === "done").length;
-  head.append(
-    icon("list"),
-    make("span", "tracker-title-head", title || "Task Checklist"),
-    make("span", "tracker-badge", `${doneCount}/${tasks.length} done`)
-  );
-  card.append(head);
-  const list = make("ol", "tracker-list");
-  for (const task of tasks) {
-    const item = make("li", `tracker-item tracker-status-${task.status}`);
-    const iconWrap = make("span", "tracker-status-icon");
-    if (task.status === "done") {
-      iconWrap.append(icon("check"));
-    } else if (task.status === "in_progress") {
-      iconWrap.append(icon("spiral"));
-    }
-    const text = make("span", "tracker-title", task.title);
-    const pill = make("span", `tracker-pill pill-${task.status}`, task.status === "done" ? "Done" : task.status === "in_progress" ? "In progress" : "To do");
-    item.append(iconWrap, text, pill);
-    list.append(item);
-  }
-  card.append(list);
-  return card;
-}
-
-function renderTestChecksWidget(checks: Array<{ kind?: string; status?: string; output?: string }>): HTMLElement {
-  const card = make("div", "test-checks-card");
-  const head = make("div", "test-checks-head");
-  const allPassed = checks.every(c => c.status === "passed");
-  const unavailable = checks.some(c => c.status === "not_run") && checks.every(c => c.status === "passed" || c.status === "not_run");
-  head.append(icon(allPassed ? "check" : "alert"), make("span", "card-title", allPassed ? "All checks passed" : unavailable ? "Automated validation unavailable" : "Checks reported issues"));
-  card.append(head);
-  const list = make("div", "test-checks-list");
-  for (const c of checks) {
-    const row = make("div", `test-check-row check-${c.status || "unknown"}`);
-    const badge = make("span", `check-status-badge status-${c.status || "unknown"}`, c.status || "check");
-    const kind = make("span", "check-kind", c.kind || "test");
-    row.append(badge, kind);
-    if (c.output) {
-      const out = make("pre", "check-output", c.output);
-      row.append(out);
-    }
-    list.append(row);
-  }
-  card.append(list);
-  return card;
-}
-
-function renderPropertiesUI(obj: Record<string, unknown>, options: { title?: string } = {}): HTMLElement {
-  const card = make("div", "prop-card");
-  if (options.title) {
-    const head = make("div", "prop-head");
-    head.append(make("strong", "card-title", options.title));
-    card.append(head);
-  }
-  const table = make("div", "prop-table");
-  for (const [key, value] of Object.entries(obj)) {
-    if (value === undefined || value === null) continue;
-    const row = make("div", "prop-row");
-    const k = make("span", "prop-key", key.replace(/_/g, " "));
-    const v = make("div", "prop-val");
-    if (typeof value === "boolean") {
-      v.append(make("span", `val-badge bool-${value}`, value ? "True" : "False"));
-    } else if (typeof value === "number") {
-      v.append(make("span", "val-badge val-number", String(value)));
-    } else if (typeof value === "string") {
-      if (value.startsWith("http://") || value.startsWith("https://")) {
-        const link = safePageLink(value);
-        if (link) v.append(link); else v.append(make("span", "", value));
-      } else if (value.includes("\n") || value.length > 80) {
-        v.append(codeBlock(value, "", { wrap: true }));
-      } else {
-        v.append(make("span", "prop-text", value));
-      }
-    } else if (Array.isArray(value)) {
-      if (value.every(item => typeof item === "string" || typeof item === "number")) {
-        const chips = make("div", "step-chips");
-        for (const item of value) chips.append(make("span", "val-badge val-tag", String(item)));
-        v.append(chips);
-      } else {
-        v.append(renderStructuredUI(value));
-      }
-    } else if (typeof value === "object") {
-      v.append(renderPropertiesUI(value as Record<string, unknown>));
-    }
-    row.append(k, v);
-    table.append(row);
-  }
-  card.append(table);
-  return card;
-}
-
-function renderStructuredUI(data: unknown, options: { title?: string } = {}): HTMLElement {
-  if (data === null || data === undefined) return make("div");
-  if (typeof data === "string") {
-    const trimmed = data.trim();
-    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
-      try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        return renderStructuredUI(parsed, options);
-      } catch {
-        // Not JSON
-      }
-    }
-    return make("p", "step-text", data);
-  }
-  if (typeof data !== "object") {
-    return make("span", "val-badge", String(data));
-  }
-  if (Array.isArray(data)) {
-    if (data.length > 0 && data.every(item => typeof item === "object" && item !== null && "title" in item && "status" in item)) {
-      return renderTaskChecklistWidget(data as ChecklistItem[], options.title);
-    }
-    if (data.every(item => typeof item === "string" || typeof item === "number")) {
-      const container = make("div", "step-chips");
-      for (const item of data) {
-        container.append(make("span", "val-badge val-tag", String(item)));
-      }
-      return container;
-    }
-    const card = make("div", "step-ui-card");
-    if (options.title) card.append(make("strong", "card-title", options.title));
-    for (const item of data) {
-      card.append(renderStructuredUI(item));
-    }
-    return card;
-  }
-
-  const obj = data as Record<string, unknown>;
-  if (Array.isArray(obj.tasks) && obj.tasks.length > 0 && obj.tasks.every(item => typeof item === "object" && item !== null && "title" in item)) {
-    return renderTaskChecklistWidget(obj.tasks as ChecklistItem[], options.title);
-  }
-  if (Array.isArray(obj.checks) && obj.checks.length > 0 && obj.checks.every(c => typeof c === "object" && c !== null && "status" in c)) {
-    return renderTestChecksWidget(obj.checks as Array<{ kind?: string; status?: string; output?: string }>);
-  }
-  if (typeof obj.content === "string" && (obj.path === "PLAN.md" || options.title?.includes("Plan"))) {
-    return richText(obj.content);
-  }
-  if (typeof obj.url === "string" && !obj.command) {
-    const link = safePageLink(obj.url);
-    if (link) return link;
-  }
-  if (typeof obj.command === "string") {
-    const card = make("div", "step-ui-card");
-    card.append(codeBlock(obj.command, "bash", { wrap: true }));
-    const rest = { ...obj };
-    delete rest.command;
-    if (Object.keys(rest).length) card.append(renderPropertiesUI(rest));
-    return card;
-  }
-
-  return renderPropertiesUI(obj, options);
-}
-
-function renderOutputUI(text: string, tool: string, path = ""): HTMLElement {
-  if (tool === "read_file") {
-    return codeBlock(text, languageFor(path), path ? { filename: path } : {});
-  }
-  if (tool === "run_command") {
-    return codeBlock(text, "bash", { wrap: true });
-  }
-  const trimmed = text.trim();
-  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
-    try {
-      const parsed = JSON.parse(trimmed) as unknown;
-      return renderStructuredUI(parsed);
-    } catch {
-      // Not JSON
-    }
-  }
-  if (looksLikeDiff(text)) {
-    return codeBlock(text, "diff");
-  }
-  return codeBlock(text, "", { wrap: true });
-}
-
-function renderEvidenceCard(details: unknown): HTMLElement {
-  if (typeof details !== "object" || details === null) {
-    return make("p", "turn-note", "No evidence recorded.");
-  }
-  const d = details as Record<string, unknown>;
-  const card = make("div", "evidence-ui-card");
-
-  const grid = make("div", "evidence-grid");
-
-  if (d.tests_verified !== undefined) {
-    const stat = make("div", "evidence-stat");
-    stat.append(
-      make("span", "stat-label", "Tests verification"),
-      make("span", `verify-badge ${d.tests_verified ? "verified" : ""}`, d.tests_verified ? "Tests passed" : "Not test-verified")
-    );
-    grid.append(stat);
-  }
-  const gate = d.release_gate as { decision?: unknown; gates?: unknown } | undefined;
-  if (gate && typeof gate.decision === "string") {
-    const stat = make("div", "evidence-stat");
-    stat.append(
-      make("span", "stat-label", "Release gate"),
-      make("span", `verify-badge ${gate.decision === "APPROVED" ? "verified" : ""}`, gate.decision.replaceAll("_", " ").toLowerCase())
-    );
-    grid.append(stat);
-  }
-  if (d.direct !== undefined) {
-    const stat = make("div", "evidence-stat");
-    stat.append(
-      make("span", "stat-label", "Execution mode"),
-      make("span", "stat-value", d.direct ? "Direct workspace edits" : "Proposal for review")
-    );
-    grid.append(stat);
-  }
-  if (d.checkpoint) {
-    const stat = make("div", "evidence-stat");
-    stat.append(
-      make("span", "stat-label", "Undo checkpoint"),
-      make("span", "stat-value font-mono", String(d.checkpoint))
-    );
-    grid.append(stat);
-  }
-  if (Array.isArray(d.changed_files)) {
-    const stat = make("div", "evidence-stat");
-    stat.append(
-      make("span", "stat-label", "Files changed"),
-      make("span", "stat-value", `${d.changed_files.length} file${d.changed_files.length === 1 ? "" : "s"}`)
-    );
-    grid.append(stat);
-  }
-  if (d.tokens || d.usage) {
-    const usage = (d.usage ?? d.tokens) as Record<string, unknown>;
-    if (usage && typeof usage === "object") {
-      const stat = make("div", "evidence-stat");
-      const total = usage.total_tokens ?? usage.tokens;
-      stat.append(
-        make("span", "stat-label", "Tokens used"),
-        make("span", "stat-value", total ? Number(total).toLocaleString() : "–")
-      );
-      grid.append(stat);
-    }
-  }
-
-  if (grid.children.length) card.append(grid);
-
-  if (Array.isArray(d.checks) && d.checks.length) {
-    card.append(renderTestChecksWidget(d.checks as Array<{ kind?: string; status?: string; output?: string }>));
-  }
-
-  if (gate && Array.isArray(gate.gates) && gate.gates.length) {
-    const wrap = make("div", "evidence-files");
-    wrap.append(make("strong", "card-title", "Release gates"));
-    const list = make("ul", "gate-list");
-    for (const entry of gate.gates as Array<{ gate?: unknown; status?: unknown; detail?: unknown; views?: unknown }>) {
-      const item = make("li", "", `${String(entry.gate ?? "")}: ${String(entry.status ?? "")} — ${String(entry.detail ?? "")}`);
-      if (entry.gate === "visual" && Array.isArray(entry.views)) {
-        // Only the owner accepts a new look; the agent never updates baselines.
-        for (const view of entry.views) {
-          if (typeof view !== "string") continue;
-          const accept = make("button", "small") as HTMLButtonElement;
-          accept.type = "button";
-          accept.textContent = `Accept ${view} as baseline`;
-          accept.onclick = async () => {
-            accept.disabled = true;
-            try {
-              await api("/api/visual-baselines/accept", { view });
-              accept.textContent = `Accepted ${view}`;
-            } catch (error) { accept.disabled = false; message(error instanceof Error ? error.message : "Could not accept the baseline", true); }
-          };
-          item.append(" ", accept);
-        }
-      }
-      list.append(item);
-    }
-    wrap.append(list);
-    card.append(wrap);
-  }
-
-  if (Array.isArray(d.changed_files) && d.changed_files.length) {
-    const filesWrap = make("div", "evidence-files");
-    filesWrap.append(make("strong", "card-title", "Changed files"));
-    const fileList = make("div", "step-chips");
-    for (const f of d.changed_files) {
-      if (typeof f === "string") {
-        const chip = make("span", "val-badge val-tag");
-        chip.append(fileBadge(f), make("span", "", f));
-        fileList.append(chip);
-      }
-    }
-    filesWrap.append(fileList);
-    card.append(filesWrap);
-  }
-
-  const handled = new Set(["diff", "diff_truncated", "changed_files", "file_changes", "tests_verified", "checks", "direct", "source_modified", "checkpoint", "tokens", "usage", "release_gate"]);
-  const remaining: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(d)) {
-    if (!handled.has(k) && v !== undefined && v !== null && v !== "") {
-      remaining[k] = v;
-    }
-  }
-  if (Object.keys(remaining).length) {
-    card.append(renderPropertiesUI(remaining, { title: "Details" }));
-  }
-
-  return card;
-}
-
-function evidenceBlocks(msg: ChatMessage, path = ""): HTMLElement[] {
-  const blocks: HTMLElement[] = [];
-  const details = msg.details;
-  if (msg.kind === "agent_tool_call" && toolName(msg) === "edit_file" && detailField(details, "before")) {
-    const minus = detailField(details, "before").split("\n").map(line => "-" + line);
-    const plus = detailField(details, "after").split("\n").map(line => "+" + line);
-    blocks.push(codeBlock([`--- ${path}`, `+++ ${path}`, ...minus, ...plus].join("\n"), "diff"));
-    return blocks;
-  }
-  if (msg.kind === "agent_tool_call" && toolName(msg) === "run_command" && detailField(details, "command")) {
-    blocks.push(codeBlock(detailField(details, "command"), "bash", { wrap: true }));
-    return blocks;
-  }
-  if (msg.kind === "agent_thinking") {
-    blocks.push(make("div", "thinking-text", msg.body ?? ""));
-    return blocks;
-  }
-  if (msg.kind === "agent_tool_call" && toolName(msg) === "create_file" && detailField(details, "content")) {
-    blocks.push(codeBlock(detailField(details, "content"), languageFor(path), { filename: path }));
-    return blocks;
-  }
-  if (msg.kind === "agent_tool_call" && toolName(msg) === "task_tracker" && typeof details === "object" && details !== null && "tasks" in details) {
-    blocks.push(renderTaskChecklistWidget((details as Record<string, unknown>).tasks as ChecklistItem[]));
-    return blocks;
-  }
-  if (msg.kind === "agent_tool_call" && toolName(msg) === "write_plan" && detailField(details, "content")) {
-    blocks.push(richText(detailField(details, "content")));
-    return blocks;
-  }
-  if (msg.kind === "agent_tool_call" && toolName(msg) === "browse_url" && detailField(details, "url")) {
-    const link = safePageLink(detailField(details, "url"));
-    if (link) blocks.push(link);
-    return blocks;
-  }
-  if (msg.kind === "agent_tool_result" && toolName(msg) === "web_search" && typeof details === "object" && details !== null && "results" in details && Array.isArray((details as Record<string, unknown>).results)) {
-    const sources = (details as { results: unknown[] }).results.slice(0, 5);
-    blocks.push(make("p", "muted", "Tavily sources · untrusted web content"));
-    for (const source of sources) {
-      if (typeof source !== "object" || source === null) continue;
-      const item = source as Record<string, unknown>, link = safePageLink(item.url);
-      if (!link) continue;
-      const card = make("article", "provider-detail");
-      card.append(make("strong", "", typeof item.title === "string" ? item.title.slice(0, 300) : "Source"), link,
-        make("p", "", typeof item.content === "string" ? item.content.slice(0, 800) : ""));
-      blocks.push(card);
-    }
-    if (!sources.length) blocks.push(make("p", "muted", "No matching sources."));
-    return blocks;
-  }
-  if (msg.body) {
-    if (msg.role === "system") blocks.push(make("p", "system-notice-text", msg.body));
-    else blocks.push(renderOutputUI(msg.body, toolName(msg), path));
-  }
-  // Arguments already shown in the row's label (a path or query) would only repeat themselves.
-  const shown = new Set(["path", "query", "text", "pattern"]);
-  if (msg.kind === "agent_tool_call" && typeof details === "object" && details !== null && Object.keys(details).every(key => shown.has(key))) return blocks;
-  if (details !== undefined && details !== null && !(typeof details === "object" && Object.keys(details).length === 0)) {
-    blocks.push(renderStructuredUI(details));
-  }
-  return blocks;
-}
+// --- chat rendering: widgets and evidence blocks imported from ./chat-widgets ---
+// Created after `api` is defined (see below); the functions that use them
+// are all hoisted declarations, so the forward reference is safe at runtime.
+let renderEvidenceCard: (details: unknown) => HTMLElement;
+let evidenceBlocks: (msg: ChatMessage, path?: string) => HTMLElement[];
 function stepRow(msg: ChatMessage): { li: HTMLLIElement; body: HTMLElement } {
   const li = make("li", `msg msg-${msg.role === "system" ? "system" : "tool"} msg-${msg.kind}`);
   li.id = msg.id;
@@ -883,21 +373,7 @@ function secretCard(msg: ChatMessage): HTMLLIElement {
   else { secretCards.set(id, li); setTimeout(() => field.focus?.(), 0); }
   return li;
 }
-/** The address a browser approval wants to open, as a readable link — only if it is a real
-    public http(s) address; agent-supplied text never becomes an executable href. */
-function safePageLink(url: unknown): HTMLElement | null {
-  if (typeof url !== "string" || !url) return null;
-  let target: URL;
-  try { target = new URL(url); } catch { return null; }
-  if (target.protocol !== "https:" && target.protocol !== "http:") return null;
-  const link = make("a", "confirm-url", url);
-  link.href = target.href;
-  link.target = "_blank"; link.rel = "noopener noreferrer";
-  link.title = "Open this address in your own browser to see what it is";
-  const row = make("div", "confirm-url");
-  row.append(icon("globe"), link);
-  return row;
-}
+/** safePageLink is imported from ./code-render — used in confirmationCard and chat widgets. */
 function confirmationCard(msg: ChatMessage): HTMLLIElement {
   const d = (msg.details ?? {}) as { id?: string; tool?: string; risk?: string; reason?: string; arguments?: unknown };
   const li = make("li", "msg msg-system msg-confirm"); li.id = msg.id;
@@ -956,7 +432,36 @@ function confirmationCard(msg: ChatMessage): HTMLLIElement {
 let rendered = new Set<string>();
 let pendingCalls: { name: string; body: HTMLElement }[] = [];
 let lastRole = "";
+const QUIET_KINDS = new Set(["inspected", "skills", "model_routed", "agent_started", "agent_finished", "sandbox_secrets", "agent_thinking"]);
+function quietStep(msg: ChatMessage): HTMLLIElement {
+  const li = make("li", "msg msg-system msg-think");
+  li.id = msg.id;
+  li.dataset.quiet = "1";
+  return li;
+}
+/** Rewind: drop this message and everything after it, so the conversation can be rewritten. */
+function rewindButton(msg: ChatMessage): HTMLButtonElement {
+  const control = make("button", "copy rewind-action");
+  control.type = "button";
+  control.title = "Rewind here — removes this message and everything after it so you can write it differently. Your files are untouched.";
+  control.append(icon("refresh"), make("span", "", "Rewind"));
+  control.onclick = async () => {
+    const task = selected, seq = messageSeq(msg);
+    if (!task || seq === null) return;
+    const yes = await confirmDialog("Rewind to before this message?",
+      "This message and everything after it is removed from the conversation, so you can rewrite it. Your files are not changed.", "Rewind");
+    if (!yes) return;
+    try {
+      await api(`/api/tasks/${encodeURIComponent(task)}/rewind`, { message_seq: seq });
+      message("Rewound. The conversation now ends just before this message.");
+      if (task === selected) await observe(true);
+      void loadHistory().catch(() => undefined);
+    } catch (error) { message(error instanceof Error ? error.message : "Rewind failed", true); }
+  };
+  return control;
+}
 function renderMessage(msg: ChatMessage): HTMLLIElement | null {
+  if (QUIET_KINDS.has(msg.kind)) return quietStep(msg);
   if (msg.kind === "attachments") { lastRole = "user"; return attachmentCard(msg); }
   if (msg.kind === "confirmation_requested") { lastRole = "system"; return confirmationCard(msg); }
   if (msg.kind === "secret_requested") { lastRole = "system"; return secretCard(msg); }
@@ -1002,7 +507,15 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
     const bubble = make("div", "bubble", msg.body ?? "");
     const tools = make("div", "msg-actions user-actions");
     tools.append(copyButton(() => msg.body ?? "", "Copy"));
-    if (msg.kind === "user_message") tools.append(branchButton(msg, "Start a new conversation from just before this message, so you can write it differently"));
+    if (msg.kind === "user_message") {
+      tools.append(branchButton(msg, "Start a new conversation from just before this message, so you can write it differently"));
+      tools.append(rewindButton(msg));
+    }
+    if (msg.kind === "user_message" && msg.title === "Queued") {
+      const pill = make("span", "queued-pill");
+      pill.append(icon("clock"), make("span", "", "Queued while working"));
+      bubble.append(pill);
+    }
     li.append(bubble, tools);
     lastRole = "user";
     return li;
@@ -1055,9 +568,29 @@ function renderMessageStream(messages: ChatMessage[]): void {
     if (rendered.has(msg.id)) continue;
     rendered.add(msg.id);
     const node = renderMessage(msg);
-    if (node) addToStream(stream, node);
+    if (node) {
+      if (node.dataset.quiet === "1") quietToStream(stream, node);
+      else addToStream(stream, node);
+    }
   }
   if (stick) thread.scrollTop = thread.scrollHeight;
+}
+/** Quiet steps (thinking, routing, skills) collapse into one "Thinking" block. */
+function quietToStream(stream: HTMLElement, node: HTMLLIElement): void {
+  let block = stream.querySelector<HTMLDetailsElement>(".think-block:last-child");
+  if (!block) {
+    block = make("details", "think-block") as HTMLDetailsElement;
+    const summary = make("summary", "");
+    summary.append(icon("sparkle"), make("span", "think-title", "Thinking"), make("span", "think-count", ""));
+    const process = make("ol", "think-process");
+    block.append(summary, process);
+    stream.append(block);
+  }
+  const process = block.querySelector(".think-process")!;
+  process.append(node);
+  const count = block.querySelector(".think-count");
+  if (count) count.textContent = `${process.children.length} steps`;
+  block.open = false;
 }
 /** Consecutive steps share one block; three or more fold into "N steps" once the agent moves on. */
 function addToStream(stream: HTMLElement, node: HTMLLIElement): void {
@@ -2118,6 +1651,8 @@ async function showFile(path: string, version: string): Promise<void> {
     const markdown = /\.(md|markdown)$/i.test(path);
     el("file-preview").hidden = !markdown;
     if (!markdown) filePreview = false;
+    const doc = docKind(path);
+    if (doc && version === "workspace") { void showDocViewer(path, doc); return; }
     showFilePreview();
     renderFileTabs();
     const language = detectLanguage(path, data.text);
@@ -2160,6 +1695,40 @@ function renderFileCode(text: string, language: string): void {
     const span = make("span", "ln"); span.append(...tokenNodes(line), document.createTextNode("\n"));
     span.dataset.n = String(index + 1); return span;
   }));
+}
+
+// --- document readers: orchestration only; rendering lives in ./doc-viewer --------
+async function showDocViewer(path: string, kind: DocKind): Promise<void> {
+  openFile = path; fileVersion = "workspace"; fileText = "";
+  fileReadNotice = "";
+  rememberTab(path);
+  for (const folder of parentFolders(path)) expandedDirs.add(folder);
+  el("file-name").replaceChildren(...path.split("/").flatMap((part, index, parts) =>
+    index < parts.length - 1 ? [make("span", "crumb", part), make("span", "crumb-sep", "›")] : [fileBadge(path), make("span", "crumb crumb-file", part)]));
+  el("open-editor").hidden = false;
+  el("file-preview").hidden = true;
+  filePreview = false;
+  el("file-view").hidden = true;
+  el("file-rendered").hidden = true;
+  el("file-version").hidden = true;
+  el("copy-file").hidden = false;
+  el("editor-status").replaceChildren(make("span", "", `${DOC_KIND_LABELS[kind]} reader · workspace copy`));
+  el("editor-status").hidden = false;
+  const view = el("doc-view");
+  view.hidden = false;
+  docViewer.loading(view, make);
+  renderFileTabs();
+  renderFileList();
+  askDrawer.reset();
+  if (kind === "pdf") { docViewer.pdf(view, make, path); return; }
+  try {
+    const data = await api<Record<string, unknown>>(`/api/files/doc?path=${encodeURIComponent(path)}`);
+    if (kind === "docx") docViewer.word(view, make, data);
+    else if (kind === "pptx") docViewer.slides(view, make, data);
+    else docViewer.grid(view, make, data);
+  } catch (error) {
+    docViewer.error(view, make, error instanceof Error ? error.message : "This document could not be read.");
+  }
 }
 
 interface GitInfo {
@@ -2349,7 +1918,8 @@ function setUrl(task: string | null): void {
   globalThis.history.replaceState(null, "", task ? `${loc.pathname}?task=${encodeURIComponent(task)}` : loc.pathname);
 }
 function syncComposer(): void {
-  textarea("objective").placeholder = select('mode').value === 'plan' ? 'Let’s work on a plan' : selected ? "Reply to Dikdik…" : "Ask Dikdik to build, fix or change something…";
+  textarea('objective').placeholder = isChat() ? "Ask anything — research, analysis, code, data, explanations… Dikdik can help."
+    : select('mode').value === 'plan' ? "Let\u2019s work on a plan" : selected ? "Reply to Dikdik\u2026" : "Ask Dikdik to build, fix or change something\u2026";
   el("task-actions").hidden = !selected;
   syncSend();
 }
@@ -2452,6 +2022,24 @@ async function request<T>(path: string, method: string, body?: unknown): Promise
   return data as T;
 }
 const api = <T>(path: string, body?: unknown): Promise<T> => request<T>(path, body === undefined ? "GET" : "POST", body);
+// --- chat widgets factory: needs api/richText/fileBadge/message, all defined above or hoisted ---
+const chatWidgets = createChatWidgets({ richText, fileBadge, api, message });
+renderEvidenceCard = chatWidgets.renderEvidenceCard;
+evidenceBlocks = chatWidgets.evidenceBlocks;
+// --- Ask about this file: created here (after `api`) so the factory can close over it. ---
+const askDrawer = createAskDrawer({
+  make, api, richText,
+  view: () => el("file-ask-drawer"),
+  log: () => el("file-ask-log"),
+  form: () => el("file-ask-form"),
+  input: () => input("file-ask-input"),
+  sendButton: () => button("file-ask-send"),
+  toggle: () => el("file-ask"),
+  openFile: () => openFile,
+  selectedTask: () => selected,
+  loadHistory,
+});
+askDrawer.mount();
 const composerDrafts = new ComposerDrafts(request, (content, status) => {
   if (content !== null) textarea('objective').value = content;
   const labels = { loading: 'Loading draft…', saving: 'Saving draft…', saved: 'Draft saved', unsaved: 'Draft not saved. Keep this tab open.', conflict: 'This draft changed in another tab. Choose which version to keep.' };
@@ -2499,6 +2087,7 @@ async function project(): Promise<void> {
   const data = await api<Project>("/api/project");
   projectName = data.name;
   projectFiles = [...data.files, ...(data.large_files ?? [])].map(file => file.path);
+  lastPythonTests = data.python_tests;
   projectFileSet = new Set(projectFiles);
   projectImages = Array.isArray((data as Project & { images?: unknown }).images) ? ((data as Project & { images: unknown[] }).images).filter((p): p is string => typeof p === "string") : [];
   if (!tabsRestored) { tabsRestored = true; restoreTabs(); }
@@ -2518,9 +2107,11 @@ async function project(): Promise<void> {
   el("settings-project").textContent = data.name;
   el("settings-indexer").textContent = (data as Project & { indexer?: string }).indexer === "rust" ? "Rust (native, parallel)" : "Python (run scripts/build_native.py for the faster Rust indexer)";
   el("settings-inventory").textContent = `${data.files.length} text files · ${data.python_tests.length} potential Python tests · ${data.manifests.length} manifests`;
+  refreshWelcomeSuggestions();
 }
 
 let lastTasks: TaskSummary[] = [];
+let lastPythonTests: string[] = [];
 function markCurrent(): void {
   for (const item of el("history").children) {
     const control = item as HTMLElement;
@@ -2955,11 +2546,16 @@ async function startSession(value: string): Promise<boolean> {
   catch (error) { message(error instanceof Error ? error.message : "Sign-in failed", true); return false; }
 }
 async function boot(): Promise<void> {
+  applyConversationMode();
   const loc = globalThis.location;
   const match = loc ? /^#token=([\w-]+)$/.exec(loc.hash) : null;
   if (match && loc) {
     globalThis.history?.replaceState(null, "", loc.pathname + loc.search);  // keep the secret out of the address bar
     await startSession(match[1] ?? "");
+  } else {
+    // Local mode: try to auto-sign-in without a token (CSRF-protected by SameSite).
+    try { await request<{ signed_in: boolean }>("/api/session/local", "POST", {}); }
+    catch { /* remote mode or not local: the sign-in page handles it */ }
   }
   try { await connect(); }
   catch (error) {
@@ -3452,6 +3048,11 @@ composerGrip.addEventListener('keydown', event => {
 composerGrip.addEventListener('dblclick', () => { composerSize.reset(); autosize(); });
 globalThis.addEventListener?.('resize', autosize);
 el('draft-conflict').addEventListener('toggle', autosize);
+// --- Chat vs Code: state and selector wiring live in ./conversation-mode ------------
+const conversationMode = createConversationMode({
+  select, input, el, setClass, applyRunMode, syncComposer, newTask, message,
+});
+const isChat = conversationMode.isChat;
 function setOptions(open: boolean): void {
   el("options-panel").hidden = !open;
   el("options-toggle").setAttribute("aria-expanded", String(open));
@@ -3492,6 +3093,8 @@ select("verification").addEventListener("change", syncMode);
 el("browser-approval").addEventListener("change", syncMode);
 el("options-toggle").addEventListener("click", () => setOptions(el("options-panel").hidden === true));
 syncMode();
+function applyConversationMode(): void { conversationMode.apply(); }
+conversationMode.mount();
 
 textarea("objective").addEventListener("input", () => { autosize(); syncSend(); composerDrafts.update(textarea('objective').value); renderSlash(); });
 textarea("objective").addEventListener("keydown", (event: KeyboardEvent) => {
@@ -3505,14 +3108,37 @@ textarea("objective").addEventListener("keydown", (event: KeyboardEvent) => {
   }
 });
 if (typeof document.querySelectorAll === "function") {
-  for (const suggestion of document.querySelectorAll<HTMLButtonElement>(".suggestion")) {
-    suggestion.addEventListener("click", () => {
-      textarea("objective").value = suggestion.dataset.prompt ?? "";
-      composerDrafts.update(textarea('objective').value);
-      autosize();
-      textarea("objective").focus();
+  // Delegate clicks: the welcome suggestions are rendered dynamically, so
+  // listen on the container and match .suggestion by closest().
+  const suggestionsContainer = document.getElementById("welcome-suggestions");
+  if (suggestionsContainer) {
+    suggestionsContainer.addEventListener("click", event => {
+      const clicked = event.target instanceof Element ? event.target.closest(".suggestion") : null;
+      if (clicked instanceof HTMLButtonElement && clicked.dataset.prompt) {
+        textarea("objective").value = clicked.dataset.prompt;
+        composerDrafts.update(textarea('objective').value);
+        autosize();
+        textarea("objective").focus();
+      }
     });
   }
+}
+
+// --- animated welcome greeting + adaptive suggestions (imported from ./welcome) ---
+const greetingEl = document.getElementById("welcome-greeting");
+if (greetingEl) startGreeting(greetingEl);
+
+function refreshWelcomeSuggestions(): void {
+  const container = document.getElementById("welcome-suggestions");
+  if (!container) return;
+  const facts = factsFromFiles(projectName, projectFiles, lastPythonTests);
+  const suggestions = suggestionsFor(facts);
+  renderSuggestions(container, suggestions, prompt => {
+    textarea("objective").value = prompt;
+    composerDrafts.update(textarea('objective').value);
+    autosize();
+    textarea("objective").focus();
+  });
 }
 
 // --- how Dikdik works in this project: Ask, Auto, Plan or the classic copy-then-Apply ----
@@ -3544,6 +3170,7 @@ function applyRunMode(): void {
 }
 /** The first message in a project asks once whether Dikdik may work in this folder. */
 async function ensureTrusted(forceLocal = false): Promise<void> {
+  if (isChat()) return;  // chat conversations are read-only; no trust needed
   if ((!forceLocal && runMode() === "classic") || projectTrusted) return;
   const yes = await confirmDialog(`Trust “${projectName}”?`, `Dikdik will read this folder, send what it reads to your model provider, `
     + `edit its files and run commands here (asking first as your permission mode says). You can undo each turn.`, "Trust this project");
@@ -3563,6 +3190,22 @@ try {
 } catch { void 0; }
 
 function composerRequest(text: string, goalMaxTurns?: number, mode?: Mode) {
+  const openMode = selected && observedTaskMode && observedTaskMode !== "unknown" ? observedTaskMode : "";
+  if (mode) { /* explicit mode wins */ }
+  else if (openMode === "chat") mode = "chat";
+  else if (isChat() && !selected) mode = "chat";
+  if (mode === "chat") {
+    // Chat mode: research, analysis, files, and shell (with the same approval as code mode).
+    // The user's execution approval carries through; without it, chat is read-only research.
+    const approveExec = input("execution").checked;
+    return buildTaskRequest({
+      objective: text, mode: "chat",
+      verification: approveExec ? "local" : "syntax",
+      approveExecution: approveExec, approveExternal: true, edits: "", approveSecrets: false,
+      approveBrowser: false,
+      modelProfile: modelOverride?.id, attachments: attached.map(file => file.id),
+    });
+  }
   const simple = runMode();
   return buildTaskRequest({
     confirmation: confirmationForRunMode(simple),
@@ -3924,7 +3567,7 @@ const TEXT_TYPES: Record<string, string> = { md: "text/markdown", py: "text/x-py
 async function uploadFiles(files: File[]): Promise<void> {
   for (const file of files) {
     if (attached.length >= 10) { message("Attach up to 10 files per message.", true); break; }
-    if (file.size > 3 * 1024 * 1024) { message(`${file.name} is larger than 3 MB.`, true); continue; }
+    if (file.size > 10 * 1024 * 1024) { message(`${file.name} is larger than 10 MB.`, true); continue; }
     const extension = (file.name.split(".").pop() ?? "").toLowerCase();
     const type = file.type || TEXT_TYPES[extension] || "text/plain";
     try {
@@ -4145,6 +3788,8 @@ function renderFileTabs(): void {
   }));
 }
 function showFilePreview(): void {
+  el("doc-view").hidden = true;
+  el("file-ask-drawer").hidden = true;
   el("file-view").hidden = filePreview;
   el("file-rendered").hidden = !filePreview;
   el("file-preview").setAttribute("aria-pressed", String(filePreview));

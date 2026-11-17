@@ -161,6 +161,10 @@
           <svg class="i project-picker-chevron"><use href="#i-chevron"/></svg>
         </button>
         <button id="new-task" class="new-task" type="button"><svg class="i"><use href="#i-plus"/></svg><span>New task</span><kbd>Ctrl ⇧ O</kbd></button>
+        <div id="conversation-kind" class="segmented conversation-kind" role="group" aria-label="Conversation type">
+          <button type="button" data-conversation="code" title="Agentic coding in this workspace — edits, commands, tests">Code</button>
+          <button type="button" data-conversation="chat" title="Research conversations — agentic answers with sources, no file changes">Chat</button>
+        </div>
         <div class="task-search-row">
           <label class="task-search"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Search tasks</span><input id="task-search" type="search" placeholder="Search tasks" autocomplete="off"></label>
           <button id="filter-toggle" class="ghost icon filter-toggle" type="button" aria-pressed="false" aria-controls="list-tools" aria-label="Sort and filter tasks" title="Sort and filter"><svg class="i"><use href="#i-sliders"/></svg></button>
@@ -209,10 +213,7 @@
             <div class="welcome-grid">
               <section class="welcome-col" aria-labelledby="welcome-start-head">
                 <h2 id="welcome-start-head">Start with</h2>
-                <button class="suggestion" type="button" data-prompt="Fix the failing tests without changing the tests."><span class="suggestion-icon"><svg class="i"><use href="#i-check"/></svg></span><span class="suggestion-text"><strong>Fix failing tests</strong><small>Run the suite, repair what breaks, leave the tests alone</small></span></button>
-                <button class="suggestion" type="button" data-prompt="Find a likely bug in this project and fix it."><span class="suggestion-icon"><svg class="i"><use href="#i-search"/></svg></span><span class="suggestion-text"><strong>Hunt a bug</strong><small>Read the code for a likely fault and fix it</small></span></button>
-                <button class="suggestion" type="button" data-prompt="Add input validation and clear error messages to the main module."><span class="suggestion-icon"><svg class="i"><use href="#i-shield"/></svg></span><span class="suggestion-text"><strong>Harden inputs</strong><small>Validation and clear errors where data comes in</small></span></button>
-                <button class="suggestion" type="button" data-prompt="Add a unit test that covers the main function's edge cases."><span class="suggestion-icon"><svg class="i"><use href="#i-flag"/></svg></span><span class="suggestion-text"><strong>Add test coverage</strong><small>Edge cases for the main function</small></span></button>
+                <div id="welcome-suggestions" class="suggestions"></div>
               </section>
               <section id="welcome-recent-section" class="welcome-col" aria-labelledby="welcome-recent-head" hidden>
                 <h2 id="welcome-recent-head">Pick up where you left off</h2>
@@ -252,7 +253,7 @@
             <label for="objective" class="sr-only">Objective</label>
             <div id="attachment-tray" class="attachment-tray" aria-label="Attached files" hidden></div>
             <textarea id="objective" rows="1" maxlength="4000" placeholder="Ask Dikdik to build, fix or change something…" required aria-autocomplete="list" aria-controls="slash-menu"></textarea>
-            <input id="attach-input" type="file" multiple hidden accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.py,.ts,.tsx,.js,.jsx,.json,.toml,.yaml,.yml,.rs,.go,.java,.c,.cpp,.h,.css,.html,.csv,.log,.sh,.sql,.xml">
+            <input id="attach-input" type="file" multiple hidden>
             <div id="draft-status-row" class="draft-status" role="status" hidden><span id="draft-status"></span><button id="draft-use-saved" class="ghost small" type="button" hidden>Use saved draft</button><button id="draft-keep-local" class="ghost small" type="button" hidden>Keep my draft</button><button id="draft-retry" class="ghost small" type="button" hidden>Retry save</button></div>
             <details id="draft-conflict" class="draft-conflict" hidden><summary>Saved draft from another tab</summary><pre id="draft-remote"></pre></details>
             <div id="options-panel" class="options-panel" hidden>
@@ -268,9 +269,9 @@
             </div>
             <div class="composer-controls">
               <button id="attach" class="ghost icon" type="button" aria-label="Attach files" title="Attach images or text files (or paste / drop them)"><svg class="i"><use href="#i-paperclip"/></svg></button>
-              <label class="pill run-mode-pill" title="How Dikdik works in this project"><span class="sr-only">Permissions</span><svg class="i"><use href="#i-shield"/></svg><select id="run-mode"><option value="auto">Auto</option><option value="ask">Ask before commands</option><option value="plan">Plan only</option><option value="classic">Classic (copy, then Apply)</option></select></label>
-              <label class="pill classic-only" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="plan">Plan</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
-              <label class="pill classic-only" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="local">On this computer</option></select></label>
+              <label id="run-mode-pill" class="pill run-mode-pill" title="How Dikdik works in this project"><span class="sr-only">Permissions</span><svg class="i"><use href="#i-shield"/></svg><select id="run-mode"><option value="auto">Auto</option><option value="ask">Ask before commands</option><option value="plan">Plan only</option><option value="classic">Classic (copy, then Apply)</option></select></label>
+              <label id="mode-pill" class="pill classic-only" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="plan">Plan</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
+              <label id="verification-pill" class="pill classic-only" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="local">On this computer</option></select></label>
               <label id="agent-profile-pill" class="pill" title="Agent profile"><span class="sr-only">Agent profile</span><svg class="i"><use href="#i-book"/></svg><select id="agent-profile"><option value="">Default agent</option></select></label>
               <button id="model-pill" class="ghost small model-pill" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="model-menu" title="Choose a model"><span id="model-symbol"><img class="dikdik-logo" src="/icon.svg" alt=""></span><span id="model-label">Model</span><svg class="i model-chevron"><use href="#i-chevron"/></svg></button>
               <button id="options-toggle" class="ghost icon options-toggle" type="button" aria-expanded="false" aria-controls="options-panel" aria-label="Mode options" title="Mode options"><svg class="i"><use href="#i-sliders"/></svg></button>
@@ -346,12 +347,21 @@
                 <button type="button" data-version="candidate" aria-pressed="false">Candidate</button>
               </div>
               <button id="file-preview" class="copy" type="button" hidden aria-pressed="false"><svg class="i"><use href="#i-eye"/></svg><span>Preview</span></button>
+              <button id="file-ask" class="copy" type="button" title="Ask Dikdik about this file — answers stay in this panel"><svg class="i"><use href="#i-sparkle"/></svg><span>Ask</span></button>
               <button id="open-editor" class="copy vscode-action" type="button" hidden title="Open this file in VS Code at the first visible line"><img class="vscode-logo" src="/assets/brands/vscode.svg" alt="" aria-hidden="true"><span>Open in VS Code</span></button>
               <button id="copy-file" class="copy" type="button" hidden><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button>
             </div>
             <p id="file-read-note" class="file-read-note" role="status" hidden></p>
             <pre id="file-view" class="numbered" tabindex="0"></pre>
             <div id="file-rendered" class="file-rendered" hidden></div>
+            <div id="doc-view" class="doc-view" hidden></div>
+            <div id="file-ask-drawer" class="file-ask-drawer" hidden>
+              <div id="file-ask-log" class="file-ask-log" aria-live="polite"></div>
+              <form id="file-ask-form" class="file-ask-form">
+                <input id="file-ask-input" type="text" placeholder="Ask about this file — with the part you select for context" autocomplete="off">
+                <button id="file-ask-send" type="submit" class="primary">Ask</button>
+              </form>
+            </div>
           </div>
         </div>
         <div id="editor-status" class="editor-status" role="status" hidden></div>

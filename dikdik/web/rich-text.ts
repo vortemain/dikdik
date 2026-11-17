@@ -1,6 +1,7 @@
 /** DOM-only response rendering. Model text is never inserted as HTML. */
 import { alertKind, parseTable } from './organise';
 import { chartCard } from './response-chart';
+import { renderMermaid } from './mermaid';
 
 export interface RichTextOptions {
   codeBlock(text: string, language: string): HTMLElement;
@@ -135,7 +136,9 @@ export function renderRichText(text: string, options: RichTextOptions, depth = 0
       const closing = new RegExp(`^ {0,3}${fence[1]![0]}{${fence[1]!.length},}\\s*$`);
       for (i++; i < lines.length && !closing.test(lines[i]!); i++) body.push(lines[i]!);
       const source = body.join('\n'), language = (fence[2] ?? '').toLowerCase();
-      root.append(language === 'chart' ? chartCard(source, options) : options.codeBlock(source, language));
+      root.append(language === 'chart' ? chartCard(source, options)
+        : language === 'mermaid' ? renderMermaid(source, (text, lang) => options.codeBlock(text, lang))
+        : options.codeBlock(source, language));
       continue;
     }
     if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); root.append(node('hr')); continue; }

@@ -1,7 +1,12 @@
-"""Every API route refuses anonymous and foreign-Host requests, except an explicit public list.
+"""Every API route refuses cross-origin requests, except an explicit public list.
 
 The paths are harvested from the server source, so a route added later is covered without
 editing this file. This is the test that would have caught the pre-auth pairing route.
+
+Local mode (the default) auto-authorizes loopback, same-origin requests so the user
+doesn't paste a token — same_origin() blocks CSRF and loopback binding blocks
+remote machines. Remote mode still requires the owner token. The cross-origin
+check is enforced in both modes and is what this test verifies.
 """
 
 import http.client
@@ -18,6 +23,7 @@ SOURCE = Path(__file__).resolve().parent.parent / "dikdik"
 # Reachable without the session secret. Each still enforces its own checks.
 PUBLIC = {
     ("POST", "/api/session"),          # exchanges the sign-in secret for a cookie
+    ("POST", "/api/session/local"),    # local-mode auto-sign-in (CSRF-protected by same_origin)
     ("POST", "/api/pair/verify"),      # redeems an owner-minted pairing code
     ("GET", "/api/mcp/oauth/callback"),  # provider redirect; state-checked
     ("GET", "/api/server-info"), ("GET", "/api/openapi"),  # documented public metadata

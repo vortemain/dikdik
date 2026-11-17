@@ -13,9 +13,11 @@
 .explorer-head { flex: 0 0 40px; min-height: 40px; padding: 0 9px 0 16px; font-size: 10px; font-weight: 500; letter-spacing: .09em; }
 .explorer-project { flex: 0 0 28px; min-height: 28px; padding: 0 10px; background: var(--surface-2); }
 .explorer-project strong { font-size: 10px; letter-spacing: .04em; font-weight: 600; }
-.explorer .file-search { flex-shrink: 0; margin: 5px 8px 10px; height: 27px; padding: 0 6px; border-radius: 3px; }
-.explorer .file-search input { width: 100%; min-width: 0; height: 25px; font-size: 11px; padding: 0 5px 0 25px; }
-.explorer .file-search .i { left: 7px; width: 13px; height: 13px; }
+.explorer .file-search { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; margin: 6px 8px 10px; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
+.explorer .file-search svg.i { position: static; top: auto; transform: none; flex: 0 0 auto; width: 14px; height: 14px; color: var(--faint); }
+.explorer .file-search input { width: 100%; min-width: 0; flex: 1 1 auto; height: auto; padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 12px; }
+.explorer .file-search input:focus { border: 0; box-shadow: none; }
+.explorer .file-search:focus-within { border-color: var(--accent); }
 .explorer .file-list { display: flex; flex-direction: column; flex: 1 1 auto; align-items: stretch; max-height: none !important; height: auto !important; min-height: 0; padding: 0 0 16px; border: 0; overflow: auto; }
 .file-tree .tree-row, .file-list .file-search-result { flex: 0 0 27px; min-height: 27px; height: 27px; border-radius: 0; padding: 0 8px 0 calc(10px + var(--depth, 0) * 16px); gap: 5px; font: 12px/27px var(--sans); }
 .file-tree .tree-row:not(.tree-dir) { padding-left: calc(29px + var(--depth, 0) * 16px); }
