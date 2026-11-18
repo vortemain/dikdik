@@ -284,7 +284,8 @@ class Engine:
         self._warming: dict[str, dict] = {}
         self._warming_lock = threading.Lock()
         self._warming_stop = threading.Event()
-        threading.Thread(target=self._warm_loop, daemon=True, name="dikdik-warming").start()
+        self._warm_thread = threading.Thread(target=self._warm_loop, daemon=True, name="dikdik-warming")
+        self._warm_thread.start()
         # Purge old events if retention is configured (0 = keep forever).
         retention = self.app_settings().get("event_retention_seconds", 0)
         if isinstance(retention, (int, float)) and retention > 0:
@@ -557,6 +558,11 @@ class Engine:
 
     def close(self):
         self._warming_stop.set()
+        # Wait for the warming thread: it reads settings from the database, and on Windows an
+        # open read makes the data folder impossible to delete or move right after close().
+        warm_thread = getattr(self, "_warm_thread", None)
+        if warm_thread is not None and warm_thread is not threading.current_thread():
+            warm_thread.join(timeout=10)
         self.live_preview.stop()
         self.background.close()
         for flag in list(self.pausing.values()):

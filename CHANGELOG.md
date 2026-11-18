@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2 — 2026-11-18
+
+- The v0.5.1 release build stopped on an intermittent Windows test error, so 0.5.1
+  was never published; 0.5.2 ships everything listed under 0.5.1.
+- Fixed: closing Dikdik now waits for its background "warming" thread, which could
+  still be reading the database and keep the data folder locked on Windows.
+
 ## 0.5.1 — 2026-11-18
 
 Chat is a general assistant that researches:
