@@ -26,6 +26,7 @@ import { codeBlock, diffLines, tokenNodes, languageFor, looksLikeDiff, safePageL
 import { TOOL_LABELS, detailField, toolName, stepLabel, siteChip, webPageCard, renderTaskChecklistWidget, renderTestChecksWidget, renderPropertiesUI, renderStructuredUI, renderOutputUI, createChatWidgets, type StepLabel } from './chat-widgets';
 import { docKind, docViewer, DOC_KIND_LABELS, type DocKind } from './doc-viewer';
 import { openDocPreview, type PreviewSource } from './doc-preview';
+import { boardStyle, setBoardStyle, type BoardStyle } from './board';
 import { createAskDrawer } from './ask-drawer';
 import { createConversationMode, isChatConversation } from './conversation-mode';
 import { startGreeting, suggestionsFor, chatSuggestions, renderSuggestions, factsFromFiles } from './welcome';
@@ -4141,6 +4142,15 @@ input("git-name").addEventListener("input", syncGitSave);
 input("git-email").addEventListener("input", syncGitSave);
 select("title-model").addEventListener("change", () => { void saveAppSetting({ title_model: select("title-model").value }); });
 select("image-model").addEventListener("change", () => { void saveAppSetting({ image_model: select("image-model").value }); });
+// Drawing style: kept in this browser; drawings already on screen follow the change.
+{
+  const picker = document.getElementById("board-style") as HTMLSelectElement | null;
+  if (picker) {
+    picker.value = boardStyle();
+    picker.addEventListener("change", () => { setBoardStyle(picker.value as BoardStyle); message("Drawing style saved."); });
+    document.addEventListener?.("dikdik-board-style", event => { picker.value = (event as CustomEvent<BoardStyle>).detail; });
+  }
+}
 /** After the first finished turn of an untitled conversation, ask the server for a short title once. */
 function maybeTitle(task: string, state: string): void {
   if (state !== "completed" || titled.has(task)) return;

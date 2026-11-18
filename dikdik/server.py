@@ -46,7 +46,7 @@ from . import sql
 
 WEB = Path(__file__).parent / "web"
 M4_PREFIXES = ROUTE_PREFIXES
-FONTS = ("inter-latin-wght-normal", "inter-latin-ext-wght-normal", "jetbrains-mono-latin-wght-normal", "jetbrains-mono-latin-ext-wght-normal")
+FONTS = ("inter-latin-wght-normal", "inter-latin-ext-wght-normal", "jetbrains-mono-latin-wght-normal", "jetbrains-mono-latin-ext-wght-normal", "caveat-latin-600-normal")
 # An explicit allowlist: nothing else under web/ (or outside it) is ever served.
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),

@@ -1,6 +1,34 @@
 # Changelog
 
-## 0.6.0 — 2026-11-18
+## 0.7.0 — 2026-11-18
+
+Dikdik as a brain and a tutor. (0.6.0 was never published; its changes ship here.)
+
+Drawing like a teacher at the board:
+- Drawings appear on a **chalkboard** (wood frame, chalk texture), a **whiteboard** or a
+  **clean** card, in handwriting (the bundled Caveat font), and are drawn in stroke by
+  stroke the first time they appear. Switch style on any drawing or in Settings →
+  General → *Drawing style*; Replay redraws it. Reduced-motion settings skip the
+  animation. Handwritten formulas on boards; SVG/PNG downloads keep the board look.
+- New ```` ```plot ```` blocks graph functions exactly (`y = x^2 - 4`, ranges with π,
+  points, asymptote-safe curves, labelled axes) — no code execution; expressions are
+  parsed safely.
+- New ```` ```sketch ```` blocks draw geometry, physics, chemistry and biology sketches
+  from JSON: lines, vectors and forces, circles, polygons, curves, angles, arcs, points
+  and text, with a hand-drawn wobble. Common JSON slips from models are repaired.
+- New ```` ```board ```` blocks write a worked solution on the board, revealed line by
+  line.
+
+A senior researcher for every kind of user:
+- New `literature_search` tool (no key): OpenAlex for every field, PubMed with
+  abstracts for medicine and health (filters for reviews and trials), arXiv preprints
+  (marked as not peer reviewed), and Crossref DOI checks so invented references are
+  caught before they are cited. Available in Chat, and in Code when research is on.
+- Rewritten chat instructions: researches the web and the literature before answering,
+  reads the best sources and cites them; clinical answers from current guidelines
+  (WHO, national ministries, NICE, CDC) with doses, adjustments and red flags;
+  supervisor-level help for researchers; ready-to-use lessons and assessments for
+  teachers; knows today's date.
 
 Formulas and diagrams, built for teaching:
 - Mathematics is typeset with KaTeX (bundled; works offline): `$...$` and `\(...\)`

@@ -31,7 +31,7 @@ Dikdik has two ways to work, side by side in the sidebar:
 - **Chat** — a general-purpose assistant for any question: research, science, studies, writing, business and everyday topics. It searches the web and reads sources before answering, reads your Word, PDF and Excel files in full, runs real statistics, and writes finished documents. A chat needs no project: just start typing.
 - **Code** — an agent that works inside a project folder: it plans, edits files, runs commands and tests, previews apps in a browser, and shows every change for review, with checkpoints and Undo.
 
-**Web research with no setup · Typeset formulas and real diagrams · Word/PDF/Excel in, Word/Excel out · Research-grade statistics · Works with text-only models · 35 bundled skills · Your choice of models**
+**Web and literature research with no setup · Typeset formulas · Chalkboard drawings, plots and sketches · Word/PDF/Excel in, Word/Excel out · Research-grade statistics · Works with text-only models · 35 bundled skills · Your choice of models**
 
 > [!NOTE]
 > **Dikdik is a developer preview.** Get the newest build from the [latest release](https://github.com/vortemain/dikdik/releases/latest) and see [Security](SECURITY.md) for operating boundaries.
@@ -50,14 +50,14 @@ For the Python command line and browser interface (**Python 3.13 or newer**), do
 and `SHA256SUMS.txt` from the same release, verify the checksum, then install:
 
 ```bash
-python -m pip install ./dikdik-0.6.0-py3-none-any.whl
+python -m pip install ./dikdik-0.7.0-py3-none-any.whl
 dikdik --version
 dikdik /path/to/a-project-folder
 ```
 
 Dikdik opens at **http://127.0.0.1:8787** and signs you in automatically. Use `--no-browser`
 to start without opening a tab, and **Ctrl+C** to stop the server. For the desktop window from a
-wheel, install `"dikdik-0.6.0-py3-none-any.whl[desktop]"` and run `dikdik-desktop`. From a source
+wheel, install `"dikdik-0.7.0-py3-none-any.whl[desktop]"` and run `dikdik-desktop`. From a source
 checkout, `python -m pip install -e ".[desktop]"`, then double-click **Dikdik.pyw** on Windows.
 [Desktop setup →](docs/DESKTOP.md) · [Download verification →](docs/RELEASING.md)
 
@@ -87,7 +87,10 @@ files it creates, and it is listed from every project.
 | --- | --- |
 | **Researches before answering** | Questions about companies, people, products, recent events, statistics, or health, legal and financial specifics are searched with several queries; the best sources are read, cross-checked and cited. |
 | **Web search with no key** | Uses DuckDuckGo (then Wikipedia) out of the box; a connected Tavily key is used first. Pages are read with `web_fetch`. |
-| **Teaches like a tutor** | Intuition first, every symbol defined, worked examples with numbers, common mistakes and a practice question. Formulas are typeset (KaTeX) and processes are drawn as diagrams (Mermaid: flowcharts, sequences, cycles, mind maps, timelines, charts…) with Copy, SVG/PNG download and full-screen zoom. |
+| **Searches the literature** | `literature_search` finds papers in OpenAlex (every field), PubMed (medicine and health, with abstracts and filters for reviews and trials) and arXiv, and checks DOIs with Crossref so invented references are caught. No key needed. |
+| **For every kind of user** | Clinicians get answers from current guidelines with doses, adjustments and red flags; researchers get supervisor-level advice on design and statistics with real citations; teachers get ready-to-use lessons, exercises and marking schemes. |
+| **Teaches like a tutor** | Intuition first, every symbol defined, worked examples with numbers, common mistakes and a practice question. Formulas are typeset (KaTeX). |
+| **Draws like a teacher at the board** | Diagrams (Mermaid: flowcharts, cycles, mind maps, timelines, charts…), exact function plots, and physics, chemistry, biology and geometry sketches appear on a chalkboard or whiteboard in handwriting, drawn in stroke by stroke. Worked solutions are written on the board line by line. Switch style on any drawing (or Settings → *Drawing style*); Copy, SVG/PNG download and full-screen zoom. |
 | **Thinks like an expert** | Step-by-step reasoning for science and maths, academic conventions for studies and theses, honest limits for medical, legal and financial questions. Never invents sources. |
 | **Delivers finished work** | Writes Word reports with headings, tables, captions, a table of contents, page numbers and native, editable charts; Excel workbooks; Markdown and CSV. Each file appears as a card with Preview, Download, Open in app and Show in folder. |
 | **Keeps context** | Files attached earlier stay available after a pause, a stop or a follow-up. Pause and resume a long task exactly where it stopped. |

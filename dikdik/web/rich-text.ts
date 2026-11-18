@@ -3,6 +3,37 @@ import { alertKind, parseTable } from './organise';
 import { chartCard } from './response-chart';
 import { renderMermaid } from './mermaid';
 import { collectDisplay, INLINE_MATH, mathAvailable, renderMath } from './math';
+import { renderPlot, renderSketch } from './sketch';
+import { boardStyle, reducedMotion, type BoardStyle } from './board';
+
+const writtenBoards = new Set<string>();
+/** A ```board block: a worked solution written in handwriting on the chalkboard or whiteboard,
+ * revealed line by line the first time it appears. Its content is ordinary Markdown and LaTeX. */
+function boardNote(source: string, options: RichTextOptions, depth: number, language: string, closed: boolean): HTMLElement {
+  const chosen = language === 'chalkboard' || language === 'whiteboard' ? language : boardStyle();
+  const kind = (style: BoardStyle) => style === 'clean' ? 'board-note board-note-clean' : style === 'whiteboard' ? 'board-note board-note-white' : 'board-note board-note-chalk';
+  const box = node('div', undefined, kind(chosen));
+  box.setAttribute('role', 'figure');
+  box.setAttribute('aria-label', 'Worked on the board');
+  const body = renderRichText(source, options, depth + 1);
+  body.classList?.add('board-writing');
+  box.append(body);
+  if (closed && !writtenBoards.has(source) && !reducedMotion() && typeof (body as HTMLElement).animate === 'function') {
+    writtenBoards.add(source);
+    [...body.children].forEach((line, index) => {
+      (line as HTMLElement).animate?.([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 420, delay: index * 380, easing: 'ease-out', fill: 'backwards' });
+    });
+  }
+  if (language === 'board') {
+    const follow = (event: Event) => {
+      if (!box.isConnected) { document.removeEventListener('dikdik-board-style', follow); return; }
+      box.className = kind((event as CustomEvent<BoardStyle>).detail);
+    };
+    document.addEventListener?.('dikdik-board-style', follow);
+  }
+  return box;
+}
 
 export interface RichTextOptions {
   codeBlock(text: string, language: string): HTMLElement;
@@ -190,8 +221,12 @@ export function renderRichText(text: string, options: RichTextOptions, depth = 0
       for (i++; i < lines.length && !closing.test(lines[i]!); i++) body.push(lines[i]!);
       const source = body.join('\n'), language = (fence[2] ?? '').toLowerCase();
       const closed = i < lines.length;  // an unclosed fence is still streaming in
+      const fallback = (text: string, lang: string) => options.codeBlock(text, lang);
       root.append(language === 'chart' ? chartCard(source, options)
-        : language === 'mermaid' ? closed ? renderMermaid(source, (text, lang) => options.codeBlock(text, lang)) : options.codeBlock(source, 'mermaid')
+        : language === 'mermaid' ? closed ? renderMermaid(source, fallback) : options.codeBlock(source, 'mermaid')
+        : language === 'plot' || language === 'function-plot' ? closed ? renderPlot(source, fallback) : options.codeBlock(source, 'plot')
+        : language === 'sketch' || language === 'drawing' ? closed ? renderSketch(source, fallback) : options.codeBlock(source, 'sketch')
+        : language === 'board' || language === 'chalkboard' || language === 'whiteboard' ? boardNote(source, options, depth, language, closed)
         : (language === 'math' || language === 'katex') && mathAvailable() ? renderMath(source, true)
         : options.codeBlock(source, language));
       continue;

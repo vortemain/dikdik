@@ -29,6 +29,12 @@ These assets are served by Dikdik itself. No CDN or favicon service is used.
   dayjs and others) under their MIT, ISC, BSD-3-Clause and Apache-2.0/MPL-2.0 licenses.
   Source: https://github.com/mermaid-js/mermaid
   Full notice: `LICENSE-mermaid.txt`.
+- **Caveat 600 (Latin subset)**, copyright 2014 The Caveat Project Authors, SIL Open Font
+  License 1.1, from `@fontsource/caveat` 5.2.6. `../fonts/caveat-latin-600-normal.woff2` is
+  unmodified; it is the handwriting on chalkboard and whiteboard drawings and is embedded
+  in drawings exported as SVG or PNG.
+  Source: https://github.com/googlefonts/caveat
+  Full notice: `../fonts/LICENSE-Caveat.txt`.
 - **Visual Studio Code stable blue icon**, Microsoft. `brands/vscode.svg` is
   unmodified from Microsoft's official icon pack, downloaded 2026-10-28:
   https://code.visualstudio.com/assets/branding/visual-studio-code-icons.zip

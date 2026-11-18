@@ -20,6 +20,7 @@ releases. Third-party components keep their own licenses and notices.
 | Lobe Icons static SVG assets | 1.95.1 | MIT | [Lobe Icons license](dikdik/web/assets/LICENSE-lobe-icons.txt) |
 | Inter variable font subsets | 5.3.0 | SIL Open Font License 1.1 | [Inter license](dikdik/web/fonts/LICENSE-Inter.txt) |
 | JetBrains Mono variable font subsets | 5.3.0 | SIL Open Font License 1.1 | [JetBrains Mono license](dikdik/web/fonts/LICENSE-JetBrainsMono.txt) |
+| Caveat handwriting font (Latin, weight 600) | 5.2.6 | SIL Open Font License 1.1 | [Caveat license](dikdik/web/fonts/LICENSE-Caveat.txt) |
 
 The Dikdik logo is original project artwork covered by the root MIT license.
 The Visual Studio Code and NVIDIA marks identify integrations and remain the
