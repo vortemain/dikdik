@@ -679,7 +679,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
               summary_model: AgentModel | None = None,
               shell_tool: dict | None = None,
               on_write: Callable[[dict[str, str]], None] | None = None,
-              describe_images: Callable[[list[str]], list[str]] | None = None) -> AgentOutcome:
+              describe_images: Callable[[list[str]], list[str]] | None = None,
+              conversation: bool = False) -> AgentOutcome:
     """Deadline/cancellation are checked between steps, not during blocking callbacks.
 
     ``original`` is the untouched source (diff base, protected tests); ``start`` is the
@@ -921,17 +922,18 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
         messages[0]["content"] += ("\nFiles omitted from the initial cache because of size or cache budget remain available through list_files, read_file and search_text. "
                                    "Read only the portions you need. Partial reads provide continuation line/column positions, including for minified SVGs. "
                                     "You may edit a unique exact match in a large file without rewriting the whole file in your tool arguments.")
-    messages[0]["content"] += ("\nTo locate a project file by name, use list_files with query set to its filename before trying shell commands. "
-                               "Commands run in the selected project folder: do not assume /workspace exists, and never search filesystem or drive roots. "
-                               "If the file is absent, explain that and ask whether the correct project is open. "
-                               "Briefly explain what you are checking before a potentially long-running command.")
+    if not conversation:  # a chat has no project; these coding rules would only confuse it
+        messages[0]["content"] += ("\nTo locate a project file by name, use list_files with query set to its filename before trying shell commands. "
+                                   "Commands run in the selected project folder: do not assume /workspace exists, and never search filesystem or drive roots. "
+                                   "If the file is absent, explain that and ask whether the correct project is open. "
+                                   "Briefly explain what you are checking before a potentially long-running command.")
     if 'Response formatting:' not in messages[0]['content']:
         messages[0]['content'] += ('\nResponse formatting: use concise Markdown with meaningful headings, nested lists, checklists and tables when useful; '
                                    'do not insert blank spacer paragraphs. HTML/CSS fenced blocks have an optional static design preview (no scripts or external assets). '
                                    'For a chart of real supplied data, a chart fenced block accepts JSON: '
                                    '{"type":"bar" or "line","title":"...","labels":["..."],"values":[number,...]}; '
                                    'multiple series use "series":[{"name":"...","values":[number,...]}] instead of values. Never invent chart data.')
-    if not read_only and 'Task ownership:' not in messages[0]['content']:
+    if not read_only and not conversation and 'Task ownership:' not in messages[0]['content']:
         messages[0]['content'] += (
             '\nTask ownership: carry the requested work through inspection, implementation, execution, repair and relevant verification. '
             'Use available authorized tools yourself; do not give the user runnable setup, test or build commands as unfinished work. '
@@ -943,7 +945,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
             'Inspect real failures, repair them, then recheck the changed behavior. Keep checks proportional to the request. '
             'Finish with what changed, what actually ran and any remaining blocker. Do not claim visual inspection, interaction coverage or perfection without evidence. '
             f'Capabilities this run: shell={shell is not None}{f" ({shell_note})" if shell is not None and shell_note else ""}; local preview={"preview_app" in extra_names}; host verifier={verify is not None}.')
-    if not read_only and "environment_check" in extra_names and 'Setting up this computer:' not in messages[0]['content']:
+    if not read_only and not conversation and "environment_check" in extra_names and 'Setting up this computer:' not in messages[0]['content']:
         messages[0]['content'] += (
             '\nSetting up this computer: the project may need tools this computer does not have yet. Before building '
             'something new, or when a command fails because a program, compiler, SDK or module is missing, call environment_check: '
@@ -1240,7 +1242,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
             missing = ("command_handoff" if shell is not None and not read_only and not explanatory(objective) and command_handoff(response.content)
                        else "preview" if requested_preview and preview_revision != candidate_revision and not preview_unavailable
                        # Tool calls anywhere in this turn count, including before a pause/resume.
-                       else "no_work" if not read_only and not any(m.get("tool_calls") for m in messages) and work_request(objective) and not requested_verification else None)
+                       else "no_work" if not read_only and not conversation and not any(m.get("tool_calls") for m in messages) and work_request(objective) and not requested_verification else None)
             if missing:
                 if missing in workflow_reminders:
                     return outcome("blocked", "Requested work remains incomplete: " + {"command_handoff": "the agent handed executable work back to the user", "preview": "current browser verification is missing", "no_work": "the agent performed no workspace work"}[missing])

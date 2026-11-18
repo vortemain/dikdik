@@ -51,9 +51,9 @@ class IntegrationTests(unittest.TestCase):
 
     def test_expiry_and_process_shutdown_clear_credentials(self):
         self.routes("POST", "/api/research", {"api_key": "test-tavily-key"})
-        self.assertTrue(research.configured(self.engine.models.secrets))
+        self.assertTrue(research.tavily_connected(self.engine.models.secrets))
         with patch("dikdik.session_credentials.time.monotonic", return_value=10**15):
-            self.assertFalse(research.configured(self.engine.models.secrets))
+            self.assertFalse(research.tavily_connected(self.engine.models.secrets))
 
     def test_research_routes_validate_and_hide_keys(self):
         self.assertEqual(self.routes("POST", "/api/research", {"api_key": "bad\nkey"})[0], 400)
@@ -61,7 +61,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.routes("GET", "/api/secrets", {})[1], [])
         self.assertNotIn("test-tavily-key", json.dumps(self.routes("GET", "/api/research", {})[1]))
         self.routes("DELETE", "/api/research", {})
-        self.assertFalse(research.configured(self.engine.models.secrets))
+        self.assertFalse(research.tavily_connected(self.engine.models.secrets))
 
     def test_session_credentials_are_isolated_between_private_data_directories(self):
         store = self.engine.models.secrets
@@ -93,9 +93,19 @@ class IntegrationTests(unittest.TestCase):
         self.routes("POST", "/api/research", {"api_key": "test-tavily-key"})
         opener = Mock()
         opener.open.side_effect = urllib.error.HTTPError("https://api.tavily.com/search", 432, "test-tavily-key", {}, None)
-        with patch("dikdik.research.urllib.request.build_opener", return_value=opener):
+        offline = {"status": "failed", "error": "Web search is unavailable right now"}
+        with patch("dikdik.research.urllib.request.build_opener", return_value=opener), \
+                patch("dikdik.research.keyless_search", return_value=offline):
             result = research.search(self.engine.models.secrets, {"query": "docs"})
         self.assertIn("allowance", result["error"])
+        self.assertNotIn("test-tavily-key", json.dumps(result))
+        # With keyless search reachable, a failed Tavily call falls back to it and says why.
+        found = {"status": "passed", "provider": "DuckDuckGo", "results": [{"title": "Docs", "url": "https://example.org", "content": ""}]}
+        with patch("dikdik.research.urllib.request.build_opener", return_value=opener), \
+                patch("dikdik.research.keyless_search", return_value=dict(found)):
+            result = research.search(self.engine.models.secrets, {"query": "docs"})
+        self.assertEqual(result["provider"], "DuckDuckGo")
+        self.assertIn("allowance", result["note"])
         self.assertNotIn("test-tavily-key", json.dumps(result))
         with self.assertRaises(ValueError):
             research.search(self.engine.models.secrets, {"query": "docs", "max_results": True})

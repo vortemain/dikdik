@@ -231,7 +231,7 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   }
   const latest = isLatestTurn(msg);
   if (state !== "completed" && latest) {
-    const exact = taskRequest?.mode === "agent" && isResumable(state);
+    const exact = (taskRequest?.mode === "agent" || taskRequest?.mode === "chat") && isResumable(state);
     const resume = make("button", "small primary");
     resume.type = "button";
     resume.append(icon(exact ? "play" : "refresh"), make("span", "", exact ? "Resume" : "Continue"));
@@ -3634,7 +3634,7 @@ function renderRunState(): void {
     el("goal-stop").hidden = goal.status !== "active";
     el("goal-resume").hidden = goal.status === "active" || goal.status === "achieved";
   }
-  el("pause").hidden = !selected || !selectedState || isTerminal(selectedState) || taskRequest?.mode !== "agent";
+  el("pause").hidden = !selected || !selectedState || isTerminal(selectedState) || (taskRequest?.mode !== "agent" && taskRequest?.mode !== "chat");
   renderCommandProgress();
 }
 async function readBase64(file: File): Promise<string> {
@@ -4383,7 +4383,7 @@ function openStateMenu(): void {
   if (!isTerminal(selectedState)) {
     if (!el("pause").hidden) items.push(item("Pause after this step", "pause", () => button("pause").click()));
     items.push(item("Stop the current action", "stop", () => { void stopResponse(); }));
-  } else if (taskRequest?.mode === "agent" && isResumable(selectedState)) {
+  } else if ((taskRequest?.mode === "agent" || taskRequest?.mode === "chat") && isResumable(selectedState)) {
     items.push(item("Resume", "play", () => { void resumeTask(); }));
   }
   items.push(item("Display usage", "chart", () => openCanvas("usage")));

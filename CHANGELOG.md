@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.1 — 2026-11-18
+
+Chat is a general assistant that researches:
+- Web search works out of the box: without a Tavily key, `web_search` uses
+  DuckDuckGo (then Wikipedia) — no account or key. Chat always has it, so it no
+  longer answers "I don't have a web search tool".
+- New chat instructions: natural replies (a greeting gets a greeting, not a feature
+  list), research before answering anything about named companies, people, products,
+  recent events, statistics or health/legal/financial specifics — several searches,
+  reading 2–4 sources, cross-checking and citing them — and expert reasoning for
+  science, maths and studies.
+- Coding-only rules (project folder hints, task ownership, "no work done" nudges) no
+  longer leak into chat conversations.
+
+Conversations keep their files:
+- Files attached to earlier messages stay part of the conversation after a pause, a
+  stop or a follow-up, in Chat and Code: the model is told what was attached and can
+  reopen each file by path (`attachments/...`) with read_document, read_image or
+  statistics. The current message is no longer duplicated in the history.
+- Chats can be paused and resumed: they save their state after every step and resume
+  as a chat (before, Resume restarted them as a code agent or lost the work).
+
 ## 0.5.0 — 2026-11-17
 
 Preview documents inside Dikdik:
