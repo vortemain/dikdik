@@ -61,6 +61,11 @@ STATIC = {
     **{f"/assets/{path.relative_to(WEB / 'assets').as_posix()}":
        (path.relative_to(WEB).as_posix(), "image/svg+xml")
        for path in (WEB / "assets").glob("*/*.svg") if path.is_file() and not path.is_symlink()},
+    # Formulas (KaTeX) and diagrams (Mermaid) render offline from bundled copies.
+    "/assets/katex/katex.min.css": ("assets/katex/katex.min.css", "text/css; charset=utf-8"),
+    **{f"/assets/katex/fonts/{path.name}": (f"assets/katex/fonts/{path.name}", "font/woff2")
+       for path in (WEB / "assets/katex/fonts").glob("*.woff2") if path.is_file() and not path.is_symlink()},
+    "/assets/vendor/mermaid.min.js": ("assets/vendor/mermaid.min.js", "text/javascript; charset=utf-8"),
 }
 SESSION_AGE = 30 * 24 * 3600
 PAIRING_AGE = 600  # seconds a device-link code stays valid

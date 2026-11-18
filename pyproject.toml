@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dikdik"
-version = "0.5.2"
+version = "0.6.0"
 description = "Small name. Serious intelligence. Evidence-first engineering workspace."
 readme = "README.md"
 license = "MIT"
@@ -30,7 +30,7 @@ dikdik-desktop = "dikdik.desktop:main"
 include-package-data = false
 
 [tool.setuptools.package-data]
-dikdik = ["web/*", "web/fonts/*", "web/assets/*", "web/assets/files/*", "web/assets/providers/*", "web/assets/brands/*", "dikdik_index*", "skills/*/SKILL.md"]
+dikdik = ["web/*", "web/fonts/*", "web/assets/*", "web/assets/files/*", "web/assets/providers/*", "web/assets/brands/*", "web/assets/katex/*", "web/assets/katex/fonts/*", "web/assets/vendor/*", "dikdik_index*", "skills/*/SKILL.md"]
 
 [tool.setuptools.exclude-package-data]
 dikdik = ["*.pyd", "*.so", "*.dll", "*.dylib"]

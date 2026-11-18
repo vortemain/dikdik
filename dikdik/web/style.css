@@ -1810,3 +1810,35 @@ button.attachment-preview { cursor: pointer; font: inherit; } button.attachment-
   .sheet-table { font-size: 13.5px; }
 }
 .sheet-table .sheet-rownum, .sheet-table .sheet-corner { min-width: 0; width: 1%; white-space: nowrap; }
+
+/* Formulas (KaTeX). Display equations sit on their own line, centred, and scroll if very wide. */
+.math-inline { font-size: 1.05em; }
+.math-inline .katex { font-size: 1em; }
+.math-display { position: relative; margin: 14px 0; padding: 10px 12px; overflow-x: auto; overflow-y: hidden; text-align: center; border-radius: 10px; }
+.math-display .katex-display { margin: 0; }
+.math-display .katex { font-size: 1.18em; }
+.math-display:hover { background: var(--surface-2); }
+.math-copy { position: absolute; top: 6px; right: 6px; opacity: 0; margin: 0; padding: 2px 8px; height: 24px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); color: var(--muted); font-size: 11.5px; transition: opacity .12s; }
+.math-display:hover .math-copy, .math-copy:focus-visible { opacity: 1; }
+.math-error { font-family: var(--mono, ui-monospace, monospace); font-size: .92em; color: var(--danger, #c0392b); white-space: pre-wrap; }
+.katex .mathml, .katex-mathml { position: absolute; }
+@media (hover: none) { .math-copy { opacity: .85; } }
+
+/* Diagrams (Mermaid): a card that scales the drawing to fit, with tools and full-screen zoom. */
+.diagram { margin: 16px 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.diagram-canvas { overflow: auto; padding: 16px; text-align: center; }
+.diagram-image { max-width: 100%; height: auto; cursor: zoom-in; display: inline-block; }
+.diagram-tools { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; padding: 6px 10px; border-top: 1px solid var(--line); background: var(--surface-2); }
+.diagram-action { display: inline-flex; align-items: center; height: 26px; margin: 0; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--surface); color: var(--ink-2); font-size: 12px; font-weight: 500; text-decoration: none; cursor: pointer; }
+.diagram-action:hover { color: var(--ink); border-color: var(--line-strong, var(--line)); }
+.diagram-loading { padding: 28px; text-align: center; color: var(--muted); font-size: 13px; }
+.diagram-error { margin: 0; padding: 10px 12px; font-size: 12.5px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.diagram-full { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: var(--bg); color: var(--ink); }
+.diagram-full[open] { display: flex; flex-direction: column; }
+.diagram-full::backdrop { background: rgb(0 0 0 / .5); }
+.diagram-full-bar { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.diagram-full-bar strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.diagram-full-stage { flex: 1; min-height: 0; overflow: auto; display: grid; place-items: center; padding: 24px; }
+.diagram-full-stage img { max-width: none; }

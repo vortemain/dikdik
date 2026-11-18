@@ -14,6 +14,8 @@ releases. Third-party components keep their own licenses and notices.
 | Component | Version | License | Included notice |
 | --- | --- | --- | --- |
 | Highlight.js and its language grammars | 11.12.0 | BSD-3-Clause | [Highlight.js license](dikdik/web/assets/LICENSE-highlight.js.txt) |
+| KaTeX (engine, stylesheet and fonts) | 0.16.22 | MIT | [KaTeX license](dikdik/web/assets/LICENSE-katex.txt) |
+| Mermaid (with its bundled dependencies) | 11.9.0 | MIT (dependencies: MIT, ISC, BSD-3-Clause, Apache-2.0/MPL-2.0) | [Mermaid license](dikdik/web/assets/LICENSE-mermaid.txt) |
 | Material Icon Theme icons and associations | 5.39.0 | MIT | [Material Icon Theme license](dikdik/web/assets/LICENSE-material-icon-theme.txt) |
 | Lobe Icons static SVG assets | 1.95.1 | MIT | [Lobe Icons license](dikdik/web/assets/LICENSE-lobe-icons.txt) |
 | Inter variable font subsets | 5.3.0 | SIL Open Font License 1.1 | [Inter license](dikdik/web/fonts/LICENSE-Inter.txt) |

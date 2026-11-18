@@ -31,7 +31,7 @@ Dikdik has two ways to work, side by side in the sidebar:
 - **Chat** — a general-purpose assistant for any question: research, science, studies, writing, business and everyday topics. It searches the web and reads sources before answering, reads your Word, PDF and Excel files in full, runs real statistics, and writes finished documents. A chat needs no project: just start typing.
 - **Code** — an agent that works inside a project folder: it plans, edits files, runs commands and tests, previews apps in a browser, and shows every change for review, with checkpoints and Undo.
 
-**Web research with no setup · Word/PDF/Excel in, Word/Excel out · Research-grade statistics · Works with text-only models · 35 bundled skills · Your choice of models**
+**Web research with no setup · Typeset formulas and real diagrams · Word/PDF/Excel in, Word/Excel out · Research-grade statistics · Works with text-only models · 35 bundled skills · Your choice of models**
 
 > [!NOTE]
 > **Dikdik is a developer preview.** Get the newest build from the [latest release](https://github.com/vortemain/dikdik/releases/latest) and see [Security](SECURITY.md) for operating boundaries.
@@ -50,14 +50,14 @@ For the Python command line and browser interface (**Python 3.13 or newer**), do
 and `SHA256SUMS.txt` from the same release, verify the checksum, then install:
 
 ```bash
-python -m pip install ./dikdik-0.5.2-py3-none-any.whl
+python -m pip install ./dikdik-0.6.0-py3-none-any.whl
 dikdik --version
 dikdik /path/to/a-project-folder
 ```
 
 Dikdik opens at **http://127.0.0.1:8787** and signs you in automatically. Use `--no-browser`
 to start without opening a tab, and **Ctrl+C** to stop the server. For the desktop window from a
-wheel, install `"dikdik-0.5.2-py3-none-any.whl[desktop]"` and run `dikdik-desktop`. From a source
+wheel, install `"dikdik-0.6.0-py3-none-any.whl[desktop]"` and run `dikdik-desktop`. From a source
 checkout, `python -m pip install -e ".[desktop]"`, then double-click **Dikdik.pyw** on Windows.
 [Desktop setup →](docs/DESKTOP.md) · [Download verification →](docs/RELEASING.md)
 
@@ -87,6 +87,7 @@ files it creates, and it is listed from every project.
 | --- | --- |
 | **Researches before answering** | Questions about companies, people, products, recent events, statistics, or health, legal and financial specifics are searched with several queries; the best sources are read, cross-checked and cited. |
 | **Web search with no key** | Uses DuckDuckGo (then Wikipedia) out of the box; a connected Tavily key is used first. Pages are read with `web_fetch`. |
+| **Teaches like a tutor** | Intuition first, every symbol defined, worked examples with numbers, common mistakes and a practice question. Formulas are typeset (KaTeX) and processes are drawn as diagrams (Mermaid: flowcharts, sequences, cycles, mind maps, timelines, charts…) with Copy, SVG/PNG download and full-screen zoom. |
 | **Thinks like an expert** | Step-by-step reasoning for science and maths, academic conventions for studies and theses, honest limits for medical, legal and financial questions. Never invents sources. |
 | **Delivers finished work** | Writes Word reports with headings, tables, captions, a table of contents, page numbers and native, editable charts; Excel workbooks; Markdown and CSV. Each file appears as a card with Preview, Download, Open in app and Show in folder. |
 | **Keeps context** | Files attached earlier stay available after a pause, a stop or a follow-up. Pause and resume a long task exactly where it stopped. |
@@ -98,7 +99,7 @@ files it creates, and it is listed from every project.
 | --- | --- |
 | `read_document` | Word (.docx, .odt, .rtf), PDF (including scanned PDFs, read with OCR), Excel (.xlsx, .xls, .ods, .csv), PowerPoint (.pptx, .odp), EPUB and HTML — in full, paged, with an outline and phrase search. |
 | `statistics` | Frequencies, descriptives, Likert scales with composite scores and Cronbach's alpha, crosstabs with chi-square, Cramér's V and Fisher's exact test, t-test and Mann-Whitney, ANOVA and Kruskal-Wallis, Pearson and Spearman correlation, linear and logistic regression. Answers such as "4 = Agree" are coded automatically. Results match SciPy and statsmodels. |
-| `create_document` | Word documents from Markdown with native charts, Excel workbooks, and text formats. |
+| `create_document` | Word documents from Markdown with native charts and native, editable Word equations from LaTeX; Excel workbooks; text formats. |
 | `read_image` | Images, pictures inside documents, and scanned pages, as text. |
 
 **Previews inside Dikdik.** Word documents open as formatted pages with their pictures and charts;

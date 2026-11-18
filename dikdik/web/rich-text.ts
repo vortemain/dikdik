@@ -2,6 +2,7 @@
 import { alertKind, parseTable } from './organise';
 import { chartCard } from './response-chart';
 import { renderMermaid } from './mermaid';
+import { collectDisplay, INLINE_MATH, mathAvailable, renderMath } from './math';
 
 export interface RichTextOptions {
   codeBlock(text: string, language: string): HTMLElement;
@@ -20,7 +21,59 @@ export function responseURL(value: string): string | null {
     return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null;
   } catch { return null; }
 }
+const MATH_SPAN = new RegExp(String.raw`(\x60+)[^\n]*?\1|` + INLINE_MATH, "g");
+const SLOT = /(\d+)/g;
+
+/** Formulas are lifted out before Markdown parsing (so x_1 or a*b inside them is not read as
+ * emphasis), then put back as typeset nodes. Code spans are left alone. */
+export function liftMath(text: string): { text: string; formulas: string[] } {
+  const formulas: string[] = [];
+  if (!text.includes("$") && !text.includes("\\(")) return { text, formulas };
+  const lifted = text.replace(MATH_SPAN, (whole: string, ticks: string | undefined, a?: string, b?: string, c?: string, d?: string) => {
+    if (ticks) return whole;
+    const tex = a ?? b ?? c ?? d ?? "";
+    if (!tex.trim()) return whole;
+    formulas.push(tex);
+    return `${formulas.length - 1}`;
+  });
+  return { text: lifted, formulas };
+}
+function restoreMath(nodes: Node[], formulas: string[]): Node[] {
+  if (!formulas.length) return nodes;
+  const fill = (parent: Node) => {
+    for (const child of [...parent.childNodes]) {
+      if (child.nodeType === 3) {
+        const value = child.textContent ?? "";
+        if (!SLOT.test(value)) continue;
+        SLOT.lastIndex = 0;
+        const parts: Node[] = [];
+        let last = 0;
+        for (const match of value.matchAll(SLOT)) {
+          if (match.index! > last) parts.push(document.createTextNode(value.slice(last, match.index)));
+          const tex = formulas[Number(match[1])] ?? "";
+          parts.push(mathAvailable() ? renderMath(tex, false) : document.createTextNode(tex));
+          last = match.index! + match[0].length;
+        }
+        if (last < value.length) parts.push(document.createTextNode(value.slice(last)));
+        (child as ChildNode).replaceWith(...parts);
+      } else fill(child);
+    }
+  };
+  const holder = document.createElement("span");
+  holder.append(...nodes);
+  fill(holder);
+  return [...holder.childNodes];
+}
+
 export function renderInline(text: string, options: RichTextOptions, depth = 0): Node[] {
+  if (depth === 0) {
+    const { text: lifted, formulas } = liftMath(text);
+    if (formulas.length) return restoreMath(renderInlineText(lifted, options, 1), formulas);
+  }
+  return renderInlineText(text, options, depth);
+}
+
+function renderInlineText(text: string, options: RichTextOptions, depth = 0): Node[] {
   if (depth > 6) return [document.createTextNode(text)];
   const output: Node[] = [];
   const pattern = /\\[\\`*_{}\[\]()#+.!>~|=-]|(`+)([^\n]*?)\1|!?\[[^\]\n]+\]\([^\s)]+\)|\*\*[^\n]+?\*\*|__[^\n]+?__|~~[^\n]+?~~|==[^\n]+?==|\*[^*\n]+\*|(?<!\w)_[^_\n]+_(?!\w)|\n/g;
@@ -136,10 +189,19 @@ export function renderRichText(text: string, options: RichTextOptions, depth = 0
       const closing = new RegExp(`^ {0,3}${fence[1]![0]}{${fence[1]!.length},}\\s*$`);
       for (i++; i < lines.length && !closing.test(lines[i]!); i++) body.push(lines[i]!);
       const source = body.join('\n'), language = (fence[2] ?? '').toLowerCase();
+      const closed = i < lines.length;  // an unclosed fence is still streaming in
       root.append(language === 'chart' ? chartCard(source, options)
-        : language === 'mermaid' ? renderMermaid(source, (text, lang) => options.codeBlock(text, lang))
+        : language === 'mermaid' ? closed ? renderMermaid(source, (text, lang) => options.codeBlock(text, lang)) : options.codeBlock(source, 'mermaid')
+        : (language === 'math' || language === 'katex') && mathAvailable() ? renderMath(source, true)
         : options.codeBlock(source, language));
       continue;
+    }
+    // Display formulas: $$ … $$, \[ … \] and \begin{align} … \end{align} on their own lines.
+    const display = mathAvailable() ? collectDisplay(lines, i) : null;
+    if (display) {
+      flush(); root.append(renderMath(display.tex, true));
+      if (display.rest) { const after = node('p'); after.append(...renderInline(display.rest, options)); root.append(after); }
+      i = display.end; continue;
     }
     if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); root.append(node('hr')); continue; }
     const table = parseTable(lines, i);

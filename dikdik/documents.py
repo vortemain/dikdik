@@ -27,7 +27,7 @@ import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from . import docextract
+from . import docextract, omml
 
 READ_LIMIT = 40_000
 
@@ -61,7 +61,9 @@ CREATE_DOCUMENT_TOOL = {
             "Create a file the user can download and open: a Word document (.docx) from Markdown, an Excel workbook "
             "(.xlsx) from sheets, or a text file (.md, .txt, .csv, .html, .json). For .docx write normal Markdown: "
             "# headings, paragraphs, **bold**, *italic*, lists, pipe tables, > quotes, ![Figure 1: caption](image.png), "
-            "'Table 4.1: ...' / 'Figure 4.1: ...' lines become captions, a line '\\pagebreak' starts a new page, and a "
+            "'Table 4.1: ...' / 'Figure 4.1: ...' lines become captions, a line '\\pagebreak' starts a new page, LaTeX "
+            "maths ($...$ inline, $$...$$ or \\[...\\] or \\begin{align} on their own lines) becomes native, editable Word "
+            "equations, and a "
             "fenced ```chart block holding JSON {\"type\": \"column\"|\"bar\"|\"line\"|\"pie\", \"title\": ..., "
             "\"categories\": [...], \"series\": [{\"name\": ..., \"values\": [...]}], \"y_title\": ...} becomes a "
             "native editable Word chart. Options: title page, table of contents, academic style (Times New Roman 12, "
@@ -248,11 +250,26 @@ NS = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
     "pic": "http://schemas.openxmlformats.org/drawingml/2006/picture",
     "c": "http://schemas.openxmlformats.org/drawingml/2006/chart",
+    "m": "http://schemas.openxmlformats.org/officeDocument/2006/math",
 }
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 EMU_PER_INCH = 914400
-_INLINE = re.compile(r"(\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|__[^_]+__|(?<![\w*])\*[^*\s][^*]*\*(?!\w)|(?<![\w_])_[^_\s][^_]*_(?![\w])"
+_INLINE = re.compile(r"(\$\$[^$\n]+?\$\$|\\\(.+?\\\)|(?<![\\$\w])\$(?=[^\s$\d.,])(?:[^$\n\\]|\\.)+?(?<=[^\s\\])\$(?![\w$])|(?<![\\$\w])\$(?=\d)(?:[^$\n\\]|\\.)*?[\\^_{}=+*/<>|](?:[^$\n\\]|\\.)*?(?<=[^\s\\])\$(?![\w$])|\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|__[^_]+__|(?<![\w*])\*[^*\s][^*]*\*(?!\w)|(?<![\w_])_[^_\s][^_]*_(?![\w])"
                      r"|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|\^[^^\s]+\^|~[^~\s]+~)")
+
+
+def _inline_math(piece: str) -> str | None:
+    """The LaTeX inside an inline-math token ($…$, $$…$$ or \\(…\\)), else None."""
+    if piece.startswith("$$") and piece.endswith("$$") and len(piece) > 4:
+        return piece[2:-2]
+    if piece.startswith("\\(") and piece.endswith("\\)") and len(piece) > 4:
+        return piece[2:-2]
+    if piece.startswith("$") and piece.endswith("$") and len(piece) > 2 and not piece.startswith("$$"):
+        return piece[1:-1]
+    return None
+
+
+_DISPLAY_OPEN = re.compile(r"^(\$\$|\\\[|\\begin\{(equation|align|gather|multline|alignat|eqnarray|flalign)\*?\})")
 
 
 def _x(text: str) -> str:
@@ -287,6 +304,10 @@ class _Doc:
         out = []
         for piece in _INLINE.split(text):
             if not piece:
+                continue
+            math = _inline_math(piece)
+            if math is not None:
+                out.append(omml.inline(math))  # a real Word equation
                 continue
             props, value, link = base, piece, None
             if piece.startswith("***") and piece.endswith("***") and len(piece) > 6:
@@ -360,6 +381,12 @@ class _Doc:
 
     def list_item(self, text: str, num: int, level: int) -> None:
         self.paragraph(text, "ListParagraph", f'<w:numPr><w:ilvl w:val="{min(level, 8)}"/><w:numId w:val="{num}"/></w:numPr>')
+
+    def equation(self, tex: str) -> None:
+        """A display equation as native Word maths (centred; one paragraph per aligned line)."""
+        if tex.strip():
+            self.body.append(omml.display(tex))
+            self.counts["equations"] = self.counts.get("equations", 0) + 1
 
     def code(self, text: str) -> None:
         for line in text.split("\n") or [""]:
@@ -489,7 +516,9 @@ def _render_markdown(doc: _Doc, markdown: str, chapter_breaks: bool) -> None:
                 block.append(lines[index])
                 index += 1
             index += 1
-            if language in {"chart", "graph"}:
+            if language in {"math", "latex-math", "katex"}:
+                doc.equation("\n".join(block))
+            elif language in {"chart", "graph"}:
                 doc.chart("\n".join(block))
             elif language == "mermaid":
                 doc.warnings.append("Mermaid diagrams cannot be drawn inside Word; it was kept as text.")
@@ -497,6 +526,34 @@ def _render_markdown(doc: _Doc, markdown: str, chapter_breaks: bool) -> None:
             else:
                 doc.code("\n".join(block))
             continue
+        opening = _DISPLAY_OPEN.match(stripped)
+        if opening:
+            # Display maths: $$ … $$, \[ … \] or \begin{align} … \end{align}, on one line or several.
+            closer = {"$$": "$$", "\\[": "\\]"}.get(opening.group(1))
+            end_env = None if closer else f"\\end{{{opening.group(1)[7:-1]}}}"
+            mark = closer or end_env
+            block, cursor, rest = [], index, ""
+            text = stripped[len(opening.group(1)):] if closer else stripped
+            while True:
+                at = text.find(mark)
+                if at >= 0:  # closed on this line; text after it (e.g. "✓") stays a paragraph
+                    block.append(text[:at] if closer else text[:at + len(mark)])
+                    rest = text[at + len(mark):].strip()
+                    break
+                block.append(text)
+                if cursor + 1 >= len(lines):
+                    block = []
+                    break
+                cursor += 1
+                text = lines[cursor].strip()
+            if block:
+                flush()
+                list_state.clear()
+                doc.equation("\n".join(block))
+                if rest:
+                    doc.paragraph(rest, "BodyText")
+                index = cursor + 1
+                continue
         if stripped in {"\\pagebreak", "\\newpage", "<!-- pagebreak -->", "<div style=\"page-break-after: always\"></div>"}:
             flush()
             list_state.clear()
@@ -663,7 +720,7 @@ def build_docx(markdown: str, root: Path, title: str = "", subtitle: str = "", t
     margins = '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>'
     sect = (f'<w:sectPr><w:footerReference w:type="default" r:id="{footer_rid}"/><w:pgSz w:w="11906" w:h="16838"/>{margins}'
             f'<w:pgNumType w:start="1"/><w:cols w:space="708"/></w:sectPr>')
-    namespaces = " ".join(f'xmlns:{k}="{v}"' for k, v in NS.items() if k in ("w", "r", "wp", "a", "pic"))
+    namespaces = " ".join(f'xmlns:{k}="{v}"' for k, v in NS.items() if k in ("w", "r", "wp", "a", "pic", "m"))
     document = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {namespaces}><w:body>'
                 + "".join(doc.body) + sect + "</w:body></w:document>")
     footer = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="{NS["w"]}" xmlns:r="{NS["r"]}"><w:p><w:pPr><w:pStyle w:val="Footer"/></w:pPr>'

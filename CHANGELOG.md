@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.0 — 2026-11-18
+
+Formulas and diagrams, built for teaching:
+- Mathematics is typeset with KaTeX (bundled; works offline): `$...$` and `\(...\)`
+  inline, `$$...$$`, `\[...\]`, `\begin{align}` blocks and ```` ```math ```` fences on
+  their own lines — in replies, tables, Markdown files and previews. Prices such as
+  "$5 and $10", shell variables and code are never mistaken for maths. Display
+  equations have Copy LaTeX; formulas are readable by screen readers (MathML).
+- Diagrams use the real Mermaid engine (bundled; loaded only when needed): flowchart,
+  sequence, class, state, entity-relationship, mind map, timeline, Gantt, pie,
+  quadrant, XY chart, journey, Git graph, Sankey and block diagrams, themed for light
+  and dark. Each diagram has Copy source, SVG and PNG download, and full-screen view
+  with zoom. Common model mistakes (unquoted labels with brackets or punctuation) are
+  repaired automatically.
+- Word documents from `create_document` turn LaTeX into native, editable Word
+  equations (fractions, roots, powers, sums, integrals, limits, accents, matrices,
+  aligned lines), and `read_document` reads equations back.
+- Chat teaches like a tutor: intuition first, symbols defined, worked examples with
+  numbers, common mistakes, a practice question, LaTeX for all maths, and a diagram
+  whenever it explains how something works.
+- Fixed: a display formula followed by text on the same line (`$$...$$ ✓`) no longer
+  swallows the lines after it.
+
 ## 0.5.2 — 2026-11-18
 
 - The v0.5.1 release build stopped on an intermittent Windows test error, so 0.5.1

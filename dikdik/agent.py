@@ -932,7 +932,10 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                                    'do not insert blank spacer paragraphs. HTML/CSS fenced blocks have an optional static design preview (no scripts or external assets). '
                                    'For a chart of real supplied data, a chart fenced block accepts JSON: '
                                    '{"type":"bar" or "line","title":"...","labels":["..."],"values":[number,...]}; '
-                                   'multiple series use "series":[{"name":"...","values":[number,...]}] instead of values. Never invent chart data.')
+                                   'multiple series use "series":[{"name":"...","values":[number,...]}] instead of values. Never invent chart data. '
+                                   'Mathematics is typeset from LaTeX: $...$ inline and $$...$$ on their own lines (never maths in code blocks). '
+                                   'A ```mermaid block renders as a real diagram (flowchart, sequenceDiagram, stateDiagram-v2, classDiagram, erDiagram, '
+                                   'mindmap, timeline, pie, xychart-beta); quote labels that contain punctuation, e.g. A["Parse (input)"].')
     if not read_only and not conversation and 'Task ownership:' not in messages[0]['content']:
         messages[0]['content'] += (
             '\nTask ownership: carry the requested work through inspection, implementation, execution, repair and relevant verification. '

@@ -92,6 +92,7 @@ def _col_index(reference: str) -> int:
 # --- docx (Office Open XML) ----------------------------------------------------
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_MATH = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 
 
 def _docx_runs(node) -> str:
@@ -99,7 +100,7 @@ def _docx_runs(node) -> str:
     parts: list[str] = []
     for child in node.iter():
         tag = child.tag
-        if tag == f"{_W}t":
+        if tag == f"{_W}t" or tag == f"{_MATH}t":  # body text and equation text
             parts.append(child.text or "")
         elif tag == f"{_W}tab":
             parts.append("\t")
@@ -1357,6 +1358,8 @@ def _rich_paragraph(paragraph, rels: dict, archive, charts: dict) -> tuple[list,
         elif child.tag in (f"{_W}ins", f"{_W}smartTag", f"{_W}sdt", f"{_W}fldSimple"):
             for run in child.iter(f"{_W}r"):
                 visit_run(run)
+        elif child.tag in (f"{_MATH}oMath", f"{_MATH}oMathPara"):
+            add("".join(node.text or "" for node in child.iter(f"{_MATH}t")), {"i": 1})  # an equation, as its text
     return runs, drawings
 
 
