@@ -18,12 +18,12 @@ These assets are served by Dikdik itself. No CDN or favicon service is used.
   Its engine and 193 language grammars are compiled into the browser bundle.
   Source: https://github.com/highlightjs/highlight.js
   Full notice: `LICENSE-highlight.js.txt`.
-- **KaTeX 0.16.22**, copyright (c) 2013-2020 Khan Academy and other contributors, MIT.
+- **KaTeX 0.18.11**, copyright (c) 2013-2020 Khan Academy and other contributors, MIT.
   Formula typesetting: its engine is compiled into the browser bundle; `katex/` holds
   its unmodified stylesheet and WOFF2 fonts (the KaTeX fonts are under the same MIT license).
   Source: https://github.com/KaTeX/KaTeX
   Full notice: `LICENSE-katex.txt`.
-- **Mermaid 11.9.0**, copyright (c) 2014-2022 Knut Sveidqvist, MIT. `vendor/mermaid.min.js`
+- **Mermaid 11.17.2**, copyright (c) 2014-2022 Knut Sveidqvist, MIT. `vendor/mermaid.min.js`
   is the unmodified distribution build, loaded only when a reply contains a diagram. It
   includes its own dependencies (d3, dagre-d3-es, cytoscape, khroma, DOMPurify, lodash-es,
   dayjs and others) under their MIT, ISC, BSD-3-Clause and Apache-2.0/MPL-2.0 licenses.

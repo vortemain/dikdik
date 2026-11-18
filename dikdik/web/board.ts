@@ -71,7 +71,7 @@ let fontData: string | null = null;
 let fontLoading: Promise<string> | null = null;
 export function handwritingFont(): Promise<string> {
   if (fontData !== null) return Promise.resolve(fontData);
-  fontLoading ??= fetch("/fonts/caveat-latin-600-normal.woff2")
+  fontLoading ??= fetch("/fonts/caveat-latin-600-normal.woff2", { signal: AbortSignal.timeout(15000) })
     .then(response => response.ok ? response.arrayBuffer() : Promise.reject(new Error("font")))
     .then(buffer => {
       let binary = "";

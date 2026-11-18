@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1 — 2026-11-18
+
+Security update for the bundled drawing and formula libraries:
+- Mermaid 11.9.0 → 11.17.2, fixing published advisories (sanitisation of labels and
+  class definitions, CSS injection, denial of service in some diagram types). Diagrams
+  were already shown as images under a strict content policy, so no script could run.
+- KaTeX 0.16.22 → 0.18.11 (prototype-pollution hardening) and lodash-es → 4.18.1.
+- Sketches tolerate common JSON slips from models (a missing `"to"` key, trailing
+  commas), centre free text and fit it on the board.
+- The handwriting font request has a timeout.
+
 ## 0.7.0 — 2026-11-18
 
 Dikdik as a brain and a tutor. (0.6.0 was never published; its changes ship here.)
