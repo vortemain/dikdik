@@ -54,6 +54,16 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual(message["tool_calls"], [{"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{\"path\": \"a.py\"}"}}])
         self.assertEqual((data["choices"][0]["finish_reason"], data["usage"]), ("tool_calls", {"total_tokens": 42}))
 
+    def test_a_streamed_tool_calls_provider_signature_is_kept(self):
+        signature = {"google": {"thought_signature": "EnAKbgFpFH0T"}}
+        data = _assemble(sse(
+            {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "read_file", "arguments": "{}"}, "extra_content": signature}]}}]},
+            {"choices": [{"delta": {"tool_calls": [{"index": 1, "id": "c2", "function": {"name": "web_search", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]},
+        ), None)
+        first, second = data["choices"][0]["message"]["tool_calls"]
+        self.assertEqual(first["extra_content"], signature)
+        self.assertNotIn("extra_content", second)  # Gemini signs only the first of parallel calls
+
     def test_limit_and_junk(self):
         with self.assertRaisesRegex(ValueError, "exceeds limit"):
             _assemble([b"data: " + b"x" * 300000 + b"\n"], None)

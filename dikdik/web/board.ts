@@ -217,8 +217,8 @@ export function drawingCard(figure: HTMLElement, options: {
       image.width = result.width;
       image.height = result.height;
       image.title = "Open full screen";
-      // Wide drawings keep readable handwriting: never shrink below ~75%, scroll sideways instead.
-      image.style.minWidth = `${Math.min(result.width, Math.round(result.width * 0.75))}px`;
+      // Drawings fit the card; only very wide ones (shrunk below ~62%) scroll sideways to stay readable.
+      image.style.minWidth = `${Math.min(result.width, Math.round(result.width * 0.62))}px`;
       image.onclick = () => openFull(result.svg, result.width, result.height, options.title, boardClass);
       const canvas = document.createElement("div");
       canvas.className = "diagram-canvas";

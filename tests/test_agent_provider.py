@@ -36,6 +36,18 @@ class AgentProviderTests(unittest.TestCase):
         self.assertEqual(response.usage_tokens, 17)
         self.assertEqual(transport.call_args.kwargs["max_tokens"], 8192)
 
+    def test_keeps_a_tool_calls_provider_signature_and_rejects_a_malformed_one(self):
+        signature = {"google": {"thought_signature": "EnAKbgFpFH0T"}}
+        with patch("dikdik.agent_provider.chat_completion", return_value=reply([{**tool(), "extra_content": signature}])):
+            response = configured_model().respond([], [{"type": "function"}])
+        self.assertEqual(response.tool_calls[0].extra_content, signature)
+        with patch("dikdik.agent_provider.chat_completion", return_value=reply([tool()])):
+            self.assertIsNone(configured_model().respond([], [{"type": "function"}]).tool_calls[0].extra_content)
+        for bad in ("not a dict", {"google": {"thought_signature": "x" * 70000}}):
+            with self.subTest(bad=str(bad)[:20]), patch("dikdik.agent_provider.chat_completion", return_value=reply([{**tool(), "extra_content": bad}])), \
+                    self.assertRaisesRegex(ValueError, "invalid or incomplete"):
+                configured_model().respond([], [])
+
     def test_rejects_incomplete_malformed_and_duplicate_calls(self):
         bad = [
             reply([tool(), tool()]),

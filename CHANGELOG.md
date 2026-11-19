@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.7.3 — 2026-11-19
+
+Gemini works with documents and data; every drawing reads clearly:
+- Fixed: tasks on Gemini that used any tool (reading an attached document, running
+  statistics, searching) failed on their second step with "The provider refused the
+  request (HTTP 400)". Gemini signs each tool call and requires the signature back;
+  Dikdik dropped it. Signatures are now returned unchanged, including in streamed
+  replies, after the conversation is shortened, and when a task resumes.
+- Diagram labels are placed so they never overlap: plots and sketches now choose, for
+  every label, the spot near what it names that covers no other label and crosses no
+  line; the drawing grows so no label is cut off at an edge; and each label has a thin
+  outline in the board colour so a line behind it never cuts through its letters.
+- Every diagram's text colour is chosen for contrast with what is behind it (checked to
+  the WCAG 4.5:1 standard in all four looks). Fixed in particular: the mind map's centre
+  (white on yellow), whiteboard and clean bar charts (pale bars, invisible line), ER
+  table rows, journey colours (neon defaults), and pie legends that did not match their
+  slices. Labels on lines sit on solid backgrounds instead of see-through boxes.
+- Text in diagrams is larger (Mermaid had ignored the size setting); Gantt charts get a
+  comfortable fixed width instead of a cramped one that cut off the last bars;
+  flowcharts are more compact, and drawings fit the card unless they are very wide.
+- The mind map's central topic is centred in its box instead of spilling out.
+
 ## 0.7.2 — 2026-11-18
 
 Replies that type out, long answers, chemistry and light mode:

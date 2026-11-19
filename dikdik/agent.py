@@ -28,6 +28,9 @@ class ToolCall:
     id: str
     name: str
     arguments: dict
+    # Bounded provider continuation data for this call, returned to the provider unchanged
+    # (Gemini requires its thought_signature back). Never an instruction source.
+    extra_content: dict | None = None
 
 
 @dataclass
@@ -1294,7 +1297,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                     return outcome("failed", "Tool arguments exceed size limit")
                 serialized_args.append(args_text)
             assistant = {"role": "assistant", "content": response.content, "tool_calls": [
-                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": serialized_args[i]}}
+                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": serialized_args[i]},
+                 **({"extra_content": c.extra_content} if c.extra_content else {})}
                 for i, c in enumerate(calls)]}
             if response.reasoning_context:
                 continuation = response.reasoning_context

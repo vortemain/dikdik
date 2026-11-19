@@ -43,6 +43,19 @@ class AgentTests(unittest.TestCase):
                            lambda kind, data: self.events.append((kind, data)), self.cancel, budget, creation_policy=creation_policy)
         return result, model
 
+    def test_a_providers_tool_call_signature_goes_back_with_the_call(self):
+        # Gemini rejects the next request (HTTP 400) unless each call's thought_signature is returned.
+        signature = {"google": {"thought_signature": "EnAKbgFpFH0T"}}
+        signed = ToolCall("call-1", "run_tests", {}, signature)
+        _, model = self.run_script([[signed], [self.edit()], [self.call("run_tests")], [self.call("finish")]])
+        self.assertGreaterEqual(len(model.messages), 2)
+        assistant = next(m for m in model.messages[1] if m.get("role") == "assistant" and m.get("tool_calls"))
+        self.assertEqual(assistant["tool_calls"][0]["extra_content"], signature)
+        self.assertEqual(assistant["tool_calls"][0]["function"]["name"], "run_tests")
+        later = [call for m in model.messages[-1] if m.get("role") == "assistant" for call in m.get("tool_calls", [])]
+        self.assertEqual([call.get("extra_content") for call in later][0], signature)  # still there on every later request
+        self.assertTrue(all("extra_content" not in call for call in later[1:]))      # unsigned calls stay unsigned
+
     def test_failed_edit_pass_finish_and_protocol(self):
         def verifier(files):
             self.snapshots.append(dict(files))

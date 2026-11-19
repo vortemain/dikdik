@@ -13,6 +13,7 @@
 // Both render as SVG through ./board, so they share its styles, handwriting and animation.
 
 import { type BoardStyle, drawingCard, finishSvg, handwritingFont, isDark, palette, type Palette } from "./board";
+import { LabelLayout, haloText, textWidth, type Point } from "./label-layout";
 
 // --- a safe expression parser -------------------------------------------------------------
 
@@ -175,7 +176,6 @@ function random(seed: number): () => number {
   return () => { state = (state * 1664525 + 1013904223) >>> 0; return state / 4294967296; };
 }
 
-type Point = [number, number];
 
 /** A path through points; on boards each segment wobbles a little and is drawn twice, like chalk. */
 function strokePath(points: Point[], hand: boolean, rand: () => number, closed = false, smooth = false): string {
@@ -253,7 +253,8 @@ export function plotSvg(spec: PlotSpec, style: BoardStyle, dark: boolean): { svg
   const ink = palette(style, dark);
   const hand = style !== "clean";
   const rand = random(7);
-  const width = 680, height = 440, left = 56, right = 24, top = spec.title ? 46 : 22, bottom = 46;
+  // The title has its own band above the graph, so it never meets the y-axis or its name.
+  const width = 700, height = 460, left = 58, right = 40, top = spec.title ? 70 : 36, bottom = 48;
   const plotW = width - left - right, plotH = height - top - bottom;
   const [x0, x1] = spec.x;
   const samples = 480;
@@ -286,35 +287,47 @@ export function plotSvg(spec: PlotSpec, style: BoardStyle, dark: boolean): { svg
   const parts: string[] = [];
   const font = `font-family:${ink.font.replace(/"/g, "'")}`;
   const textSize = hand ? 19 : 13;
-  // graph paper
+  const layout = new LabelLayout({ x: 4, y: 4, w: width - 8, h: height - 8 }, hand);
+  const write = (placed: { x: number; y: number; anchor: string }, text: string, colour: string, size: number, weight = "") =>
+    haloText(placed, escapeXml(text), colour, ink.board, `${font};font-size:${size}px${weight}`);
+  const axisY = Math.min(Math.max(sy(0), top), top + plotH), axisX = Math.min(Math.max(sx(0), left), left + plotW);
+  if (spec.title) {
+    const title = layout.fixed(spec.title, textSize + 5, width / 2, 32, "middle");
+    parts.push(write(title, spec.title, ink.ink, textSize + 5, ";font-weight:600"));
+  }
+  // graph paper and tick labels (reserved first: curve names must not cover them)
   if (spec.grid) {
     const stepX = spec.piAxis ? (x1 - x0 > 8 * Math.PI ? Math.PI * 2 : x1 - x0 > 3 * Math.PI ? Math.PI : Math.PI / 2) : niceStep(x1 - x0);
     const stepY = niceStep(y1 - y0);
     for (let x = Math.ceil(x0 / stepX) * stepX; x <= x1 + 1e-9; x += stepX) parts.push(`<line data-static="1" x1="${sx(x).toFixed(1)}" y1="${top}" x2="${sx(x).toFixed(1)}" y2="${top + plotH}" stroke="${ink.grid}" stroke-width="1"/>`);
     for (let y = Math.ceil(y0 / stepY) * stepY; y <= y1 + 1e-9; y += stepY) parts.push(`<line data-static="1" x1="${left}" y1="${sy(y).toFixed(1)}" x2="${left + plotW}" y2="${sy(y).toFixed(1)}" stroke="${ink.grid}" stroke-width="1"/>`);
+    const tick = textSize - 2;
     for (let x = Math.ceil(x0 / stepX) * stepX; x <= x1 + 1e-9; x += stepX) {
       if (Math.abs(x) < 1e-9 && y0 <= 0 && y1 >= 0) continue;
-      parts.push(`<text x="${sx(x).toFixed(1)}" y="${(Math.min(Math.max(sy(0), top), top + plotH) + textSize + 2).toFixed(1)}" text-anchor="middle" fill="${ink.muted}" style="${font};font-size:${textSize - 2}px">${fmt(x, spec.piAxis)}</text>`);
+      const text = fmt(x, spec.piAxis), half = textWidth(text, tick, hand) / 2 + 2;
+      const at = layout.fixed(text, tick, Math.min(Math.max(sx(x), half + 2), width - half - 2), axisY + tick + 4, "middle");
+      parts.push(write(at, text, ink.muted, tick));
     }
     for (let y = Math.ceil(y0 / stepY) * stepY; y <= y1 + 1e-9; y += stepY) {
       if (Math.abs(y) < 1e-9) continue;
-      parts.push(`<text x="${(Math.min(Math.max(sx(0), left), left + plotW) - 6).toFixed(1)}" y="${(sy(y) + 5).toFixed(1)}" text-anchor="end" fill="${ink.muted}" style="${font};font-size:${textSize - 2}px">${fmt(y)}</text>`);
+      const text = fmt(y);
+      const at = layout.fixed(text, tick, axisX - 7, sy(y) + tick * 0.35, "end");
+      parts.push(write(at, text, ink.muted, tick));
     }
   }
   // axes with arrowheads
-  const axisY = Math.min(Math.max(sy(0), top), top + plotH), axisX = Math.min(Math.max(sx(0), left), left + plotW);
   const arrow = (x: number, y: number, dx: number, dy: number) => {
     const size = 9, nx = -dy, ny = dx;
     return `<path d="${strokePath([[x - dx * size + nx * size * 0.5, y - dy * size + ny * size * 0.5], [x, y], [x - dx * size - nx * size * 0.5, y - dy * size - ny * size * 0.5]], hand, rand)}" fill="none" stroke="${ink.ink}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
   };
   parts.push(`<path d="${strokePath([[left - 4, axisY], [left + plotW + 10, axisY]], hand, rand)}" fill="none" stroke="${ink.ink}" stroke-width="2" stroke-linecap="round"/>`,
     arrow(left + plotW + 10, axisY, 1, 0),
-    `<path d="${strokePath([[axisX, top + plotH + 4], [axisX, top - 10]], hand, rand)}" fill="none" stroke="${ink.ink}" stroke-width="2" stroke-linecap="round"/>`,
-    arrow(axisX, top - 10, 0, -1),
-    `<text x="${left + plotW + 6}" y="${axisY - 10}" text-anchor="end" fill="${ink.ink}" style="${font};font-size:${textSize}px">${escapeXml(spec.xLabel)}</text>`,
-    `<text x="${axisX + 10}" y="${top - 2}" fill="${ink.ink}" style="${font};font-size:${textSize}px">${escapeXml(spec.yLabel)}</text>`);
+    `<path d="${strokePath([[axisX, top + plotH + 4], [axisX, top - 12]], hand, rand)}" fill="none" stroke="${ink.ink}" stroke-width="2" stroke-linecap="round"/>`,
+    arrow(axisX, top - 12, 0, -1));
+  layout.addPath([[left - 4, axisY], [left + plotW + 10, axisY]]);
+  layout.addPath([[axisX, top + plotH + 4], [axisX, top - 12]]);
   // curves, broken at asymptotes and gaps
-  curves.forEach((values, index) => {
+  const drawn: Point[][][] = curves.map((values, index) => {
     const colour = ink.accents[index % ink.accents.length]!;
     const segments: Point[][] = [];
     let current: Point[] = [];
@@ -333,25 +346,38 @@ export function plotSvg(spec: PlotSpec, style: BoardStyle, dark: boolean): { svg
     for (const segment of segments) {
       const thinned = hand ? segment.filter((_, i) => i % 4 === 0 || i === segment.length - 1) : segment;
       parts.push(`<path d="${strokePath(thinned, hand, rand, false, true)}" fill="none" stroke="${colour}" stroke-width="${hand ? 2.6 : 2.2}" stroke-linecap="round" stroke-linejoin="round" clip-path="url(#plot-area)"/>`);
+      layout.addPath(segment.filter((_, i) => i % 2 === 0 || i === segment.length - 1).filter(([, y]) => y >= top - 4 && y <= top + plotH + 4));
     }
-    // label near the right end of the visible curve
-    const visible = values.filter(([, y]) => Number.isFinite(y) && y >= y0 && y <= y1);
-    const end = visible[Math.floor(visible.length * 0.85)];
-    if (end) {
-      const label = prettyFormula(spec.functions[index]!.label.replace(/^y\s*=\s*/i, "y = "));
-      parts.push(`<text x="${Math.min(sx(end[0]) + 6, left + plotW - 4).toFixed(1)}" y="${(sy(end[1]) - 8).toFixed(1)}" text-anchor="end" fill="${colour}" style="${font};font-size:${textSize}px">${escapeXml(label)}</text>`);
-    }
+    return segments;
   });
-  for (const line of spec.vertical) {
-    parts.push(`<path d="${strokePath([[sx(line.x), top], [sx(line.x), top + plotH]], hand, rand)}" fill="none" stroke="${ink.accents[2]}" stroke-width="2" stroke-dasharray="6 6"/>`);
-    if (line.label) parts.push(`<text x="${sx(line.x) + 6}" y="${top + 16}" fill="${ink.accents[2]}" style="${font};font-size:${textSize}px">${escapeXml(line.label)}</text>`);
+  const lines = spec.vertical.map(line => {
+    const x = sx(line.x);
+    parts.push(`<path d="${strokePath([[x, top], [x, top + plotH]], hand, rand)}" fill="none" stroke="${ink.accents[2]}" stroke-width="2" stroke-dasharray="6 6"/>`);
+    layout.addPath([[x, top], [x, top + plotH]]);
+    return { line, x };
+  });
+  for (const point of spec.points) layout.reserve({ x: sx(point.x) - 6, y: sy(point.y) - 6, w: 12, h: 12 });
+  // Names, placed where they cover nothing: axis names first, then each curve, line and point.
+  const xName = layout.place(spec.xLabel, textSize, [[left + plotW + 10, axisY]], { prefer: [-0.4, -1] });
+  const yName = layout.place(spec.yLabel, textSize, [[axisX, top - 12]], { prefer: [1, 0] });
+  parts.push(write(xName, spec.xLabel, ink.ink, textSize), write(yName, spec.yLabel, ink.ink, textSize));
+  drawn.forEach((segments, index) => {
+    const inside = segments.flat().filter(([x, y]) => y >= top + 8 && y <= top + plotH - 8 && x >= left + 8 && x <= left + plotW - 8);
+    if (!inside.length) return;
+    const anchors = [0.88, 0.72, 0.95, 0.56, 0.4, 0.25, 0.1].map(f => inside[Math.min(inside.length - 1, Math.floor(inside.length * f))]!);
+    const text = prettyFormula(spec.functions[index]!.label.replace(/^y\s*=\s*/i, "y = "));
+    parts.push(write(layout.place(text, textSize, anchors, { gap: 9 }), text, ink.accents[index % ink.accents.length]!, textSize));
+  });
+  for (const { line, x } of lines) {
+    if (!line.label) continue;
+    const placed = layout.place(line.label, textSize, [[x, top + 14], [x, top + plotH - 14], [x, top + plotH / 2]], { prefer: [1, 0] });
+    parts.push(write(placed, line.label, ink.accents[2]!, textSize));
   }
   for (const point of spec.points) {
-    parts.push(`<circle cx="${sx(point.x).toFixed(1)}" cy="${sy(point.y).toFixed(1)}" r="4.5" fill="${ink.ink}" stroke="${ink.ink}"/>`);
     const text = `${point.label ? point.label + " " : ""}(${fmt(point.x)}, ${fmt(point.y)})`;
-    parts.push(`<text x="${(sx(point.x) + 8).toFixed(1)}" y="${(sy(point.y) - 8).toFixed(1)}" fill="${ink.ink}" style="${font};font-size:${textSize - 1}px">${escapeXml(text)}</text>`);
+    parts.push(`<circle cx="${sx(point.x).toFixed(1)}" cy="${sy(point.y).toFixed(1)}" r="4.5" fill="${ink.ink}" stroke="${ink.ink}"/>`,
+      write(layout.place(text, textSize - 1, [[sx(point.x), sy(point.y)]], { gap: 8 }), text, ink.ink, textSize - 1));
   }
-  if (spec.title) parts.push(`<text x="${width / 2}" y="28" text-anchor="middle" fill="${ink.ink}" style="${font};font-size:${textSize + 4}px;font-weight:600">${escapeXml(spec.title)}</text>`);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
     `<defs><clipPath id="plot-area"><rect x="${left}" y="${top - 4}" width="${plotW + 4}" height="${plotH + 8}"/></clipPath></defs>${parts.join("")}</svg>`;
   return { svg, width, height };
@@ -408,22 +434,25 @@ export function sketchSvg(spec: SketchSpec, style: BoardStyle, dark: boolean): {
     const origin = spec.axes || spec.grid ? [0] : [];  // only axes and grids need the origin on the board
     const minX = Math.min(...origin, ...xs) - 0.6, maxX = Math.max(spec.width ?? -Infinity, ...origin, ...xs) + 0.6;
     const minY = Math.min(...origin, ...ys) - 0.6, maxY = Math.max(spec.height ?? -Infinity, ...origin, ...ys) + 0.6;
-    return { minX, maxX, minY, maxY, unit: Math.min(70, 640 / Math.max(maxX - minX, 1), 460 / Math.max(maxY - minY, 1)) };
+    return { minX, maxX, minY, maxY, unit: Math.min(70, 600 / Math.max(maxX - minX, 1), 430 / Math.max(maxY - minY, 1)) };
   };
   // Free text is centred on its point; widen the board so long notes are never cut off.
   const textExtent = (unit: number) => spec.items.filter(item => (item.type ?? "").toLowerCase() === "text" && Array.isArray(item.at)).flatMap(item => {
-    const half = String(item.text ?? item.label ?? "").length * textSize * (item.size ?? 1) * 0.27 / unit;
+    const half = textWidth(String(item.text ?? item.label ?? ""), textSize * (item.size ?? 1), hand) / 2 / unit;
     return [[item.at![0]! - half, item.at![1]!], [item.at![0]! + half, item.at![1]!]];
   });
   let bounds = fit([]);
   bounds = fit(textExtent(bounds.unit));
   bounds = fit(textExtent(bounds.unit));
   const { minX, maxX, minY, maxY, unit } = bounds;
-  const top = spec.title ? 40 : 10;
+  const top = spec.title ? 44 : 10;
   const width = Math.round((maxX - minX) * unit + 20), height = Math.round((maxY - minY) * unit + top + 10);
   const px = (p: number[]): Point => [10 + (p[0]! - minX) * unit, top + (maxY - p[1]!) * unit];
   const font = `font-family:${ink.font.replace(/"/g, "'")}`;
   const parts: string[] = [];
+  const layout = new LabelLayout(null, hand);
+  const write = (placed: { x: number; y: number; anchor: string }, text: string, colour: string, size = textSize, weight = "") =>
+    haloText(placed, escapeXml(text), colour, ink.board, `${font};font-size:${size}px${weight}`);
   if (spec.grid) {
     for (let x = Math.ceil(minX); x <= maxX; x++) parts.push(`<line data-static="1" x1="${px([x, 0])[0]}" y1="${top}" x2="${px([x, 0])[0]}" y2="${height - 10}" stroke="${ink.grid}"/>`);
     for (let y = Math.ceil(minY); y <= maxY; y++) parts.push(`<line data-static="1" x1="10" y1="${px([0, y])[1]}" x2="${width - 10}" y2="${px([0, y])[1]}" stroke="${ink.grid}"/>`);
@@ -434,17 +463,19 @@ export function sketchSvg(spec: SketchSpec, style: BoardStyle, dark: boolean): {
     const b: Point = [to[0] - size * Math.cos(angle + 0.45), to[1] - size * Math.sin(angle + 0.45)];
     return `<path d="${strokePath([a, to, b], hand, rand)}" fill="none" stroke="${colour}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`;
   };
-  const label = (text: string | undefined, at: Point, colour: string, dx = 6, dy = -8) =>
-    text ? `<text x="${(at[0] + dx).toFixed(1)}" y="${(at[1] + dy).toFixed(1)}" fill="${colour}" style="${font};font-size:${textSize}px">${escapeXml(text)}</text>` : "";
   if (spec.axes) {
-    parts.push(`<path d="${strokePath([px([minX + 0.2, 0]), px([maxX - 0.2, 0])], hand, rand)}" fill="none" stroke="${ink.muted}" stroke-width="1.8"/>`,
-      head(px([minX + 0.2, 0]), px([maxX - 0.2, 0]), ink.muted),
-      `<path d="${strokePath([px([0, minY + 0.2]), px([0, maxY - 0.2])], hand, rand)}" fill="none" stroke="${ink.muted}" stroke-width="1.8"/>`,
-      head(px([0, minY + 0.2]), px([0, maxY - 0.2]), ink.muted));
+    const ax: Point[] = [px([minX + 0.2, 0]), px([maxX - 0.2, 0])], ay: Point[] = [px([0, minY + 0.2]), px([0, maxY - 0.2])];
+    parts.push(`<path d="${strokePath(ax, hand, rand)}" fill="none" stroke="${ink.muted}" stroke-width="1.8"/>`, head(ax[0]!, ax[1]!, ink.muted),
+      `<path d="${strokePath(ay, hand, rand)}" fill="none" stroke="${ink.muted}" stroke-width="1.8"/>`, head(ay[0]!, ay[1]!, ink.muted));
+    layout.addPath(ax); layout.addPath(ay);
   }
-  spec.items.forEach((item, index) => {
+  // 1. Draw every shape and record its lines, so labels can avoid them.
+  type Pending = { text: string; colour: string; anchors: Point[]; prefer?: Point; gap?: number };
+  const pending: Pending[] = [];
+  const along = (a: Point, b: Point, t: number): Point => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  spec.items.forEach(item => {
     const type = (item.type ?? (item.text && item.at ? "text" : item.points ? "polygon" : item.center ? "circle" : item.from ? "line" : "point")).toLowerCase();
-    const colour = colourOf(item.color, ink, index === 0 ? ink.ink : ink.ink);
+    const colour = colourOf(item.color, ink, ink.ink);
     const dash = item.dashed ? ' stroke-dasharray="7 6"' : "";
     const stroke = `fill="${item.fill ? ink.fill : "none"}" stroke="${colour}" stroke-width="${item.width ?? 2.4}" stroke-linecap="round" stroke-linejoin="round"${dash}`;
     if ((type === "line" || type === "arrow" || type === "vector" || type === "force") && item.from && item.to) {
@@ -452,26 +483,43 @@ export function sketchSvg(spec: SketchSpec, style: BoardStyle, dark: boolean): {
       parts.push(`<path d="${strokePath([a, b], hand, rand)}" ${stroke}/>`);
       if (type !== "line" || item.arrow) parts.push(head(a, b, colour));
       if (item.arrow === "both") parts.push(head(b, a, colour));
-      parts.push(label(item.label, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], colour));
+      layout.addPath([a, b]);
+      const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const normal: Point = [-(b[1] - a[1]) / length, (b[0] - a[0]) / length];
+      const tipFirst = type !== "line";
+      if (item.label) pending.push({ text: item.label, colour, prefer: normal[1] > 0 ? [-normal[0], -normal[1]] : normal,
+        anchors: tipFirst ? [b, along(a, b, 0.7), along(a, b, 0.5)] : [along(a, b, 0.5), along(a, b, 0.3), along(a, b, 0.7)] });
     } else if ((type === "circle" || type === "ellipse") && item.center) {
       const c = px(item.center), rx = (item.r ?? item.rx ?? 1) * unit, ry = (item.r ?? item.ry ?? 1) * unit;
       const points: Point[] = Array.from({ length: 33 }, (_, i) => [c[0] + rx * Math.cos(i / 32 * Math.PI * 2), c[1] + ry * Math.sin(i / 32 * Math.PI * 2)]);
-      parts.push(`<path d="${strokePath(points, hand, rand, false, true)}" ${stroke}/>`, label(item.label, [c[0] + rx * 0.72, c[1] - ry * 0.72], colour));
+      parts.push(`<path d="${strokePath(points, hand, rand, false, true)}" ${stroke}/>`);
+      layout.addPath(points);
+      if (item.label) {
+        const fitsInside = textWidth(item.label, textSize, hand) < rx * 1.6 && ry > textSize * 0.8;
+        const rim = [-45, -135, 45, 135, 0, 180, -90, 90].map(deg => [c[0] + rx * Math.cos(deg * Math.PI / 180), c[1] + ry * Math.sin(deg * Math.PI / 180)] as Point);
+        pending.push({ text: item.label, colour, anchors: item.fill && fitsInside ? [c, ...rim] : rim, gap: 8 });
+      }
     } else if (type === "rect" && item.from && item.to) {
       const a = px(item.from), b = px(item.to);
-      parts.push(`<path d="${strokePath([a, [b[0], a[1]], b, [a[0], b[1]]], hand, rand, true)}" ${stroke}/>`, label(item.label, [Math.min(a[0], b[0]), Math.min(a[1], b[1])], colour, 4, -6));
+      const corners: Point[] = [a, [b[0], a[1]], b, [a[0], b[1]]];
+      parts.push(`<path d="${strokePath(corners, hand, rand, true)}" ${stroke}/>`);
+      layout.addPath(corners, true);
+      const cx = (a[0] + b[0]) / 2, topY = Math.min(a[1], b[1]), bottomY = Math.max(a[1], b[1]);
+      if (item.label) pending.push({ text: item.label, colour, anchors: [[cx, topY], [cx, bottomY], [cx, (topY + bottomY) / 2]], prefer: [0, -1] });
     } else if ((type === "polygon" || type === "triangle") && item.points && item.points.length > 1) {
       const points = item.points.map(px);
       parts.push(`<path d="${strokePath(points, hand, rand, true)}" ${stroke}/>`);
+      layout.addPath(points, true);
       if (item.label) {
-        const cx = points.reduce((s, p) => s + p[0], 0) / points.length, cy = points.reduce((s, p) => s + p[1], 0) / points.length;
-        parts.push(label(item.label, [cx, cy], colour, -10, 6));
+        const centre: Point = [points.reduce((s, p) => s + p[0], 0) / points.length, points.reduce((s, p) => s + p[1], 0) / points.length];
+        pending.push({ text: item.label, colour, anchors: [centre, ...points], gap: 4 });
       }
     } else if ((type === "curve" || type === "path" || type === "polyline") && item.points && item.points.length > 1) {
       const points = item.points.map(px);
       parts.push(`<path d="${strokePath(points, hand, rand, false, type === "curve")}" ${stroke}/>`);
       if (item.arrow) parts.push(head(points[points.length - 2]!, points[points.length - 1]!, colour));
-      parts.push(label(item.label, points[points.length - 1]!, colour));
+      layout.addPath(points);
+      if (item.label) pending.push({ text: item.label, colour, anchors: [points[points.length - 1]!, points[Math.floor(points.length / 2)]!, points[0]!] });
     } else if ((type === "angle" || type === "arc") && item.at) {
       const c = px(item.at), r = (item.r ?? 0.6) * unit;
       const start = (item.start ?? 0) * Math.PI / 180, end = (item.end ?? 90) * Math.PI / 180;
@@ -481,18 +529,27 @@ export function sketchSvg(spec: SketchSpec, style: BoardStyle, dark: boolean): {
         return [c[0] + r * Math.cos(t), c[1] - r * Math.sin(t)];
       });
       parts.push(`<path d="${strokePath(points, hand, rand, false, true)}" ${stroke}/>`);
-      const middle = (start + end) / 2;
-      if (item.label) parts.push(`<text x="${(c[0] + (r + 12) * Math.cos(middle)).toFixed(1)}" y="${(c[1] - (r + 12) * Math.sin(middle) + 6).toFixed(1)}" text-anchor="middle" fill="${colour}" style="${font};font-size:${textSize}px">${escapeXml(item.label)}</text>`);
+      layout.addPath(points);
+      const middle = (start + end) / 2, outward: Point = [Math.cos(middle), -Math.sin(middle)];
+      if (item.label) pending.push({ text: item.label, colour, anchors: [[c[0] + r * outward[0], c[1] + r * outward[1]]], prefer: outward, gap: 6 });
     } else if (type === "point" && item.at) {
       const c = px(item.at);
-      parts.push(`<circle cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="4.5" fill="${colour}" stroke="${colour}"/>`, label(item.label, c, colour));
+      parts.push(`<circle cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="4.5" fill="${colour}" stroke="${colour}"/>`);
+      layout.reserve({ x: c[0] - 6, y: c[1] - 6, w: 12, h: 12 });
+      if (item.label) pending.push({ text: item.label, colour, anchors: [c], gap: 8 });
     } else if (type === "text" && item.at) {
-      const c = px(item.at);
-      parts.push(`<text x="${c[0].toFixed(1)}" y="${c[1].toFixed(1)}" text-anchor="middle" fill="${colour}" style="${font};font-size:${Math.round(textSize * (item.size ?? 1))}px">${escapeXml(item.text ?? item.label ?? "")}</text>`);
+      const c = px(item.at), size = Math.round(textSize * (item.size ?? 1)), text = item.text ?? item.label ?? "";
+      parts.push(write(layout.fixed(text, size, c[0], c[1], "middle"), text, colour, size));
     }
   });
-  if (spec.title) parts.push(`<text x="${width / 2}" y="26" text-anchor="middle" fill="${ink.ink}" style="${font};font-size:${textSize + 3}px;font-weight:600">${escapeXml(spec.title)}</text>`);
-  return { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join("")}</svg>`, width, height };
+  if (spec.title) parts.push(write(layout.fixed(spec.title, textSize + 3, width / 2, 28, "middle"), spec.title, ink.ink, textSize + 3, ";font-weight:600"));
+  // 2. Place every label where it covers no other label and crosses as few lines as possible.
+  for (const label of pending) parts.push(write(layout.place(label.text, textSize, label.anchors, { gap: label.gap ?? 7, prefer: label.prefer }), label.text, label.colour));
+  // 3. Grow the board so no label is cut off at an edge.
+  const extent = layout.extent();
+  const vx = Math.min(0, Math.floor((extent?.x ?? 0) - 8)), vy = Math.min(0, Math.floor((extent?.y ?? 0) - 8));
+  const vw = Math.max(width, Math.ceil((extent ? extent.x + extent.w : 0) + 8)) - vx, vh = Math.max(height, Math.ceil((extent ? extent.y + extent.h : 0) + 8)) - vy;
+  return { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${vw}" height="${vh}" viewBox="${vx} ${vy} ${vw} ${vh}">${parts.join("")}</svg>`, width: vw, height: vh };
 }
 
 // --- cards ------------------------------------------------------------------------------------

@@ -144,6 +144,10 @@ def _assemble(lines, on_text) -> dict:
                     raise ProviderError("protocol", validation="arguments_type", usage=usage_breakdown({"usage": usage or {}}))
                 slot["function"]["name"] += function.get("name") or ""
                 slot["function"]["arguments"] += function.get("arguments") or ""
+                # Provider continuation data on a call (Gemini's thought_signature) must go back unchanged.
+                if isinstance(piece.get("extra_content"), dict):
+                    slot["extra_content"] = {**slot.get("extra_content", {}), **piece["extra_content"]}
+                    semantic_size += len(json.dumps(piece["extra_content"]).encode())
                 semantic_size += len((function.get("name") or "").encode()) + len((function.get("arguments") or "").encode())
             if semantic_size + len(json.dumps(details).encode()) > RESPONSE_LIMIT or len(calls) > 8:
                 raise ProviderError("response_limit", "Provider response exceeds limit")

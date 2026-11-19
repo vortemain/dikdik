@@ -13,6 +13,7 @@ from .model_limits import MAX_MODEL_TEXT_BYTES, MAX_TOOL_ARGUMENT_BYTES
 
 DEFAULT_AGENT_OUTPUT_TOKENS = 8192
 ADAPTIVE_OUTPUT_CEILING = 65536
+MAX_CALL_EXTRA_BYTES = 65536  # provider continuation data per tool call (signatures grow with the thinking)
 
 
 def reasoning_context(message: dict) -> dict:
@@ -142,7 +143,12 @@ class CompatibleAgentModel:
                 if len(json.dumps(parsed, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode()) > MAX_TOOL_ARGUMENT_BYTES:
                     raise self._malformed("arguments_size", data)
                 ids.add(identity)
-                calls.append(ToolCall(identity, name, parsed))
+                # Gemini signs each tool call (extra_content.google.thought_signature) and rejects the
+                # next request with HTTP 400 unless the signature comes back with the call.
+                extra = call.get("extra_content")
+                if extra is not None and (not isinstance(extra, dict) or len(json.dumps(extra).encode()) > MAX_CALL_EXTRA_BYTES):
+                    raise self._malformed("tool_extra", data)
+                calls.append(ToolCall(identity, name, parsed, json.loads(json.dumps(extra)) if extra else None))
             continuation = reasoning_context(message)
             if not content.strip() and not calls:
                 raise ProviderError("empty_response", usage=usage_breakdown(data))
