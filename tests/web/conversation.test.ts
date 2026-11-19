@@ -86,3 +86,13 @@ test("the agent profile travels only with agent tasks", async () => {
   expect(buildTaskRequest({ ...base, mode: "agent", agentProfile: "" }).agent_profile).toBeUndefined();
   expect(buildTaskRequest({ ...base, mode: "model", agentProfile: "p1" }).agent_profile).toBeUndefined();
 });
+
+test("long replies and long user messages are shown in full, not cut at 8,000 characters", () => {
+  const lesson = "A long lesson paragraph about organic chemistry. ".repeat(600);  // ~29,000 characters
+  const question = "Here is my whole essay. ".repeat(400);
+  const messages = eventsToChat([event(1, "user_message", { text: question }), event(2, "agent_message", { content: lesson })], "Teach me");
+  const reply = messages.find(m => m.role === "assistant");
+  expect(reply?.body).toBe(lesson);
+  expect(messages.some(m => m.body === question)).toBe(true);
+  expect(messages.some(m => (m.body ?? "").includes("(truncated)"))).toBe(false);
+});

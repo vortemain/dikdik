@@ -437,7 +437,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     text = engine.live.get(task)
                     if text != live:
                         live = text
-                        send_text(sock, json.dumps({"type": "delta", "text": (text or "")[:16384]}))
+                        send_text(sock, json.dumps({"type": "delta", "text": (text or "")[:65536]}))
                     idle = (not events and state in TERMINAL and not engine.busy(task)
                             and not engine.bash.busy(task) and not engine.browser.busy(task))
                     if idle and not ended:

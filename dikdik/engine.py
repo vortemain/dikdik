@@ -744,7 +744,10 @@ class Engine:
                 model_id = data["request"].get("model_profile") or (self._profile(data["request"]) or {}).get("model_profile_id") or None
             text = complete(self.models.resolve(model_id), [{"role": "system", "content": TITLE_PROMPT},
                                                             *self._history(task, include_last=True)[-6:]], 40)
-            title = " ".join(str(text).split()).strip(" \"'`.")[:80]
+            # A model may answer in Markdown ("## Order of operations", "**Title:** …"): keep the words only.
+            title = " ".join(str(text).split()).lstrip("#>*-_ ").replace("**", "").strip(" \"'`.*_#")
+            title = title.split(":", 1)[1].strip() if title.lower().startswith("title:") else title
+            title = title[:80]
             if not title:
                 return {"title": ""}
             with self.store.connect() as db:
@@ -1361,7 +1364,7 @@ class Engine:
 
     def _live(self, task, text):
         if text:
-            self.live[task] = text[-16384:]
+            self.live[task] = text[:65536]  # the whole reply so far (model text is capped at 64 KB)
         else:
             self.live.pop(task, None)
 
@@ -2558,7 +2561,9 @@ class Engine:
             "(primary, secondary, university, professional) and check understanding instead of lecturing.\n\n"
             "FORMULAS: Write all mathematics in LaTeX — it is typeset. Inline: $E = mc^2$; display equations on their own "
             "lines: $$\\int_0^1 x^2\\,dx = \\tfrac{1}{3}$$; derivations with \\begin{aligned} … \\end{aligned} inside $$ … $$. "
-            "Use \\frac, \\sqrt, ^, _, \\sum, \\int, \\lim, \\vec, units with \\,\\mathrm{m/s}, chemistry as $\\mathrm{H_2O}$. "
+            "Use \\frac, \\sqrt, ^, _, \\sum, \\int, \\lim, \\vec, units with \\,\\mathrm{m/s}. "
+            "Chemistry always with \\ce{}: formulas $\\ce{H2O}$, $\\ce{CH3-CH2-OH}$, ions $\\ce{SO4^2-}$, reactions "
+            "$$\\ce{2H2 + O2 -> 2H2O}$$, equilibria $\\ce{N2 + 3H2 <=> 2NH3}$; in tables too. "
             "Never put maths in code blocks or as plain text like x^2; write money as 5 dollars or KSh 500, not with $.\n\n"
             "DRAW LIKE A TEACHER AT THE BOARD: Drawings appear on a chalkboard or whiteboard in handwriting, drawn in stroke "
             "by stroke. Use them generously when teaching or explaining — always at least one when explaining how something "
@@ -2685,7 +2690,8 @@ class Engine:
             images = None
         outcome = run_agent(
             original, objective,
-            CompatibleAgentModel(request["approve_external"], lambda: self.models.resolve(model_id), cancel=cancel),
+            # The reply streams to the screen as it is written (it is typed out there).
+            CompatibleAgentModel(request["approve_external"], lambda: self.models.resolve(model_id), lambda text: self._live(task, text), cancel=cancel),
             None, emit, cancel, budget,
             history=notes + list(history or []), extra_tools=tools, extra_call=extra_call,
             read_only=not local, system=system, task_id=task, hook_lifecycle=False,

@@ -26,7 +26,9 @@ import { codeBlock, diffLines, tokenNodes, languageFor, looksLikeDiff, safePageL
 import { TOOL_LABELS, detailField, toolName, stepLabel, siteChip, webPageCard, renderTaskChecklistWidget, renderTestChecksWidget, renderPropertiesUI, renderStructuredUI, renderOutputUI, createChatWidgets, type StepLabel } from './chat-widgets';
 import { docKind, docViewer, DOC_KIND_LABELS, type DocKind } from './doc-viewer';
 import { openDocPreview, type PreviewSource } from './doc-preview';
-import { boardStyle, setBoardStyle, type BoardStyle } from './board';
+import { announceTheme, boardStyle, setBoardStyle, type BoardStyle } from './board';
+import { copyWithTex } from './math';
+import { Typewriter } from './typewriter';
 import { createAskDrawer } from './ask-drawer';
 import { createConversationMode, isChatConversation } from './conversation-mode';
 import { startGreeting, suggestionsFor, chatSuggestions, renderSuggestions, factsFromFiles } from './welcome';
@@ -2449,31 +2451,55 @@ const streamPaint = frameBatch(() => {
   renderMessageStream(lastMessages);
   renderRunState();
 });
+// The reply is typed onto the screen (typewriter.ts). When the finished message arrives, it is
+// held, with any events after it, until the typing has caught up; then the message takes over.
+let typer: Typewriter | null = null;
+let heldEvents: TaskEvent[] = [], heldEnd = false, heldReply: string | null = null;
+const typingMotion = () => !(globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
 function stopStream(): void {
   replyPaint.cancel(); streamPaint.cancel(); terminalPaint.cancel(); pendingReply = "";
   live?.close();
   live = null; liveTask = null;
+  heldEvents = []; heldEnd = false; heldReply = null;
   showLiveReply("");
 }
-function showLiveReply(text: string): void {
+function showLiveReply(text: string, onShown?: () => void): void {
   const existing = document.getElementById?.("live-reply");
   if (!text) {
+    typer?.stop(); typer = null;
     existing?.remove?.();
     if (existing) el("working-label").textContent = "Working";
     return;
   }
   const li = existing ?? make("li", "msg msg-assistant msg-live");
-  if (!existing) {
+  if (!existing || !typer) {
     li.id = "live-reply";
     const avatar = make("img", "avatar"); avatar.src = "/icon.svg"; avatar.alt = "";
-    li.append(avatar, make("div"));
+    const body = make("div"), reply = make("div", "live-text");
+    body.append(make("div", "msg-label", "Dikdik"), reply);
+    li.replaceChildren(avatar, body);
+    typer?.stop();
+    typer = new Typewriter(reply, value => richText(value), typingMotion, followTyping);
   }
-  const body = li.lastElementChild as HTMLElement;
-  body.replaceChildren(make("div", "msg-label", "Dikdik"), richText(text));
-  el("message-stream").append(li);  // keep it last
+  if (onShown) typer!.finish(text, onShown); else typer!.set(text);
+  if (!li.isConnected) el("message-stream").append(li);  // keep it last
   el("working-label").textContent = "Writing";
-  const thread = el("thread");
-  if (nearBottom(thread)) thread.scrollTop = thread.scrollHeight;
+}
+/** Keep the newest text in view while it is typed, unless the reader has scrolled up. */
+function followTyping(paint: () => void): void {
+  const thread = el("thread"), stick = nearBottom(thread);
+  paint();
+  if (stick) thread.scrollTop = thread.scrollHeight;
+}
+/** The typing caught up with the finished message: show it, then everything that came after it. */
+function releaseHeld(id: string): void {
+  if (heldReply === null) return;
+  heldReply = null;
+  const events = heldEvents, ended = heldEnd;
+  heldEvents = []; heldEnd = false;
+  showLiveReply("");
+  for (const record of events) handleStreamEvent(id, record);
+  if (ended) endStream();
 }
 function startStream(id: string): void {
   // The stream rides on the session cookie; a pasted token keeps 1-second polling instead.
@@ -2487,6 +2513,33 @@ function startStream(id: string): void {
     const record = JSON.parse((event as MessageEvent).data) as TaskEvent;
     if (record.seq <= liveSeq) return;  // a reconnect replays from the start
     liveSeq = record.seq;
+    if (heldReply !== null) { heldEvents.push(record); return; }
+    const content = record.kind === "agent_message" && typeof record.data?.content === "string" ? record.data.content as string : "";
+    if (content.trim() && typingMotion() && !globalThis.document?.hidden) {
+      // Type the finished message out (continuing what streamed in), then show it.
+      replyPaint.cancel(); pendingReply = "";
+      heldReply = content; heldEvents = [record];
+      showLiveReply(content, () => releaseHeld(id));
+      return;
+    }
+    handleStreamEvent(id, record);
+  });
+  source.addEventListener("delta", event => {
+    if (id !== selected) return stopStream();
+    pendingReply = (JSON.parse((event as MessageEvent).data) as { text: string }).text;
+    if (heldReply === null) replyPaint.schedule();
+  });
+  source.addEventListener("end", () => { if (heldReply !== null) heldEnd = true; else endStream(); });
+  source.onerror = () => { if (source.readyState === EventSource.CLOSED || liveTask !== id) { typer?.flush(); stopStream(); watching = true; } };
+}
+function endStream(): void {
+  streamPaint.flush();
+  terminalPaint.flush();
+  stopStream();
+  watching = true;
+  void observe();  // pick up the final result, diff and history
+}
+function handleStreamEvent(id: string, record: TaskEvent): void {
     liveEvents.push(record);
     if (record.kind === "agent_message" || record.kind === "agent_tool") { replyPaint.cancel(); pendingReply = ""; showLiveReply(""); }
     followAgentFiles(record);
@@ -2507,20 +2560,6 @@ function startStream(id: string): void {
     }
     if (record.kind === "running") { el("working").hidden = false; el("working-label").textContent = "Working"; button("cancel").disabled = false; }
     else if (isTerminal(record.kind)) { el("working").hidden = true; button("cancel").disabled = true; }
-  });
-  source.addEventListener("delta", event => {
-    if (id !== selected) return stopStream();
-    pendingReply = (JSON.parse((event as MessageEvent).data) as { text: string }).text;
-    replyPaint.schedule();
-  });
-  source.addEventListener("end", () => {
-    streamPaint.flush();
-    terminalPaint.flush();
-    stopStream();
-    watching = true;
-    void observe();  // pick up the final result, diff and history
-  });
-  source.onerror = () => { if (source.readyState === EventSource.CLOSED || liveTask !== id) { stopStream(); watching = true; } };
 }
 
 async function observe(force = false): Promise<void> {
@@ -2760,6 +2799,7 @@ function applyTheme(theme: string): void {
   if (theme === "light" || theme === "dark") root.dataset.theme = theme;
   else delete root.dataset.theme;
   refreshFileIcons();
+  announceTheme();
 }
 const themeSelect = el("theme") as HTMLSelectElement;
 const savedTheme = storageGet("dikdik.theme") ?? "system";
@@ -4151,6 +4191,13 @@ select("image-model").addEventListener("change", () => { void saveAppSetting({ i
     document.addEventListener?.("dikdik-board-style", event => { picker.value = (event as CustomEvent<BoardStyle>).detail; });
   }
 }
+// Copying from a reply gives formulas as LaTeX and leaves out toolbar labels.
+document.addEventListener?.("copy", event => {
+  const selection = window.getSelection?.();
+  const anchor = selection?.anchorNode;
+  const inside = anchor && (anchor.nodeType === 1 ? anchor as Element : anchor.parentElement)?.closest(".prose");
+  if (selection && inside && event.clipboardData && copyWithTex(selection, event.clipboardData)) event.preventDefault();
+});
 /** After the first finished turn of an untitled conversation, ask the server for a short title once. */
 function maybeTitle(task: string, state: string): void {
   if (state !== "completed" || titled.has(task)) return;

@@ -95,6 +95,25 @@ class ContinuityTests(unittest.TestCase):
         self.assertNotIn("selected project folder", system)
         self.assertNotIn("Task ownership", system)
 
+    def test_chat_replies_stream_to_the_screen_as_they_are_written(self):
+        seen = []
+        model = Mock()
+        model.respond.return_value = ModelResponse("A long lesson.", [])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model) as factory:
+            task = self.engine.submit({"objective": "teach me", "mode": "chat", "verification": "syntax", "approve_external": True})
+            self.wait(task)
+        on_text = factory.call_args.args[2] if len(factory.call_args.args) > 2 else factory.call_args.kwargs.get("on_text")
+        self.assertTrue(callable(on_text), "chat must pass a streaming callback to the model")
+        on_text("A long le")
+        seen.append(self.engine.live.get(task))
+        on_text("")
+        self.assertEqual(seen, ["A long le"])
+        self.assertNotIn(task, self.engine.live)
+        long = "x" * 40000
+        on_text(long)
+        self.assertEqual(self.engine.live[task], long)  # the whole reply so far, not only its last 16 KB
+        on_text("")
+
     def test_attachments_from_earlier_turns_stay_in_the_conversation(self):
         proposal, _ = documents.build_docx(PROPOSAL, root=self.base)
         ident = self.attach("Proposal.docx", proposal)

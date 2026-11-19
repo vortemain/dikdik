@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { liftMath } from "../../dikdik/web/rich-text";
-import { collectDisplay } from "../../dikdik/web/math";
+import { boardLines, liftMath } from "../../dikdik/web/rich-text";
+import { chemistryTex, collectDisplay } from "../../dikdik/web/math";
+import katex from "katex";
 import { normaliseSource, quoteLabels } from "../../dikdik/web/mermaid";
 
 const formulas = (text: string) => liftMath(text).formulas;
@@ -53,4 +54,37 @@ test("text after a closing $$ stays as a paragraph and does not swallow later li
   const lines = ["$$2(3)^2 - 12 - 6 = 0$$ ✓", "Both work.", "$$x^2 - 3x = 10$$"];
   expect(collectDisplay(lines, 0)).toEqual({ tex: "2(3)^2 - 12 - 6 = 0", end: 0, rest: "✓" });
   expect(collectDisplay(lines, 2)).toEqual({ tex: "x^2 - 3x = 10", end: 2 });
+});
+
+test("a bare number in dollars is maths, but prices stay prices", () => {
+  expect(formulas("each carbon uses $1$ bond, leaving $3$ bonds ($3+3=6$)")).toEqual(["1", "3", "3+3=6"]);
+  expect(formulas("It costs $5 and $10 for two.")).toEqual([]);
+  expect(formulas("Pay $5$10 later")).toEqual([]);
+});
+
+test("chemistry written as maths is typeset as chemistry", () => {
+  expect(chemistryTex("CH_3-CH_3")).toBe(String.raw`\ce{CH3-CH3}`);
+  expect(chemistryTex("CH_3-CH_2-OH")).toBe(String.raw`\ce{CH3-CH2-OH}`);
+  expect(chemistryTex("C_3H_8")).toBe(String.raw`\ce{C3H8}`);
+  expect(chemistryTex("H_2O")).toBe(String.raw`\ce{H2O}`);
+  expect(chemistryTex("NaCl")).toBe(String.raw`\ce{NaCl}`);
+  expect(chemistryTex("-COOH")).toBe(String.raw`\ce{-COOH}`);     // functional groups
+  expect(chemistryTex("Cl")).toBe(String.raw`\ce{Cl}`);
+  expect(chemistryTex("2H_2+O_2")).toBe(String.raw`\ce{2H2+O2}`);
+  expect(chemistryTex("C_nH_{2n+2}")).toBe(String.raw`\mathrm{C}_n\mathrm{H}_{2n+2}`);  // general formula
+  // Physics and algebra are left alone.
+  for (const tex of ["E = mc^2", "F=ma", "V = IR", "PV = nRT", "x^2", "AB", "A+B", "v_x", "R", "H", "H_0", "H_1", "x_1", "C_2", "V_2", "P_1V_1=P_2V_2", "H=2(3)+2=8", "O", "N"]) {
+    expect(chemistryTex(tex)).toBeNull();
+  }
+  // mhchem is loaded, so \ce{} typesets instead of failing.
+  expect(() => katex.renderToString(String.raw`\ce{CH3-CH2-OH}`, { throwOnError: true })).not.toThrow();
+  expect(() => katex.renderToString(String.raw`\ce{2H2 + O2 -> 2H2O}`, { throwOnError: true })).not.toThrow();
+});
+
+test("each board line stays its own step, while formulas, fences and tables stay whole", () => {
+  expect(boardLines("Problem: propane\nStep 1: n = 3\nStep 2: $C_3H_8$")).toBe("Problem: propane\n\nStep 1: n = 3\n\nStep 2: $C_3H_8$");
+  const aligned = String.raw`$$\begin{aligned}` + "\n" + String.raw`x &= 2\\` + "\n" + String.raw`y &= 3` + "\n" + String.raw`\end{aligned}$$`;
+  expect(boardLines(`Solve:\n${aligned}\nDone`)).toBe(`Solve:\n\n${aligned}\n\nDone`);
+  expect(boardLines("| a | b |\n| - | - |\n| 1 | 2 |")).toBe("| a | b |\n| - | - |\n| 1 | 2 |");
+  expect(boardLines("First\n\nSecond")).toBe("First\n\nSecond");
 });

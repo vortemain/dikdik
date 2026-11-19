@@ -36,6 +36,14 @@ export function palette(style: BoardStyle, dark: boolean): Palette {
       accents: ["#2f6b4f", "#2b579a", "#c2410c", "#b91c1c", "#7c3aed", "#a16207"], font: PLAIN, label: "#1d1d1f" };
 }
 
+/** Tell drawings the light/dark theme changed (Settings → Appearance, or the system theme). */
+export function announceTheme(): void {
+  document.dispatchEvent?.(new Event("dikdik-theme"));
+}
+try {
+  globalThis.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", announceTheme);
+} catch { /* no media queries (tests) */ }
+
 export function isDark(): boolean {
   const root = document.documentElement;
   if (root.dataset.theme === "dark") return true;
@@ -217,6 +225,7 @@ export function drawingCard(figure: HTMLElement, options: {
       canvas.append(image);
       const tools = document.createElement("div");
       tools.className = "diagram-tools";
+      tools.setAttribute("data-nocopy", "");
       const styles = document.createElement("div");
       styles.className = "board-switch";
       styles.setAttribute("role", "group");
@@ -257,5 +266,12 @@ export function drawingCard(figure: HTMLElement, options: {
     if (next !== style) { style = next; paint(false); }
   };
   document.addEventListener?.("dikdik-board-style", follow);
+  // Clean drawings take the app's light or dark colours: redraw them when the theme changes,
+  // so text never ends up light-on-light or dark-on-dark. Boards keep their own colours.
+  const retheme = () => {
+    if (!figure.isConnected) { document.removeEventListener("dikdik-theme", retheme); return; }
+    if (style === "clean") paint(false);
+  };
+  document.addEventListener?.("dikdik-theme", retheme);
   paint(options.animateFirst);
 }

@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.7.2 — 2026-11-18
+
+Replies that type out, long answers, chemistry and light mode:
+- Chat replies now appear as they are written, typed out at a steady pace. Chat never
+  streamed before (only Code did), so you waited for the whole answer. Finished
+  paragraphs, drawings and formulas are drawn once and stay put; formulas, bold text,
+  links and drawings appear whole, never as raw `$\frac{`, `**` or code. The view
+  follows the typing unless you scroll up; reduced-motion settings show text as it
+  arrives without the animation.
+- `<details><summary>` blocks (such as "Click here to check your answer") are a real
+  collapsible card instead of raw tags. Common inline HTML from models — `<b>`, `<i>`,
+  `<br>`, `<sub>`, `<sup>`, `<kbd>` — becomes proper formatting.
+- Conversation titles no longer keep Markdown such as `##` or `**Title:**`.
+- Fixed: long replies were cut off after 8,000 characters with "…(truncated)" in the
+  conversation (the full reply was saved but not shown). Replies and messages now show
+  in full.
+- Chemistry is typeset properly with KaTeX's mhchem: `\ce{CH3-CH2-OH}`, ions,
+  reactions with arrows and equilibria. Chemistry written as plain maths
+  (`$CH_3-CH_3$`, `$H_2O$`, `$-OH$`, `$Cl$`, `$C_nH_{2n+2}$`) is recognised and shown
+  with upright element symbols instead of italic algebra; physics and statistics such
+  as `$V = IR$`, `$P_1V_1$` or `$H_0$` are left alone. Chat writes chemistry with `\ce{}`.
+- Bare numbers such as `$3$` are typeset instead of showing their dollar signs (prices
+  like "$5 and $10" still stay text).
+- Each line of a worked solution on the board is its own step again, instead of
+  running together into one paragraph.
+- Copying from a reply gives formulas as LaTeX (`$...$`), tables as tab-separated rows,
+  and no button labels — instead of every formula repeated three times.
+- Fixed in light mode: worked solutions on the chalkboard had dark text on the green
+  board; the whiteboard had the same problem in dark mode. Clean-style drawings now
+  redraw when the theme changes, so their text never turns invisible.
+- A faint ghost letter no longer appears after chemical formulas on the chalkboard.
+- Security: Mermaid is now built from its npm package against the patched KaTeX
+  0.18.11 (its prebuilt file embedded KaTeX 0.16.47); `bun audit` is clean.
+
 ## 0.7.1 — 2026-11-18
 
 Security update for the bundled drawing and formula libraries:

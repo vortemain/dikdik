@@ -19,14 +19,17 @@ These assets are served by Dikdik itself. No CDN or favicon service is used.
   Source: https://github.com/highlightjs/highlight.js
   Full notice: `LICENSE-highlight.js.txt`.
 - **KaTeX 0.18.11**, copyright (c) 2013-2020 Khan Academy and other contributors, MIT.
-  Formula typesetting: its engine is compiled into the browser bundle; `katex/` holds
-  its unmodified stylesheet and WOFF2 fonts (the KaTeX fonts are under the same MIT license).
+  Formula typesetting: its engine and its mhchem extension (chemistry, `\ce{}`; MIT) are
+  compiled into the browser bundle; `katex/` holds its unmodified stylesheet and WOFF2 fonts
+  (the KaTeX fonts are under the same MIT license).
   Source: https://github.com/KaTeX/KaTeX
   Full notice: `LICENSE-katex.txt`.
 - **Mermaid 11.17.2**, copyright (c) 2014-2022 Knut Sveidqvist, MIT. `vendor/mermaid.min.js`
-  is the unmodified distribution build, loaded only when a reply contains a diagram. It
-  includes its own dependencies (d3, dagre-d3-es, cytoscape, khroma, DOMPurify, lodash-es,
-  dayjs and others) under their MIT, ISC, BSD-3-Clause and Apache-2.0/MPL-2.0 licenses.
+  is built from the unmodified npm package by `scripts/vendor/mermaid-entry.ts`
+  (`bun run build:mermaid`) so that it uses Dikdik's patched KaTeX 0.18.11; it is loaded
+  only when a reply contains a diagram. It includes its own dependencies (d3, dagre-d3-es,
+  cytoscape, khroma, DOMPurify, es-toolkit, dayjs and others) under their MIT, ISC,
+  BSD-3-Clause and Apache-2.0/MPL-2.0 licenses.
   Source: https://github.com/mermaid-js/mermaid
   Full notice: `LICENSE-mermaid.txt`.
 - **Caveat 600 (Latin subset)**, copyright 2014 The Caveat Project Authors, SIL Open Font

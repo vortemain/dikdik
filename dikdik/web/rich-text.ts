@@ -9,13 +9,33 @@ import { boardStyle, reducedMotion, type BoardStyle } from './board';
 const writtenBoards = new Set<string>();
 /** A ```board block: a worked solution written in handwriting on the chalkboard or whiteboard,
  * revealed line by line the first time it appears. Its content is ordinary Markdown and LaTeX. */
+/** On a board every line is its own step: keep single line breaks instead of merging lines into
+ * one paragraph as Markdown would. Display formulas, fences and tables are left whole. */
+export function boardLines(source: string): string {
+  const out: string[] = [];
+  let fence = false, display = false, environments = 0;
+  for (const line of source.replace(/\r\n?/g, '\n').split('\n')) {
+    const trimmed = line.trim();
+    const previous = out.length ? out[out.length - 1]!.trim() : '';
+    const block = fence || display || environments > 0 || trimmed.startsWith('|') && previous.startsWith('|');
+    if (!block && trimmed && previous) out.push('');
+    out.push(line);
+    if (/^(`{3,}|~{3,})/.test(trimmed)) fence = !fence;
+    else if (!fence) {
+      if ((trimmed.match(/\$\$/g) ?? []).length % 2 === 1) display = !display;
+      environments = Math.max(0, environments + (trimmed.match(/\\begin\{/g) ?? []).length - (trimmed.match(/\\end\{/g) ?? []).length);
+    }
+  }
+  return out.join('\n');
+}
+
 function boardNote(source: string, options: RichTextOptions, depth: number, language: string, closed: boolean): HTMLElement {
   const chosen = language === 'chalkboard' || language === 'whiteboard' ? language : boardStyle();
   const kind = (style: BoardStyle) => style === 'clean' ? 'board-note board-note-clean' : style === 'whiteboard' ? 'board-note board-note-white' : 'board-note board-note-chalk';
   const box = node('div', undefined, kind(chosen));
   box.setAttribute('role', 'figure');
   box.setAttribute('aria-label', 'Worked on the board');
-  const body = renderRichText(source, options, depth + 1);
+  const body = renderRichText(boardLines(source), options, depth + 1);
   body.classList?.add('board-writing');
   box.append(body);
   if (closed && !writtenBoards.has(source) && !reducedMotion() && typeof (body as HTMLElement).animate === 'function') {
@@ -60,9 +80,9 @@ const SLOT = /(\d+)/g;
 export function liftMath(text: string): { text: string; formulas: string[] } {
   const formulas: string[] = [];
   if (!text.includes("$") && !text.includes("\\(")) return { text, formulas };
-  const lifted = text.replace(MATH_SPAN, (whole: string, ticks: string | undefined, a?: string, b?: string, c?: string, d?: string) => {
+  const lifted = text.replace(MATH_SPAN, (whole: string, ticks: string | undefined, a?: string, b?: string, c?: string, d?: string, e?: string) => {
     if (ticks) return whole;
-    const tex = a ?? b ?? c ?? d ?? "";
+    const tex = a ?? b ?? c ?? d ?? e ?? "";
     if (!tex.trim()) return whole;
     formulas.push(tex);
     return `${formulas.length - 1}`;
@@ -154,7 +174,7 @@ export function compareTableCells(a: string, b: string): number {
 }
 export function responseTable(table: NonNullable<ReturnType<typeof parseTable>>, options: RichTextOptions, literal = false): HTMLElement {
   const card = node('div', undefined, 'response-table');
-  const toolbar = node('div', undefined, 'response-toolbar');
+  const toolbar = node('div', undefined, 'response-toolbar'); toolbar.setAttribute('data-nocopy', '');
   let rows = table.rows.map((cells, index) => ({ cells, index }));
   const plain = (value: string) => literal ? value : renderInline(value, { codeBlock: options.codeBlock, copyButton: options.copyButton }).map(part => part.textContent ?? '').join('');
   const contents = (value: string) => literal ? [document.createTextNode(value)] : renderInline(value, options);
@@ -199,11 +219,68 @@ export function responseTable(table: NonNullable<ReturnType<typeof parseTable>>,
 
 const listItem = /^( *)([-+*]|\d+[.)])\s+(.*)$/;
 /** A shared renderer for replies, streaming text, Markdown files and diff previews. */
+const SUB: Record<string, string> = { '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉', '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎' };
+const SUP: Record<string, string> = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾', 'n': 'ⁿ' };
+/** Unicode sub/superscript when every character has one; otherwise a typeset formula (\(^{-x}\)). */
+const script = (value: string, map: Record<string, string>, mark: '_' | '^') =>
+  [...value].every(c => map[c]) ? [...value].map(c => map[c]).join('')
+    : /^[\w+\-=().,\s]+$/.test(value) ? `\\(${mark}{\\text{${value}}}\\)` : value;
+function tidyPart(part: string, table: boolean): string {
+  return part
+    .replace(/<br\s*\/?>/gi, table ? '; ' : '  \n')
+    .replace(/<\/?(?:b|strong)>/gi, '**')
+    .replace(/<\/?(?:i|em)>/gi, '*')
+    .replace(/<sub>([^<]{1,20})<\/sub>/gi, (_, value: string) => script(value, SUB, '_'))
+    .replace(/<sup>([^<]{1,20})<\/sup>/gi, (_, value: string) => script(value, SUP, '^'))
+    .replace(/<kbd>([^<`]{1,40})<\/kbd>/gi, '`$1`')
+    .replace(/<\/?(?:u|mark|small|span|font|center|ins)(?:\s[^>]*)?>/gi, '');
+}
+/** Models often mix a little HTML into Markdown (<b>, <br>, <sub>2</sub> …). Turn the common, harmless
+ * tags into their Markdown or Unicode equivalents; HTML is never inserted. Code is left untouched. */
+export function tidyHtml(text: string): string {
+  if (!text.includes('<')) return text;
+  let fence = false;
+  return text.split('\n').map(line => {
+    if (/^ {0,3}(`{3,}|~{3,})/.test(line)) { fence = !fence; return line; }
+    if (fence || !line.includes('<')) return line;
+    const table = /^\s*\|/.test(line);
+    return line.split(/(`+[^`]*`+)/).map((part, index) => index % 2 ? part : tidyPart(part, table)).join('');
+  }).join('\n');
+}
+
+/** A <details> block: its <summary> and body, and how many lines it used (to the matching </details>). */
+function collectDetails(lines: string[], start: number): { summary: string; body: string; end: number; rest: string; closed: boolean } | null {
+  if (!/^\s*<details(?:\s[^>]*)?>/i.test(lines[start]!)) return null;
+  let depth = 0;
+  const body: string[] = [];
+  for (let i = start; i < lines.length; i++) {
+    let line = lines[i]!;
+    if (i === start) { line = line.replace(/^\s*<details(?:\s[^>]*)?>/i, ''); depth = 1; }
+    const tags = /<details(?:\s[^>]*)?>|<\/details\s*>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = tags.exec(line))) {
+      depth += match[0][1] === '/' ? -1 : 1;
+      if (depth === 0) {
+        body.push(line.slice(0, match.index));
+        return { ...splitSummary(body.join('\n')), end: i, rest: line.slice(match.index + match[0].length).trim(), closed: true };
+      }
+    }
+    body.push(line);
+  }
+  return { ...splitSummary(body.join('\n')), end: lines.length - 1, rest: '', closed: false };  // still streaming in
+}
+function splitSummary(text: string): { summary: string; body: string } {
+  const found = /^\s*<summary(?:\s[^>]*)?>([\s\S]*?)<\/summary\s*>/i.exec(text);
+  if (!found) return { summary: 'Details', body: text };
+  return { summary: found[1]!.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim() || 'Details', body: text.slice(found[0].length) };
+}
+
 export function renderRichText(text: string, options: RichTextOptions, depth = 0): HTMLElement {
   const root = node('div', undefined, 'prose');
   const shortened = text.length > 120000;
   if (shortened) text = text.slice(0, 120000);
   if (depth > 12) { root.append(node('p', text)); return root; }
+  if (depth === 0) text = tidyHtml(text);
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   let paragraph: string[] = [];
   const flush = () => {
@@ -230,6 +307,18 @@ export function renderRichText(text: string, options: RichTextOptions, depth = 0
         : (language === 'math' || language === 'katex') && mathAvailable() ? renderMath(source, true)
         : options.codeBlock(source, language));
       continue;
+    }
+    // <details><summary>Check your answer</summary> … </details>: a native, script-free reveal.
+    const details = collectDetails(lines, i);
+    if (details) {
+      flush();
+      const box = node('details', undefined, 'md-details');
+      const summary = node('summary');
+      summary.append(...renderInline(details.summary, options));
+      box.append(summary, renderRichText(details.body.trim(), options, depth + 1));
+      root.append(box);
+      if (details.rest) lines.splice(details.end + 1, 0, details.rest);
+      i = details.end; continue;
     }
     // Display formulas: $$ … $$, \[ … \] and \begin{align} … \end{align} on their own lines.
     const display = mathAvailable() ? collectDisplay(lines, i) : null;

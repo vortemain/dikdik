@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { compareTableCells, renderRichText, responseURL, tableTSV, type RichTextOptions } from '../../dikdik/web/rich-text';
+import { compareTableCells, renderRichText, responseURL, tableTSV, tidyHtml, type RichTextOptions } from '../../dikdik/web/rich-text';
 import { parseChart } from '../../dikdik/web/response-chart';
 import { parseTable } from '../../dikdik/web/organise';
 
@@ -112,3 +112,34 @@ test('large display previews are explicitly bounded without altering their sourc
   const text = 'long '.repeat(25000);
   expect(render(text).textContent).toContain('Display preview shortened'); expect(text.length).toBe(125000);
 }));
+
+test('<details> reveals become a native collapsible card; the summary and body render as Markdown', () => withDOM(render => {
+  const reply = "Try it first.\n\n<details> <summary><b>Click here to check your answer when you're ready!</b></summary>\n\n1. Brackets first: (8-5) = 3\n2. Addition last: 15 + 3 = 18\n\nDid you get **18**? Tell me which step felt tricky! </details>\n\nNext question.";
+  const root = render(reply);
+  const details = find(root, 'details');
+  expect(details).toHaveLength(1);
+  const summary = find(details[0]!, 'summary')[0]!;
+  expect(summary.textContent).toBe("Click here to check your answer when you're ready!");
+  expect(find(summary, 'strong')).toHaveLength(1);
+  expect(find(details[0]!, 'li')).toHaveLength(2);
+  expect(details[0]!.textContent).toContain('Tell me which step felt tricky!');
+  expect(root.textContent).not.toContain('<');           // no raw tags anywhere
+  expect(root.children.at(-1)!.textContent).toBe('Next question.');
+}));
+
+test('a reply still streaming in shows an unfinished <details> without its raw tags', () => withDOM(render => {
+  const root = render('<details><summary>Answer</summary>\n\nStep 1: so far');
+  expect(find(root, 'details')).toHaveLength(1);
+  expect(root.textContent).not.toContain('<');
+}));
+
+test('common inline HTML from models becomes Markdown or Unicode; code is untouched', () => {
+  expect(tidyHtml('A <b>bold</b> and <i>slanted</i> word')).toBe('A **bold** and *slanted* word');
+  expect(tidyHtml('H<sub>2</sub>O and x<sup>2</sup> and e<sup>-x</sup>')).toBe('H₂O and x² and e\\(^{\\text{-x}}\\)');
+  expect(tidyHtml('v<sub>max</sub>')).toBe('v\\(_{\\text{max}}\\)');
+  expect(tidyHtml('line one<br>line two')).toBe('line one  \nline two');
+  expect(tidyHtml('| a<br>b | c |')).toBe('| a; b | c |');
+  expect(tidyHtml('Use `<b>` tags')).toBe('Use `<b>` tags');
+  expect(tidyHtml('```html\n<b>x</b>\n```')).toBe('```html\n<b>x</b>\n```');
+  expect(tidyHtml('if a < b and c > d')).toBe('if a < b and c > d');
+});

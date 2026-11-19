@@ -143,6 +143,13 @@ class TitleTests(unittest.TestCase):
                 self.assertEqual(self.engine.auto_title(task), {"title": ""})
             call.assert_not_called()
 
+    def test_markdown_in_a_title_is_removed(self):
+        for answer, expected in (("## Order of operations", "Order of operations"), ("**Title:** Malaria in pregnancy", "Malaria in pregnancy"),
+                                 ("- Photosynthesis basics", "Photosynthesis basics")):
+            task = self.task()
+            with self.patch("dikdik.engine.complete", return_value=answer):
+                self.assertEqual(self.engine.auto_title(task), {"title": expected})
+
     def test_off_setting_and_failures_leave_the_title_alone(self):
         self.engine.update_app_settings({"title_model": "off"})
         with self.patch("dikdik.engine.complete") as call:

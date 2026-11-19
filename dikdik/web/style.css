@@ -628,7 +628,11 @@ div.conv-item:hover .conv-more, div.conv-item:focus-within .conv-more, div.conv-
 .verify-badge.verified { background: var(--ok-soft); color: var(--ok); }
 .result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
-.msg-live .prose > :last-child::after { content: ""; display: inline-block; width: 7px; height: 15px; margin-left: 2px; vertical-align: -2px; background: var(--accent); animation: breathe 1s ease-in-out infinite; }
+/* A reply being typed: finished blocks stay put, the caret follows the last line written. */
+.live-text > div > .prose + .prose, .live-text > div:not(:empty) + .typing > .prose { margin-top: 10px; }
+.typing-caret { display: inline-block; width: 2px; height: 1.1em; margin-left: 2px; vertical-align: text-bottom; background: var(--accent); border-radius: 1px; animation: caret-blink 1.05s steps(1, end) infinite; }
+@keyframes caret-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .typing-caret { animation: none; } }
 
 /* working indicator — shown only while the backend reports queued/running */
 .working { max-width: var(--column); margin: 0 auto 24px; padding-left: 42px; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13.5px; }
@@ -1396,6 +1400,16 @@ body.run-simple .classic-only { display: none !important; }
 .chart-fallback > p { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
 .html-preview iframe { display: block; width: 100%; height: 360px; border: 0; background: #fff; }
 .preview-note { font-size: 12px; color: var(--muted); padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+/* <details> reveals ("Check your answer"): a card that opens on click, keyboard accessible natively. */
+.prose details.md-details { margin: 12px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.prose details.md-details > summary { cursor: pointer; padding: 10px 14px; font-weight: 600; color: var(--accent); list-style: none; display: flex; align-items: center; gap: 8px; border-radius: 10px; }
+.prose details.md-details > summary::-webkit-details-marker { display: none; }
+.prose details.md-details > summary::before { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s ease; flex: none; }
+.prose details.md-details[open] > summary::before { transform: rotate(45deg); }
+.prose details.md-details > summary:hover { background: var(--surface); }
+.prose details.md-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.prose details.md-details > .prose { padding: 2px 16px 12px; }
+@media (prefers-reduced-motion: reduce) { .prose details.md-details > summary::before { transition: none; } }
 .md-alert { border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 0 10px 10px 0; padding: 8px 14px; }
 .md-alert-title { margin: 0 0 2px; font-size: 12.5px; font-weight: 600; color: var(--accent); }
 .md-alert-tip { border-color: var(--ok); }
@@ -1873,13 +1887,16 @@ button.attachment-preview { cursor: pointer; font: inherit; } button.attachment-
 .board-note { margin: 16px 0; padding: 18px 24px; border-radius: 10px; font-family: "Caveat", "Segoe Print", cursive; font-size: 1.6em; line-height: 1.4; }
 .board-note .prose > * { margin-top: 0.25em; margin-bottom: 0.35em; }
 .board-note h2, .board-note h3, .board-note h4 { font-family: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 2px; }
-.board-note-chalk { color: #f4f1e6; border: 7px solid #6b4a2b;
+/* A board has its own colours in light and dark themes alike: redefine the theme's text tokens inside it. */
+.board-note-chalk { --ink: #f4f1e6; --muted: #cfdacf; --accent: #9fd8ff; --line: rgb(255 255 255 / .25); --line-strong: rgb(255 255 255 / .4);
+  color: #f4f1e6; border: 7px solid #6b4a2b;
   background: radial-gradient(ellipse at 20% 15%, rgb(255 255 255 / .07), transparent 55%), repeating-linear-gradient(115deg, rgb(255 255 255 / .018) 0 2px, transparent 2px 7px), #2c4a3c;
   box-shadow: inset 0 0 24px rgb(0 0 0 / .35), 0 2px 8px rgb(0 0 0 / .25); text-shadow: 0 0 1px rgb(255 255 255 / .35); }
 .board-note-chalk strong { color: #fff3a3; }
 .board-note-chalk em { color: #9fd8ff; }
 .board-note-chalk code { background: rgb(255 255 255 / .1); color: #fff; }
-.board-note-white { color: #1f3a8a; border: 6px solid #c8cdd5; background: linear-gradient(160deg, #ffffff, #f6f7f9 70%, #ffffff); box-shadow: 0 2px 8px rgb(0 0 0 / .14); }
+.board-note-white { --ink: #1f3a8a; --muted: #4b5563; --accent: #1d4ed8; --line: #d5d9e0; --line-strong: #b8bec8;
+  color: #1f3a8a; border: 6px solid #c8cdd5; background: linear-gradient(160deg, #ffffff, #f6f7f9 70%, #ffffff); box-shadow: 0 2px 8px rgb(0 0 0 / .14); }
 .board-note-white strong { color: #c0262d; }
 .board-note-white em { color: #1f7a3a; }
 .board-note-clean { border: 1px solid var(--line); background: var(--surface); font-family: inherit; font-size: 1em; }
@@ -1891,5 +1908,7 @@ button.attachment-preview { cursor: pointer; font: inherit; } button.attachment-
 .board-note-white .katex .mopen, .board-note-white .katex .mclose, .board-note-white .katex .mpunct, .board-note-white .katex .mop {
   font-family: "Caveat", "Segoe Print", cursive; font-style: normal; }
 .board-note .math-display:hover { background: transparent; }
+/* KaTeX spacers (\vphantom, used by \ce) are transparent text: the chalk glow must not reveal them. */
+.board-note .katex [style*="transparent"] { text-shadow: none; }
 .board-note .math-display .katex { font-size: 1.25em; }
 .board-note-chalk .katex .frac-line, .board-note-chalk .katex .sqrt > .root, .board-note-chalk .katex .hide-tail { border-color: currentColor; }

@@ -511,6 +511,8 @@ export function attachmentList(value: unknown): AttachmentMeta[] {
 // expandable evidence cards. Untrusted event data is never executed.
 // =====================================================================
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;  // excludes \t \n \r which are valid text
+// A whole message is shown in full: the model's text is already capped at 64 KB (model_limits.py).
+const MESSAGE_LIMIT = 65536;
 function textOf(value: unknown, max = 8000): string {
   if (typeof value !== "string" || !value || CONTROL.test(value)) return "";
   return value.length > max ? value.slice(0, max) + "\n…(truncated)" : value;
@@ -538,7 +540,7 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
     case "queued":
       return [{ id: `user-${seq}`, role: "user", time, kind, title: "Objective", body: objective }];
     case "user_message": {
-      const text = textOf(d.text, 4000);
+      const text = textOf(d.text, MESSAGE_LIMIT);
       if (d.goal === true && text) return [{ ...base, role: "system", kind: "goal_turn", title: "Next goal turn", body: text }];
       return text ? [{ id: `user-${seq}`, role: "user", time, kind, title: d.queued === true ? "Queued" : "Message", body: text }] : [];
     }
@@ -576,11 +578,11 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
           ? "Task requirements, the plan, recent findings and current changes were retained. Full observations remain in task history."
           : "Older observations remain in task history. Workspace files are still available to read and search." }];
     case "agent_thinking": {
-      const content = textOf(d.content, 16000);
+      const content = textOf(d.content, MESSAGE_LIMIT);
       return content ? [{ ...base, role: "tool", kind: "agent_thinking", title: "Thinking", body: content }] : [];
     }
     case "agent_message": {
-      const content = textOf(d.content ?? d.message ?? d.text);
+      const content = textOf(d.content ?? d.message ?? d.text, MESSAGE_LIMIT);
       return content ? [{ ...base, role: "assistant", title: "Agent", body: content, details: d.usage }] : [];
     }
     case "agent_tool_call": {
