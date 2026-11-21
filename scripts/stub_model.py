@@ -26,6 +26,8 @@ Behaviour (keyed on words in the latest user message):
 - "PREVIEW": previews a Next.js project twice with `npx next dev` (needs command approval);
 - "MARKDOWN": a reply with a table, an alert, a quote and a file path, plus
   provider "reasoning_content" (shown as a Thinking row);
+- "CHATSPACE": thinks, keeps a task_tracker plan, reads one file in four parts (slowly) and answers
+  with cited sources and cached-token usage, for checking the chat space;
 - an attached image: says it sees an image;
 - otherwise: "Done with: <message>".
 Streaming is ignored on purpose (Dikdik falls back to a plain response).
@@ -44,6 +46,18 @@ FILES = [("src/app/page.tsx", "export default function Page() {\n  return <main>
          ("src/app/globals.css", "main { padding: 2rem; }\n")]
 
 
+CITED = ("The calculator adds two numbers, and the tests cover the positive cases [1]. Python's own guidance on "
+         "[unit testing](https://docs.python.org/3/library/unittest.html) suggests adding edge cases [2].\n\n"
+         "1. [calculator.py on the project site](https://example.org/calculator)\n"
+         "2. [unittest documentation](https://docs.python.org/3/library/unittest.html)")
+PLAN = [("read", "Read calculator.py"), ("check", "Check the tests"), ("answer", "Write the answer")]
+
+
+def tracker(done_steps):
+    return {"tasks": [{"id": key, "title": title, "status": "done" if i < done_steps else "in_progress" if i == done_steps else "todo"}
+                      for i, (key, title) in enumerate(PLAN)]}
+
+
 def reply(content, calls=None, reasoning=None):
     message = {"content": content}
     if calls:
@@ -51,7 +65,7 @@ def reply(content, calls=None, reasoning=None):
     if reasoning:
         message["reasoning_content"] = reasoning
     return {"choices": [{"message": message, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70}}
+            "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70, "prompt_tokens_details": {"cached_tokens": 32}}}
 
 
 def call(name, args, n):
@@ -76,6 +90,7 @@ def make_handler(expected_key: str, log_path: str | None, delay: float):
             system = text_of(messages[0]["content"])
             users = [m for m in messages if m["role"] == "user"]
             objective = text_of(users[-1]["content"]) if users else ""
+            scenario = " ".join(text_of(m["content"]) for m in users)
             done = [m["tool_call_id"].split("-")[1] for m in messages if m["role"] == "tool"]
             last = users[-1]["content"] if users else ""
             has_image = isinstance(last, list) and any(p.get("type") == "image_url" for p in last)
@@ -126,6 +141,19 @@ def make_handler(expected_key: str, log_path: str | None, delay: float):
                 data = reply("Previewing the app.", [call("preview_app", {"command": "npx next dev --port {port}", "path": "/"}, n)])
             elif "PREVIEW" in objective:
                 data = reply("Previewed the app; it is running in the Browser panel.")
+            elif "CHATSPACE" in scenario and "task_tracker" in tools and done.count("task_tracker") < 1:
+                time.sleep(delay)
+                data = reply("", [call("task_tracker", tracker(0), n)], reasoning="The user wants a review of the calculator. "
+                             "I will plan three steps, read the file in parts and then answer with sources.")
+            elif "CHATSPACE" in scenario and done.count("read_file") < 4:
+                time.sleep(delay)
+                data = reply("", [call("read_file", {"path": "calculator.py", "offset": done.count("read_file") * 10}, n)])
+            elif "CHATSPACE" in scenario and "task_tracker" in tools and done.count("task_tracker") < 2:
+                time.sleep(delay)
+                data = reply("", [call("task_tracker", tracker(2), n)], reasoning="I have read the whole file. Now I check the tests and write it up.")
+            elif "CHATSPACE" in scenario:
+                time.sleep(delay)
+                data = reply(CITED, reasoning="Everything is read. The answer should cite the file and the unittest docs.")
             elif "MARKDOWN" in objective:
                 data = reply(MARKDOWN, reasoning="The user wants a summary. I will list the files with their sizes.")
             elif has_image:

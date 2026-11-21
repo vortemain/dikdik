@@ -31,6 +31,7 @@ import { copyWithTex } from './math';
 import { Typewriter } from './typewriter';
 import { createAskDrawer } from './ask-drawer';
 import { createConversationMode, isChatConversation } from './conversation-mode';
+import { citationMarkers, compactTokens, duration, groupable, groupTitle, pendingModelCall, sourceLabel, steeringStatus, thinkingDurations, thinkingLabel, thinkingSummary, toolTimings, turnCost, turnCostText } from './chat-space';
 import { startGreeting, suggestionsFor, chatSuggestions, renderSuggestions, factsFromFiles } from './welcome';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
@@ -68,7 +69,7 @@ let modelReady = true, activeTag = "", listLimit = 40, folderOptions: string[] =
 let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean; title_model?: string; notifications?: 'off' | 'background' | 'all'; notification_previews?: boolean } | null = null;
 let nativeNotifications = false;
 const titled = new Set<string>();  // conversations we already asked to be titled this session
-let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsElement; summary: HTMLElement; count: number } | null = null;
+let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsElement; summary: HTMLElement; count: number; steps: { verb: string; target: string }[] } | null = null;
 let showAllMessages = false, projectFileSet = new Set<string>();
 const expandedDirs = new Set<string>();
 let openTabs: string[] = [], fileText = "", filePreview = false;
@@ -149,6 +150,11 @@ function stepRow(msg: ChatMessage): { li: HTMLLIElement; body: HTMLElement } {
   const badge = make("span", "step-icon"); badge.append(label.icon === "file" && label.arg ? fileBadge(label.arg) : icon(label.icon));
   summary.append(badge, make("span", "step-title", label.title));
   if (label.arg) summary.append(make("span", "step-arg", label.arg));
+  if (msg.kind === "agent_tool_call") {
+    li.dataset.verb = label.title; li.dataset.target = label.arg;
+    const timing = toolTimingsNow.get(messageSeq(msg) ?? -1);
+    summary.append(stepStatus(timing?.status ?? "running", timing?.seconds ?? null));
+  }
   const chevron = icon("chevron"); chevron.setAttribute("class", "i step-chevron");
   summary.append(chevron);
   const body = make("div", "step-body");
@@ -160,6 +166,38 @@ function stepRow(msg: ChatMessage): { li: HTMLLIElement; body: HTMLElement } {
   summary.addEventListener("click", event => { if (details.className.includes("step-static")) event.preventDefault(); });
   li.append(details);
   return { li, body };
+}
+/** Words first, never colour alone: "Running", "1.2s", "Failed · 0.4s". */
+function stepStatus(status: "running" | "done" | "failed", seconds: number | null): HTMLElement {
+  const node = make("span", `step-status step-${status}`);
+  if (status === "running") { node.append(make("span", "step-spinner"), make("span", "", "Running")); return node; }
+  const time = seconds === null ? "" : duration(seconds);
+  node.textContent = status === "failed" ? (time ? `Failed · ${time}` : "Failed") : time;
+  if (!node.textContent) node.hidden = true;
+  return node;
+}
+function updateStepStatus(row: HTMLElement | null | undefined, status: "running" | "done" | "failed", seconds: number | null): void {
+  const old = row?.querySelector(".step-status");
+  if (old) old.replaceWith(stepStatus(status, seconds));
+}
+/** A small inline notice: the agent changed approach, or the working context was compacted. */
+function noticeRow(msg: ChatMessage): HTMLLIElement {
+  const li = make("li", `msg msg-notice msg-${msg.kind}`); li.id = msg.id;
+  const compacted = msg.kind === "agent_context_compacted";
+  const d = (msg.details ?? {}) as Record<string, unknown>;
+  const badge = make("span", "notice-icon"); badge.append(icon(compacted ? "list" : "refresh"));
+  const text = make("span", "notice-text");
+  if (compacted) {
+    text.append(make("strong", "", "Compacted the working context"));
+    const before = Number(d.before_bytes), after = Number(d.context_bytes);
+    if (before > 0 && after >= 0) text.append(make("span", "notice-sub", ` · ${Math.round(before / 1024)} KB → ${Math.round(after / 1024)} KB`));
+    li.title = msg.body ?? "";
+  } else {
+    text.append(make("strong", "", "Adjusting approach"));
+    if (msg.body) text.append(make("span", "notice-sub", ` · ${msg.body.split("\n")[0]}`));
+  }
+  li.append(badge, text);
+  return li;
 }
 function resultCard(msg: ChatMessage): HTMLLIElement {
   const li = make("li", `msg msg-system msg-result`);
@@ -179,6 +217,8 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
     const note = make("p", "turn-note", !chatTurn ? "No files changed"
       : Array.isArray(created) && created.length ? `Created ${created.length} file${created.length === 1 ? "" : "s"} · download above` : "Answered");
     if (usageText(msg.details)) note.title = usageText(msg.details);  // the numbers are there on hover, not in the way
+    const spent = turnCostText(turnCost(liveEvents, messageSeq(msg) ?? undefined));
+    if (spent) note.append(make("span", "turn-cost", spent));
     const seq = Number(msg.id.replace("terminal-", ""));
     if (selected && Number.isInteger(seq)) {
       const branch = make("button", "ghost small turn-branch");
@@ -205,6 +245,8 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   }
   card.append(head, make("p", "result-text", resultStatus(state, result)));
   if (usageText(msg.details)) card.append(make("p", "result-usage", usageText(msg.details)));
+  const spent = turnCostText(turnCost(liveEvents, messageSeq(msg) ?? undefined));
+  if (spent) card.append(make("p", "result-usage turn-cost", spent));
   const actions = make("div", "result-actions");
   if (result && typeof result.diff === "string" && result.diff) {
     const open = make("button", "small");
@@ -285,7 +327,9 @@ function assistantMessage(msg: ChatMessage, showHeader: boolean): HTMLLIElement 
       content.append(prose);
     } else content.append(...evidenceBlocks(msg));
   } else if (msg.body) {
-    content.append(richText(msg.body));
+    const prose = richText(msg.body);
+    addCitations(prose);
+    content.append(prose);
     const tools = make("div", "msg-actions");
     tools.append(copyButton(() => msg.body ?? "", "Copy"));
     if (msg.kind === "agent_message") tools.append(branchButton(msg, "Start a new conversation that includes everything up to and including this reply"));
@@ -293,6 +337,50 @@ function assistantMessage(msg: ChatMessage, showHeader: boolean): HTMLLIElement 
   }
   li.append(content);
   return li;
+}
+/** Web sources in a reply become numbered chips: after inline links, in place of [n] markers, and in a Sources row. */
+function addCitations(root: HTMLElement): void {
+  const external = (a: HTMLAnchorElement) => /^https?:/i.test(a.getAttribute("href") ?? "") && !a.closest?.("pre, code");
+  const links = [...(root.querySelectorAll?.<HTMLAnchorElement>("a[href]") ?? [])].filter(external);
+  const lists = [...(root.querySelectorAll?.<HTMLOListElement>("ol") ?? [])].filter(list => list.children.length > 0
+    && [...list.children].every(item => [...item.querySelectorAll<HTMLAnchorElement>("a[href]")].some(external)));
+  const references = lists[lists.length - 1];
+  const sources: { href: string; label: string }[] = [];
+  const numberOf = (link: HTMLAnchorElement): number => {
+    let index = sources.findIndex(source => source.href === link.href);
+    if (index < 0) { sources.push({ href: link.href, label: (link.textContent ?? "").trim() }); index = sources.length - 1; }
+    return index + 1;
+  };
+  if (references) for (const item of references.children) { const link = [...item.querySelectorAll<HTMLAnchorElement>("a[href]")].find(external); if (link) numberOf(link); }
+  for (const link of links) if (!references?.contains(link)) link.after(citeChip(numberOf(link), sources));
+  if (sources.length && typeof document.createTreeWalker === "function") {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const texts: Text[] = [];
+    while (walker.nextNode()) { const node = walker.currentNode as Text; if (!node.parentElement?.closest("a, pre, code, .cite-chip")) texts.push(node); }
+    for (const node of texts) {
+      const markers = citationMarkers(node.data).filter(marker => marker.index <= sources.length);
+      if (!markers.length) continue;
+      const parts: (Node | string)[] = [];
+      let at = 0;
+      for (const marker of markers) { parts.push(node.data.slice(at, marker.start), citeChip(marker.index, sources)); at = marker.end; }
+      parts.push(node.data.slice(at));
+      node.replaceWith(...parts);
+    }
+  }
+  if (sources.length && !references) {
+    const row = make("div", "cite-sources");
+    row.append(make("span", "cite-sources-label", "Sources"));
+    sources.forEach((_, index) => { const chip = citeChip(index + 1, sources); chip.append(make("span", "cite-host", sourceLabel(sources[index]!.href))); row.append(chip); });
+    root.append(row);
+  }
+}
+function citeChip(index: number, sources: { href: string; label: string }[]): HTMLAnchorElement {
+  const source = sources[index - 1]!;
+  const chip = make("a", "cite-chip", String(index)) as HTMLAnchorElement;
+  chip.href = source.href; chip.target = "_blank"; chip.rel = "noopener noreferrer";
+  chip.title = source.label && source.label !== source.href ? `${source.label} · ${sourceLabel(source.href)}` : source.href;
+  chip.setAttribute("aria-label", `Source ${index}: ${chip.title}`);
+  return chip;
 }
 /** The event number a chat message came from (its id ends in "-<seq>"). */
 function messageSeq(msg: ChatMessage): number | null {
@@ -498,13 +586,22 @@ function confirmationCard(msg: ChatMessage): HTMLLIElement {
 }
 
 let rendered = new Set<string>();
-let pendingCalls: { name: string; body: HTMLElement }[] = [];
+let pendingCalls: { name: string; body: HTMLElement; callId?: string | undefined; seq: number }[] = [];
+let toolTimingsNow = new Map<number, { status: "running" | "done" | "failed"; seconds: number | null }>();
+let thinkingNow = new Map<number, number>();
 let lastRole = "";
 const QUIET_KINDS = new Set(["inspected", "skills", "model_routed", "agent_started", "agent_finished", "sandbox_secrets", "agent_thinking"]);
 function quietStep(msg: ChatMessage): HTMLLIElement {
   const li = make("li", "msg msg-system msg-think");
   li.id = msg.id;
   li.dataset.quiet = "1";
+  if (msg.kind === "agent_thinking" && msg.body) {
+    li.className = "msg msg-system msg-think msg-thought";
+    const seconds = thinkingNow.get(messageSeq(msg) ?? -1);
+    if (seconds !== undefined) li.dataset.seconds = String(seconds);
+    li.dataset.summary = thinkingSummary(msg.body);
+    li.append(richText(msg.body));
+  }
   return li;
 }
 /** Rewind: drop this message and everything after it, so the conversation can be rewritten. */
@@ -580,16 +677,13 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
       tools.append(branchButton(msg, "Start a new conversation from just before this message, so you can write it differently"));
       tools.append(rewindButton(msg));
     }
-    if (msg.kind === "user_message" && msg.title === "Queued") {
-      const pill = make("span", "queued-pill");
-      pill.append(icon("clock"), make("span", "", "Queued while working"));
-      bubble.append(pill);
-    }
+    if (msg.kind === "user_message" && msg.title === "Queued") bubble.append(steerPill(steeringStatus(liveEvents).get(messageSeq(msg) ?? -1) ?? "pending"));
     li.append(bubble, tools);
     lastRole = "user";
     return li;
   }
   if (msg.role === "system" && msg.state) { lastRole = "system"; return resultCard(msg); }
+  if (msg.kind === "agent_recovery" || msg.kind === "agent_context_compacted") { lastRole = "system"; return noticeRow(msg); }
   if (msg.role === "assistant" && (msg.body || msg.kind === "plan")) {
     const li = assistantMessage(msg, lastRole !== "assistant");
     lastRole = "assistant";
@@ -598,20 +692,23 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
   // Pair a tool result with its call so each step reads as one action plus its output.
   if (msg.kind === "agent_tool_result") {
     const name = toolName(msg);
-    const index = pendingCalls.findIndex(call => call.name === name);
+    const index = msg.callId ? pendingCalls.findIndex(call => call.callId === msg.callId) : pendingCalls.findIndex(call => call.name === name);
     const call = index >= 0 ? pendingCalls.splice(index, 1)[0] : undefined;
-    if (call && msg.body) {
-      const label = call.body.parentElement?.querySelector(".step-arg")?.textContent ?? "";
-      call.body.append(renderOutputUI(msg.body, name, label));
-      if (call.body.parentElement) {
-        setClass(call.body.parentElement, "step-static", false);
-        if (msg.state === "tool_failed") setClass(call.body.parentElement, "step-failed", true);
+    if (call) {
+      const step = call.body.parentElement;
+      const timing = toolTimingsNow.get(call.seq);
+      updateStepStatus(step, msg.state === "tool_failed" ? "failed" : "done", timing?.seconds ?? null);
+      if (msg.body) {
+        const label = step?.querySelector(".step-arg")?.textContent ?? "";
+        call.body.append(renderOutputUI(msg.body, name, label));
+        if (step) setClass(step, "step-static", false);
       }
+      if (step && msg.state === "tool_failed") setClass(step, "step-failed", true);
       return null;
     }
   }
   const { li, body } = stepRow(msg);
-  if (msg.kind === "agent_tool_call") pendingCalls.push({ name: toolName(msg), body });
+  if (msg.kind === "agent_tool_call") pendingCalls.push({ name: toolName(msg), body, callId: msg.callId, seq: messageSeq(msg) ?? -1 });
   lastRole = "tool";
   return li;
 }
@@ -623,6 +720,9 @@ const EARLIER_LIMIT = 150;
 function renderMessageStream(messages: ChatMessage[]): void {
   const stream = el("message-stream"), thread = el("thread");
   const stick = nearBottom(thread);
+  toolTimingsNow = toolTimings(liveEvents);
+  thinkingNow = thinkingDurations(liveEvents);
+  if (messages.some(msg => !rendered.has(msg.id))) document.getElementById?.("live-thinking")?.remove?.();
   if (!rendered.size && !showAllMessages && messages.length > EARLIER_LIMIT) {
     // Long conversations open on their newest messages; older ones load on request.
     const hidden = messages.slice(0, messages.length - EARLIER_LIMIT);
@@ -642,28 +742,54 @@ function renderMessageStream(messages: ChatMessage[]): void {
       else addToStream(stream, node);
     }
   }
+  for (const [seq, status] of steeringStatus(liveEvents)) {
+    const pill = document.getElementById?.(`user-${seq}`)?.querySelector?.(".queued-pill");
+    if (pill && (pill as HTMLElement).dataset.status !== status) pill.replaceWith(steerPill(status));
+  }
+  if (selectedState && isTerminal(selectedState)) {
+    for (const node of stream.querySelectorAll?.(".step-status.step-running") ?? []) node.replaceWith(make("span", "step-status step-failed", "Stopped"));
+  }
   if (stick) thread.scrollTop = thread.scrollHeight;
 }
-/** Quiet steps (thinking, routing, skills) collapse into one "Thinking" block. */
+/** What happened to a message typed while Dikdik was working, in words. */
+function steerPill(status: "pending" | "applied" | "follow-up"): HTMLElement {
+  const pill = make("span", `queued-pill steer-${status}`); pill.dataset.status = status;
+  const text = status === "applied" ? "Read during the run" : status === "follow-up" ? "Sent after the run" : "Waiting · read at the next step";
+  pill.append(icon(status === "applied" ? "check" : "clock"), make("span", "", text));
+  pill.title = status === "pending" ? "Dikdik reads this at its next step without stopping. Messages with files or a goal wait for the run to finish." : "";
+  return pill;
+}
+/** Quiet steps (thinking, routing, skills) collapse into one block: "Thought for 12s" and a one-line summary. */
 function quietToStream(stream: HTMLElement, node: HTMLLIElement): void {
   let block = stream.querySelector<HTMLDetailsElement>(".think-block:last-child");
   if (!block) {
     block = make("details", "think-block") as HTMLDetailsElement;
     const summary = make("summary", "");
-    summary.append(icon("sparkle"), make("span", "think-title", "Thinking"), make("span", "think-count", ""));
+    const chevron = icon("chevron"); chevron.setAttribute("class", "i think-chevron");
+    summary.append(icon("sparkle"), make("span", "think-title", "Getting ready"), make("span", "think-summary", ""), make("span", "think-count", ""), chevron);
     const process = make("ol", "think-process");
     block.append(summary, process);
     stream.append(block);
   }
   const process = block.querySelector(".think-process")!;
   process.append(node);
-  const count = block.querySelector(".think-count");
-  if (count) count.textContent = `${process.children.length} steps`;
+  const thoughts = [...process.querySelectorAll<HTMLElement>(".msg-thought")];
+  const seconds = thoughts.reduce((total, item) => total + (Number(item.dataset.seconds) || 0), 0);
+  const known = thoughts.some(item => item.dataset.seconds !== undefined);
+  const title = block.querySelector(".think-title"), summary = block.querySelector(".think-summary"), count = block.querySelector(".think-count");
+  if (title) title.textContent = thoughts.length ? thinkingLabel(known ? seconds : null) : "Getting ready";
+  if (summary) summary.textContent = thoughts.length ? thoughts[thoughts.length - 1]!.dataset.summary ?? "" : "";
+  const others = process.children.length - thoughts.length;
+  if (count) count.textContent = thoughts.length ? "" : `${others} step${others === 1 ? "" : "s"}`;
+  setClass(block, "has-thought", thoughts.length > 0);
+  setClass(block, "think-empty", thoughts.length === 0);
   block.open = false;
 }
 /** Consecutive steps share one block; three or more fold into "N steps" once the agent moves on. */
 function addToStream(stream: HTMLElement, node: HTMLLIElement): void {
   if (node.dataset.step !== "1") { closeStepGroup(); stream.append(node); return; }
+  const readStep = groupable(node.dataset.verb ?? "");
+  if (stepGroup && stepGroup.steps.length && stepGroup.steps.every(step => groupable(step.verb)) !== readStep) closeStepGroup();
   if (!stepGroup || stream.lastElementChild !== stepGroup.li) {
     closeStepGroup();
     const li = make("li", "msg step-group few"), details = make("details"), summary = make("summary"), list = make("ol", "step-list");
@@ -672,11 +798,14 @@ function addToStream(stream: HTMLElement, node: HTMLLIElement): void {
     details.append(summary, list);
     li.append(details);
     stream.append(li);
-    stepGroup = { li, list, details, summary, count: 0 };
+    stepGroup = { li, list, details, summary, count: 0, steps: [] };
   }
   stepGroup.list.append(node);
   stepGroup.count++;
-  stepGroup.summary.replaceChildren(icon("chevron"), make("span", "", `${stepGroup.count} steps`));
+  stepGroup.steps.push({ verb: node.dataset.verb ?? "", target: node.dataset.target ?? "" });
+  const reads = stepGroup.steps.every(step => groupable(step.verb));
+  stepGroup.summary.replaceChildren(icon("chevron"), make("span", "", reads ? groupTitle(stepGroup.steps) : `${stepGroup.count} steps`));
+  setClass(stepGroup.li, "reads", reads);
   setClass(stepGroup.li, "few", stepGroup.count < 3);
 }
 function closeStepGroup(): void {
@@ -1996,7 +2125,8 @@ function syncComposer(): void {
 function syncSend(): void {
   const running = !!selected && !!selectedState && !isTerminal(selectedState);
   const stopping = running && stoppingTasks.has(selected!);
-  button('start').hidden = running;
+  button('start').hidden = running && !textarea('objective').value.trim();
+  button('start').title = running ? 'Send · Dikdik reads it at its next step without stopping' : '';
   button('cancel').hidden = !running;
   button('cancel').disabled = !running || stopping;
   button('cancel').setAttribute('aria-label', stopping ? 'Stopping response' : 'Stop response');
@@ -2463,6 +2593,65 @@ function stopStream(): void {
   heldEvents = []; heldEnd = false; heldReply = null;
   showLiveReply("");
 }
+let liveThought = "", thinkTimer: ReturnType<typeof setInterval> | null = null;
+/** While a model call is in flight, an open block counts the seconds and shows any thinking that streams in. */
+function renderLiveThinking(): void {
+  const pending = selected && selectedState && !isTerminal(selectedState) ? pendingModelCall(liveEvents) : null;
+  const existing = document.getElementById?.("live-thinking");
+  if (!pending || document.getElementById?.("live-reply")) {
+    existing?.remove?.();
+    if (thinkTimer) { clearInterval(thinkTimer); thinkTimer = null; }
+    if (!pending) liveThought = "";
+    return;
+  }
+  const li = existing ?? make("li", "msg msg-system msg-live-thinking");
+  if (!existing) {
+    li.id = "live-thinking";
+    const block = make("div", "think-block thinking-now");
+    const summary = make("div", "think-head");
+    summary.append(make("span", "think-pulse"), make("span", "think-title", "Thinking…"), make("span", "think-summary", ""));
+    block.append(summary, make("div", "think-live"));
+    li.append(block);
+  }
+  const seconds = Math.max(0, Date.now() / 1000 - pending.since);
+  const title = li.querySelector(".think-title"), summary = li.querySelector(".think-summary"), body = li.querySelector<HTMLElement>(".think-live");
+  if (title) title.textContent = thinkingLabel(seconds, true);
+  if (summary) summary.textContent = liveThought ? thinkingSummary(liveThought.slice(-600).split(/\n\n/).pop() ?? "") : "";
+  if (body) { body.textContent = liveThought.slice(-1500); body.hidden = !liveThought; }
+  const stream = el("message-stream");
+  if (stream.lastElementChild !== li) stream.append(li);
+  if (!thinkTimer) thinkTimer = setInterval(renderLiveThinking, 1000);
+}
+let runPlanOpen: boolean | null = null;
+/** The agent's task_tracker list, pinned above the conversation while its run is active. */
+function renderRunPlan(): void {
+  const box = el("run-plan");
+  const view = selected ? taskChecklist(liveEvents) : { used: false, tasks: [] as ChecklistItem[] };
+  const active = !!selected && !!selectedState && !isTerminal(selectedState);
+  box.hidden = !active || !view.tasks.length;
+  if (box.hidden) { box.replaceChildren(); return; }
+  if (runPlanOpen === null) runPlanOpen = !wide("(max-width: 760px)");
+  const done = view.tasks.filter(task => task.status === "done").length;
+  const current = view.tasks.find(task => task.status === "in_progress") ?? view.tasks.find(task => task.status === "todo");
+  const details = make("details", "run-plan-box") as HTMLDetailsElement;
+  details.open = runPlanOpen;
+  details.addEventListener("toggle", () => { runPlanOpen = details.open; });
+  const summary = make("summary");
+  const chevron = icon("chevron"); chevron.setAttribute("class", "i run-plan-chevron");
+  summary.append(icon("list"), make("span", "run-plan-title", "Plan"), make("span", "run-plan-count", `${done} of ${view.tasks.length} done`),
+    make("span", "run-plan-current", current && !details.open ? current.title : ""), chevron);
+  const bar = make("span", "run-plan-bar"); const fill = make("span"); fill.setAttribute("style", `width: ${Math.round(done / view.tasks.length * 100)}%`); bar.append(fill);
+  const labels = { todo: "To do", in_progress: "In progress", done: "Done" };
+  const list = make("ol", "task-checklist run-plan-list");
+  list.append(...view.tasks.map(task => {
+    const row = make("li", "checklist-step"); row.dataset.status = task.status;
+    const marker = make("span", "checklist-icon"); marker.setAttribute("aria-hidden", "true");
+    row.append(marker, make("span", "checklist-title", task.title), make("span", "sr-only", ` (${labels[task.status]})`));
+    return row;
+  }));
+  details.append(summary, bar, list);
+  box.replaceChildren(details);
+}
 function showLiveReply(text: string, onShown?: () => void): void {
   const existing = document.getElementById?.("live-reply");
   if (!text) {
@@ -2471,6 +2660,7 @@ function showLiveReply(text: string, onShown?: () => void): void {
     if (existing) el("working-label").textContent = "Working";
     return;
   }
+  document.getElementById?.("live-thinking")?.remove?.();
   const li = existing ?? make("li", "msg msg-assistant msg-live");
   if (!existing || !typer) {
     li.id = "live-reply";
@@ -2529,6 +2719,12 @@ function startStream(id: string): void {
     pendingReply = (JSON.parse((event as MessageEvent).data) as { text: string }).text;
     if (heldReply === null) replyPaint.schedule();
   });
+  source.addEventListener("thinking", event => {
+    if (id !== selected) return stopStream();
+    const text = (JSON.parse((event as MessageEvent).data) as { text?: unknown }).text;
+    liveThought = typeof text === "string" ? text : "";
+    renderLiveThinking();
+  });
   source.addEventListener("end", () => { if (heldReply !== null) heldEnd = true; else endStream(); });
   source.onerror = () => { if (source.readyState === EventSource.CLOSED || liveTask !== id) { typer?.flush(); stopStream(); watching = true; } };
 }
@@ -2549,7 +2745,8 @@ function handleStreamEvent(id: string, record: TaskEvent): void {
     if (record.kind === "browser_started" || record.kind === "browser_result") renderBrowser();
     if (record.kind === "live_preview") { livePath = ""; void refreshLive(); }
     if (record.kind === 'plan_updated') { void loadPlan(id); void loadPlans().catch(() => undefined); }
-    if (record.kind === 'task_tracker') renderChecklist();
+    if (record.kind === 'task_tracker') { renderChecklist(); renderRunPlan(); }
+    if (record.kind === "agent_model" && record.data?.phase === "start") liveThought = "";
     if ((record.kind === "agent_model" || record.kind === "running") && canvasTab === "usage" && !el("canvas").hidden) renderUsage();
     if (record.kind === "running" || isTerminal(record.kind)) {
       setState(record.kind);
@@ -3436,7 +3633,7 @@ async function sendMessage(text: string, goalMaxTurns?: number): Promise<boolean
     const reply = await api<{ queued: boolean }>(`/api/tasks/${encodeURIComponent(task)}/messages`, composerRequest(text, goalMaxTurns));
     clearAttachments();
     if (task === selected) watching = true;
-    if (reply.queued) message("Queued. Dikdik will reply when the current step finishes.");
+    if (reply.queued) message("Sent. Dikdik reads it at its next step; with files or a goal it waits for this run to finish.");
   } catch (error) { message(error instanceof Error ? error.message : "Message failed", true); return false; }
   // Acceptance releases the composer immediately. History, the task snapshot
   // and draft persistence do not sit on the message submission path.
@@ -3658,14 +3855,19 @@ function renderRunState(): void {
   if (selected && stoppingTasks.has(selected) && !isTerminal(selectedState)) el('working-label').textContent = 'Stopping…';
   const usage = selected ? contextUsage(liveEvents) : null;
   const meter = el("context-meter");
-  meter.hidden = !usage;
-  if (usage) {
-    const pct = Math.round(usage.ratio * 100);
-    el("context-label").textContent = `${pct}%`;
-    el("context-fill").style?.setProperty?.("--fill", `${pct}%`);
-    setClass(meter, "context-high", usage.ratio >= 0.8);
-    meter.title = `${pct}% of the context window at the last model call (${Math.round(usage.bytes / 1024)} of ${Math.round(usage.limit / 1024)} KB). Click to condense older turns.`;
-  }
+  const spent = selected ? turnCost(liveEvents) : null;
+  meter.hidden = !usage && !spent?.total;
+  const pct = usage ? Math.round(usage.ratio * 100) : 0;
+  el("context-label").textContent = [usage ? `${pct}%` : "", spent?.total ? `${compactTokens(spent.total)} tok` : ""].filter(Boolean).join(" · ");
+  el("context-fill").style?.setProperty?.("--fill", `${pct}%`);
+  setClass(meter, "context-high", !!usage && usage.ratio >= 0.8);
+  meter.title = [
+    usage ? `Context: ${pct}% of the window at the last model call (${Math.round(usage.bytes / 1024)} of ${Math.round(usage.limit / 1024)} KB).` : "Context: not reported yet.",
+    spent ? `This turn: ${turnCostText(spent) || "no tokens reported"}.` : "",
+    "Click to condense older turns.",
+  ].filter(Boolean).join("\n");
+  renderLiveThinking();
+  renderRunPlan();
   const goal = selected ? goalState(liveEvents) : null;
   el("goal-banner").hidden = !goal;
   if (goal) {

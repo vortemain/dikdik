@@ -663,6 +663,10 @@ def _arguments(call: ToolCall, tools: list[dict] = TOOLS) -> None:
                 raise ValueError(f"{call.name}.{key} must be an integer from {field.get('minimum', '-infinity')} to {field.get('maximum', 'infinity')}")
 
 
+STEER_NOTE = ("[The user sent this while you were working. Take it into account from now on; "
+              "it may change or narrow the request.]\n\n")
+
+
 def run_agent(original: dict[str, str], objective: str, model: AgentModel,
               verify: Callable[[dict[str, str]], dict],
               emit: Callable[[str, dict], None], cancel: threading.Event,
@@ -703,7 +707,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
               shell_tool: dict | None = None,
               on_write: Callable[[dict[str, str]], None] | None = None,
               describe_images: Callable[[list[str]], list[str]] | None = None,
-              conversation: bool = False) -> AgentOutcome:
+              conversation: bool = False,
+              steer: Callable[[], list[str]] | None = None) -> AgentOutcome:
     """Deadline/cancellation are checked between steps, not during blocking callbacks.
 
     ``original`` is the untouched source (diff base, protected tests); ``start`` is the
@@ -722,6 +727,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
     enables the parallel_edit tool (see parallel.py).
     ``summary_model`` (default: ``model``) writes conversation summaries during compaction.
     ``shell_tool`` replaces the sandbox run_command definition (local mode runs in the project folder).
+    ``steer()`` returns messages the user sent during the run; they are added after each batch of
+    tool results so the run can change course without stopping.
 
     Verification is an injected trusted boundary, reachable only via run_tests.
     A passed ``kind=unittest`` check is evidence of tests, not objective correctness.
@@ -2052,4 +2059,10 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
             context_bytes += _message_size(hint_msg)
             messages.append(hint_msg)
             pending_progress_hint = ""
+            save()
+        steering = [text for text in (steer() if steer else []) if isinstance(text, str) and text.strip()]
+        if steering:
+            steer_msg = {"role": "user", "content": STEER_NOTE + "\n\n".join(steering)}
+            context_bytes += _message_size(steer_msg)
+            messages.append(steer_msg)
             save()

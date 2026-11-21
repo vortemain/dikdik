@@ -1368,6 +1368,24 @@ class Engine:
         else:
             self.live.pop(task, None)
 
+    def _steer(self, task, mode):
+        """Queued follow-ups in the running mode, taken at a tool boundary so the run adjusts without stopping.
+        Messages with attachments, images or a goal still wait for their own turn."""
+        with self.lock:
+            queue = self.pending.get(task) or []
+            taken = [item for item in queue if item.get("mode") == mode and not item.get("attachments")
+                     and not item.get("images") and not item.get("goal_max_turns")]
+            if not taken:
+                return []
+            rest = [item for item in queue if all(item is not other for other in taken)]
+            if rest:
+                self.pending[task] = rest
+            else:
+                self.pending.pop(task, None)
+        for item in taken:
+            self.store.event(task, "user_steered", {"text": item["objective"]})
+        return [item["objective"] for item in taken]
+
     def busy(self, task):
         with self.lock:
             return task in self.active or bool(self.pending.get(task))
@@ -2190,6 +2208,7 @@ class Engine:
                 performance_baselines=engineering.Baselines(self.store, str(self.root)),
                 load_test=load_test_app if local and (profile is None or profile["allow_shell"]) else None,
                 dast_scan=server_check("dast", dast.run) if local and (profile is None or profile["allow_shell"]) else None,
+                steer=lambda: self._steer(task, request["mode"]),
                 fault_test=server_check("fault_test", faults.run) if local and (profile is None or profile["allow_shell"]) else None,
                 parallel_writer=parallel_writer if local else None,
                 shell_note=local_exec.describe_shell() + "; " + local_exec.describe_toolchain(self.root) if local else "",
@@ -2710,7 +2729,7 @@ class Engine:
             describe_images=lambda urls: self.describe_image_urls(urls, model_name),
             conversation=True, checkpoint=chat_checkpoint, resume=request.get("resume"),
             shell=shell_fn, shell_tool=shell_tool,
-            confirm=confirm_fn, pause=pause,
+            confirm=confirm_fn, pause=pause, steer=lambda: self._steer(task, request["mode"]),
         )
         if outcome.transcript is not None:
             chat_checkpoint(outcome.transcript)  # whatever the step, a paused chat can resume from here

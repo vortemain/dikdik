@@ -9,6 +9,13 @@ task checkboxes, bold, italic, strikethrough, `==highlights==`, inline code, saf
 HTTP/HTTPS links, blockquotes and GitHub-style note/tip/warning callouts. Known
 project paths in inline code open Files.
 
+## Sources and citations
+
+Web links in a reply get a small numbered chip, and `[n]` markers become chips that open
+source `n`. When the reply ends with a numbered list of links, that list is the source
+order; otherwise a **Sources** row under the reply lists each site once. Chips only
+link to addresses the reply already contained; nothing is fetched to render them.
+
 ## Tables
 
 Click a column heading to sort ascending/descending. Numeric columns support

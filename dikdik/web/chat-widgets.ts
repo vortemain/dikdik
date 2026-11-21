@@ -24,6 +24,11 @@ export const TOOL_LABELS: Record<string, [string, string, string]> = {
   browse_url: ["globe", "Opened", "url"],
   web_search: ["search", "Researched with Tavily", "query"],
   web_fetch: ["globe", "Fetched page", "url"],
+  read_document: ["file", "Read", "path"],
+  read_image: ["eye", "Read", "path"],
+  statistics: ["grid", "Analysed", "path"],
+  literature_search: ["search", "Searched", "query"],
+  save_notes: ["pencil", "Saved notes", ""],
 };
 
 // Deps that only app.ts can supply (they close over app state/imports).
