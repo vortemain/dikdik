@@ -39,7 +39,9 @@ custom properties on `:root`; the choice is stored per browser.
 Sidebar (new task, recent tasks with live state dots, workspace, settings) →
 centered 768px conversation → optional right-hand **Changes** canvas with the
 per-file diff. Agent tool calls render as compact, expandable steps paired with
-their output; every code block has a language label and a Copy button. Settings
+their output, with status and duration in words; consecutive reads fold into
+one line, thinking collapses to "Thought for Ns", and the agent's plan stays
+pinned above the conversation while it works; every code block has a language label and a Copy button. Settings
 open as a dialog with sections for General, Models, API keys, Skills and
 Automations. Below 1100px the canvas becomes an overlay; below 760px the
 sidebar becomes a drawer.

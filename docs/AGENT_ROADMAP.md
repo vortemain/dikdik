@@ -207,18 +207,33 @@ Verified with scripted models only (`tests/test_learning.py`); no live-provider 
     - Skill writes need approval.
     - Unused skills go stale after 14 days and are archived after 30.
 
-## Phase 6: the chat space
+## Phase 6: the chat space (done, except checkpoints)
 
 19. **Thinking** as a collapsible block that streams while running, then collapses to "Thought for
-    Ns" with a summary.
+    Ns" with a summary. *Done:* a live "Thinking… Ns" block while a model call is in flight (it also
+    shows text from an optional `thinking` stream event), then "Thought for Ns" with the first
+    sentence as its summary.
 20. **Tool activity** as compact one-line cards (verb, target, status, duration), with consecutive
-    reads grouped ("Read 6 sections").
+    reads grouped ("Read 6 sections"). *Done:* calls pair with results by call id; status is in
+    words (Running, 1.2s, Failed · 0.4s, Stopped); reads, searches and fetches fold into one line;
+    recovery and compaction show as small notices.
 21. **Plan checklist** rendered from `task_tracker`; the model doesn't repeat it in text (Codex).
-22. **Citations** as inline numbered chips; deliverables as file cards with a preview.
+    *Done:* pinned above the conversation while a run is active.
+22. **Citations** as inline numbered chips; deliverables as file cards with a preview. *Done:* web
+    links in a reply get numbered chips, `[n]` markers link to a numbered source list, and a
+    Sources row lists them; created files keep their preview cards.
 23. **Steering**: a message sent mid-run is queued and applied at the next tool boundary instead of
-    stopping the run.
+    stopping the run. *Done:* `run_agent(steer=...)` adds same-mode queued messages after each batch
+    of tool results and records `user_steered`; messages with files, images or a goal still wait
+    for their own turn. The message shows "Waiting", then "Read during the run" or "Sent after the
+    run".
 24. **Checkpoints**: restore files, the conversation or both per step (Cline shadow git; check
-    overlap with existing checkpoints first).
+    overlap with existing checkpoints first). *Not started* (Undo changes and Rewind cover part of it).
+
+The cost meter from phase 1 item 4 is in place on the client: context used against the limit, tokens
+this turn, cached versus fresh tokens when the provider reports them, reported cost, and
+compactions per turn. Checked with the stand-in model only (`CHATSPACE` scenario in
+`scripts/stub_model.py`).
 
 ## How we will know it worked
 

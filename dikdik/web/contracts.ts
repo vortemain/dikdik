@@ -81,6 +81,7 @@ export interface ChatMessage {
   details?: unknown;   // structured payload (tool result data, check status, etc.)
   state?: string;      // terminal state for system/terminal messages
   testsVerified?: boolean;
+  callId?: string;     // pairs a tool call with its result
 }
 export interface TerminalCommandView {
   id: string;
@@ -548,10 +549,10 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       const name = textOf(d.name, 120) || "tool";
       if (d.phase === "start") {
         const args = d.arguments;
-        return [{ ...base, role: "tool", kind: "agent_tool_call", title: `Tool call: ${name}`, details: typeof args === "object" && args !== null ? args : undefined }];
+        return [{ ...base, role: "tool", kind: "agent_tool_call", title: `Tool call: ${name}`, details: typeof args === "object" && args !== null ? args : undefined, ...(textOf(d.id, 200) ? { callId: textOf(d.id, 200) } : {}) }];
       }
       if (d.phase === "end") {
-        return [{ ...base, role: "tool", kind: "agent_tool_result", title: `Tool result: ${name}`, body: observationText(name, d.observation), ...(name === "web_search" || name === "web_fetch" ? { details: d.observation } : {}), ...(d.failed === true ? { state: "tool_failed" } : {}) }];
+        return [{ ...base, role: "tool", kind: "agent_tool_result", title: `Tool result: ${name}`, body: observationText(name, d.observation), ...(name === "web_search" || name === "web_fetch" ? { details: d.observation } : {}), ...(d.failed === true ? { state: "tool_failed" } : {}), ...(textOf(d.id, 200) ? { callId: textOf(d.id, 200) } : {}) }];
       }
       return [];
     }
@@ -571,7 +572,7 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
     case "agent_started":
       return [{ ...base, role: "assistant", title: "Started tool-using agent", details: d }];
     case "agent_recovery":
-      return [{ ...base, role: "tool", title: "Adjusting approach", body: textOf(d.reason), details: d }];
+      return [{ ...base, role: "system", title: "Adjusting approach", body: textOf(d.reason), details: d }];
     case "agent_context_compacted":
       return [{ ...base, role: "system", title: "Working context shortened",
         body: d.compaction_version === 2
