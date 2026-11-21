@@ -106,3 +106,49 @@ externally after a pause are neither overwritten nor accepted as agent-verified.
 
 The UI distinguishes execution mode, passed project checks, unavailable validation
 and actual test evidence. Missing validation is not presented as a failing test.
+
+## Native Anthropic transport and cache-stable prompts (2026-11-21)
+
+A chat run on `claude-sonnet-5-5` cost about $4.90 because Anthropic profiles went through
+Anthropic's OpenAI-compatible endpoint. That endpoint has no prompt caching, ignores
+`reasoning_effort`, never returns thinking and hoists every system message to the top.
+
+- Profiles whose provider is `anthropic` (or whose endpoint is `api.anthropic.com`) now use
+  `anthropic_messages.py`: `POST /v1/messages` with `x-api-key` and `anthropic-version`, over the
+  same `urllib` transport, cancellation and size limits as before. Replies are converted to the
+  chat-completions shape, so the agent loop, retries and usage accounting are unchanged.
+- Cache breakpoints sit on the tool list, the system prompt and the two newest turns (at most
+  four). `usage.cache_read_input_tokens` and `cache_creation_input_tokens` become
+  `cache_read_tokens` and `cache_write_tokens` in the `agent_model` end events; input tokens
+  count the whole prompt, cached or not.
+- Models from 4.6 (and every Fable and Mythos model) get `thinking: {type: "adaptive",
+  display: "summarized"}`; the profile's reasoning effort becomes `output_config.effort`
+  (`minimal` maps to `low`). Models from 4.7 get no `temperature` or `top_p`. No request forces
+  a tool choice. Older models get neither thinking nor effort.
+- Thinking summaries become the reply's reasoning. Thinking blocks are kept, with their
+  signatures, in the assistant message's `reasoning_details` and replayed unchanged on the next
+  request. Compaction rewrites older turns, so models that bind thinking to its conversation
+  (Opus and Sonnet 5.5, Fable and Mythos 5.1 and later) send
+  `block_binding.prefix_mismatch_behavior: "drop_block"` with the
+  `thinking-binding-controls-2026-08-01` beta. A 400 about a thinking signature is retried
+  once with the thinking blocks removed.
+- `stop_reason` `max_tokens` is an output-limit failure, `refusal` a content-filter failure and
+  `pause_turn` is resumed (at most three times). HTTP 413 and "prompt is too long" are context
+  failures, 529 and overloaded stream events are transient provider failures.
+- The chat system prompt no longer contains the date. The date and this message's skill
+  guidance go into a user message after the earlier turns, so the system prompt, the tools
+  and the history stay a byte-identical prefix. Requests to `api.openai.com` carry a
+  `prompt_cache_key` (a digest of model, system prompt and tool names); other
+  OpenAI-compatible servers are left alone because some reject unknown fields. OpenRouter
+  keeps its `cache_control` marks for Claude models.
+- Tool results over 30 KB keep their first 16 KB and last 8 KB inline, with a header giving
+  the original size. In chats the full text is saved as `tool-output/<hash>.txt` in the chat's
+  folder (hidden from its download list) and the header names that path, which
+  `read_document` can page or search. `read_document` pages are now 24,000 characters so an
+  ordinary page stays inline. Agent-mode tasks get the head and tail without a saved file.
+
+Verified with unit tests against a loopback fake server and mocked openers only; no live
+Anthropic request was made. Remaining risks: the exact event and error shapes of the live
+API, thinking blocks whose text and tool calls arrive interleaved (they are replayed thinking
+first, then text, then tool calls), and models whose names do not follow `claude-<family>-N-M`
+(they are treated as older models and get no thinking).

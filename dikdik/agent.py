@@ -13,7 +13,7 @@ from typing import Callable, Protocol
 
 from .repository import _snapshot_limits, apply_edits, create_file, is_test_path, match_line_endings, syntax_check
 from .workspace_files import WorkspaceFiles, WORKING_LIMITS, read_page
-from . import architecture, engineering, parallel
+from . import architecture, engineering, parallel, tool_output
 from .security_scan import project_files
 from .hooks import HookEngine, HookEvent
 from .model_errors import ProviderError
@@ -737,7 +737,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
               conversation: bool = False,
               effort: str | None = None,
               effort_source: str = "user",
-              lint: Callable[[dict[str, str], list[str]], dict] | None = None) -> AgentOutcome:
+              lint: Callable[[dict[str, str], list[str]], dict] | None = None,
+              spill: Callable[[str], str] | None = None) -> AgentOutcome:
     """Deadline/cancellation are checked between steps, not during blocking callbacks.
 
     ``original`` is the untouched source (diff base, protected tests); ``start`` is the
@@ -1190,12 +1191,12 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                 except Exception:
                     return outcome("paused", "This run reached its model-call limit. Progress is saved; resume with a fresh run budget.")
                 if isinstance(response, ModelResponse) and isinstance(response.content, str) and response.content.strip():
-                    record_usage(response.usage, response.usage_tokens)
+                    reported = record_usage(response.usage, response.usage_tokens)
                     reply = {"role": "assistant", "content": response.content}
                     context_bytes += _message_size(reply)
                     messages.append(reply)
                     event("model", {"phase": "end", "model_calls": model_calls, "wrapup": True,
-                                    "usage_tokens": tokens, "usage": {}})
+                                    "usage_tokens": tokens, "usage": reported})
                     event("message", {"content": response.content})
                     save()
                     return outcome("paused", "This run reached its model-call limit; it ended with a closing summary. Progress is saved; resume to continue the remaining work.")
@@ -2065,7 +2066,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
             observe_evidence(evidence, shown + observation)
             if not failed and call.name in {"edit_file", "create_file"} and isinstance(call.arguments.get("path"), str):
                 batch_edits.add(call.arguments["path"])
-            content = _model_text(call.name, result) or observation
+            content = _model_text(call.name, result) or tool_output.content(result, _json(result), spill)
             context_bytes += _message_size({"role": "tool", "tool_call_id": call.id, "content": content})
             messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
             event("tool", {"phase": "end", "id": call.id, "name": call.name,

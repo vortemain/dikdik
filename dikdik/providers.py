@@ -1,5 +1,6 @@
 """One bounded proposal, using explicit edits or an opt-in compatible provider."""
 
+import hashlib
 import http.client
 import json
 import socket
@@ -7,7 +8,9 @@ import threading
 import urllib.error
 import urllib.request
 from typing import Callable
+from urllib.parse import urlsplit
 
+from . import anthropic_messages
 from .agent import context_size
 from .model_config import ModelConfig, from_environment
 from .model_errors import ProviderError
@@ -207,6 +210,19 @@ def cache_marks(config: ModelConfig, messages: list[dict]) -> list[dict]:
     return marked
 
 
+CACHE_KEY_HOSTS = {"api.openai.com"}  # servers known to accept prompt_cache_key; others may reject unknown fields
+
+
+def prompt_cache_key(config: ModelConfig, messages: list[dict], tools: list[dict] | None) -> str | None:
+    """Route requests that share a system prompt and tool list to the same cache. The key is a
+    digest of that prefix, so it carries no conversation text or user identity."""
+    if (urlsplit(config.url).hostname or "").lower() not in CACHE_KEY_HOSTS:
+        return None
+    system = messages[0].get("content") if messages and messages[0].get("role") == "system" else ""
+    names = [tool.get("function", {}).get("name") for tool in tools or [] if isinstance(tool, dict)]
+    return "dikdik-" + hashlib.sha256(json.dumps([config.model, system, names]).encode()).hexdigest()[:32]
+
+
 def chat_completion(messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 4096, config: ModelConfig | None = None,
                     on_text: Callable[[str], None] | None = None, cancel=None) -> dict:
     """A cancellable model request. Stop releases the task even while a provider is
@@ -300,10 +316,16 @@ def _chat_completion(messages, tools=None, max_tokens=4096, config=None, on_text
     options = config.options or {}
     if context_size(messages) > (options.get("context_limit_bytes") or 128000):  # attached images count as a fixed weight
         raise ProviderError("context_length", "Model context exceeds the configured limit; use a smaller approved workspace or increase the profile's context limit")
+    if anthropic_messages.is_native(config):
+        return anthropic_messages.complete(messages, tools, min(max_tokens, options.get("max_output_tokens") or max_tokens), config,
+                                           on_text, urllib.request.build_opener(*handlers), on_response, check)
     body = {"model": config.model, "max_tokens": min(max_tokens, options.get("max_output_tokens") or max_tokens), "messages": cache_marks(config, messages),
             **{k: options[k] for k in ("temperature", "top_p") if options.get(k) is not None}}
     if options.get("reasoning_effort"):
         body["reasoning_effort"] = options["reasoning_effort"]
+    key = prompt_cache_key(config, messages, tools)
+    if key:
+        body["prompt_cache_key"] = key
     if tools is not None:
         body["tools"] = tools
         body["tool_choice"] = "auto"
