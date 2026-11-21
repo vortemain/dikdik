@@ -177,6 +177,11 @@ def _merge_reasoning(details: list[dict], pieces: list) -> None:
         existing = next((d for d in details if d.get("type") == kind and (
             type(index) is int and d.get("index") == index or
             index is None and identity is not None and d.get("id") == identity)), None)
+        if existing is None and index is None and identity is None and details:
+            # Some providers stream fragments with neither index nor id: each continues the last one.
+            last = details[-1]
+            if last.get("type") == kind and last.get("index") is None and last.get("id") is None:
+                existing = last
         if existing is None:
             details.append(dict(piece))
         else:

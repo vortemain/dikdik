@@ -74,6 +74,14 @@ class ModelReliabilityTests(unittest.TestCase):
             self.assertEqual(failure.kind, kind)
             self.assertFalse(failure.retryable)
 
+    def test_unindexed_reasoning_fragments_join_instead_of_hitting_the_entry_cap(self):
+        fragments = [{"choices": [{"delta": {"reasoning_details": [{"type": "reasoning.text", "text": f"step {i} "}]}}]} for i in range(300)]
+        result = _assemble(sse(*fragments, {"choices": [{"delta": {"content": "Done"}, "finish_reason": "stop"}]}), None)
+        details = result["choices"][0]["message"]["reasoning_details"]
+        self.assertEqual(len(details), 1)
+        self.assertTrue(details[0]["text"].startswith("step 0 step 1 "))
+        self.assertIn("step 299", details[0]["text"])
+
     def test_incomplete_stream_never_executes_a_complete_looking_partial_tool(self):
         with self.assertRaises(ProviderError) as caught:
             _assemble(sse({"choices": [{"delta": {"tool_calls": [{"index": 0, **edit()}]}}]}), None)
