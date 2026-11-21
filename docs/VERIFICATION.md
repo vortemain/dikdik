@@ -1,6 +1,20 @@
 # Verification record — updated 2026-10-28
 
-## Projects in view, provider catalog, Git accounts, VS Code-style files (latest)
+## Agent roadmap phases 2–3: rolling checkpoint, effort, answer checks, stuck detection (latest)
+
+- Tests: `tests/test_compaction_checkpoint.py` (typed checkpoint and sources ledger,
+  in-place roll-forward, identifier audit with one retry, 10% refusal, verbatim recent
+  tail with whole batches, task-aware prompt, memory flush before each compaction, and a
+  replay of the failed thesis run's pattern: 3 or fewer compactions against the run's 33,
+  notes and `cronbach_alpha=0.812` kept, a checked final answer) and `tests/test_reasoning.py`
+  (effort heuristic and override, provider options, final-answer corrections and caveat,
+  stuck patterns and pause, lint reflection limited to 3).
+- Full Python suite, each module run on its own: 129 modules, 1,310 tests passed,
+  9 skipped. Several other sessions were running their suites on this machine at the same time.
+- Scripted models only. No live provider was called, so cost, cache and accuracy gains are
+  not measured yet.
+
+## Projects in view, provider catalog, Git accounts, VS Code-style files
 
 - Tests: `tests/test_model_catalog.py` (catalog, connect with a key, key never in
   responses, use a model as default, the request URL becomes openrouter.ai, custom

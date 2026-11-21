@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import io
 import base64
+import dataclasses
 import json
 import logging
 import os
@@ -39,6 +40,7 @@ from .routing import RouterStore, choose as choose_route
 from .repository import approved_root, apply_edits, can_create_file, inventory, metadata, syntax_check, workspace_text
 from .workspace_files import WorkspaceFiles
 from .runners import detect_local_checks
+from .reasoning import EFFORTS, effort_options, lint_findings, resolve_effort
 from .secrets_store import SecretsError, SecretsStore
 from .skills import READ_SKILL, SkillIndex
 from .project_facts import ProjectFacts, outline as project_outline
@@ -97,6 +99,12 @@ def _replace_checkpoint(temporary, target):
         except PermissionError:
             if os.name != "nt" or delay == 0.1:
                 raise
+
+
+
+def _with_effort(config, level):
+    """The resolved model config with this request's effort applied (a profile's own setting wins)."""
+    return dataclasses.replace(config, options=effort_options(config.options, level, config.model))
 
 
 class ApplyConflict(ValueError):
@@ -1476,6 +1484,8 @@ class Engine:
             raise ValueError("approve_secrets must be true or false")
         if request.get("confirmation") not in (None, "") and request["confirmation"] not in POLICIES:
             raise ValueError("confirmation must be never, risky or always")
+        if request.get("effort") not in (None, "", "auto") and request["effort"] not in EFFORTS:
+            raise ValueError("effort must be auto, simple or deep")
         goal = request.get("goal_max_turns")
         if goal not in (None, 0):
             if isinstance(goal, bool) or not isinstance(goal, int) or not 1 <= goal <= 20 or request.get("mode") != "agent":
@@ -1483,7 +1493,7 @@ class Engine:
         if request.get("attachments") not in (None, []):
             self.attachments.resolve(request["attachments"])  # validates ids and the size limit
         # Persist only the public contract, never arbitrary caller fields.
-        clean = {k: request[k] for k in ("objective", "mode", "verification", "edits", "approve_execution", "approve_external", "approve_browser", "approve_host", "acp_agent", "confirmation", "attachments", "goal_max_turns", "model_profile", "approve_secrets") if request.get(k) not in (None, "", [], 0) or k in ("approve_execution", "approve_external", "approve_browser", "approve_host") and k in request}
+        clean = {k: request[k] for k in ("objective", "mode", "verification", "edits", "approve_execution", "approve_external", "approve_browser", "approve_host", "acp_agent", "confirmation", "attachments", "goal_max_turns", "model_profile", "approve_secrets", "effort") if request.get(k) not in (None, "", [], 0) or k in ("approve_execution", "approve_external", "approve_browser", "approve_host") and k in request}
         if profile not in (None, ""):
             clean["agent_profile"] = profile
         return clean
@@ -2164,8 +2174,20 @@ class Engine:
                 tracer.observe(kind, data)
                 self.store.event(task, kind if kind == "hook_blocked" else "agent_" + kind, data)
             context_limit = self._context_limit(model_id)
+            effort, effort_source = resolve_effort(request["objective"], request.get("effort"), bool(request.get("images") or request.get("attachments")))
+            if fallback_resolve is not None:
+                fallback_resolve = (lambda: _with_effort(self.models.resolve(fallback_id), effort))
+
+            def lint_changed(files, paths):
+                # The project's own declared typecheck/lint scripts, run as the verifier runs them.
+                checks = [check for check in detect_local_checks(files, include_static=True) if check["kind"] in {"typecheck", "lint"}]
+                if not checks or cancel.is_set() or sync(files):
+                    return {"status": "not_run"}
+                result = local_exec.run_tests(self.root, checks, cancel, limits=self._local_limits())
+                workspace.forget_paths()
+                return lint_findings(result, paths)
             outcome = run_agent(
-                original, request["objective"], CompatibleAgentModel(request["approve_external"], lambda: self.models.resolve(model_id), lambda text: self._live(task, text), cancel=cancel, fallback_resolve=fallback_resolve, context_limit=context_limit),
+                original, request["objective"], CompatibleAgentModel(request["approve_external"], lambda: _with_effort(self.models.resolve(model_id), effort), lambda text: self._live(task, text), cancel=cancel, fallback_resolve=fallback_resolve, context_limit=context_limit),
                 local_verify if local else None, emit, cancel, budget,
                 creation_policy=lambda path: can_create_file(self.root, path, existing_ok=path in turn_created),
                 start=files, history=history,
@@ -2180,7 +2202,8 @@ class Engine:
                 continuity=continuity,
                 allow_static_checks=local,
                 allow_unverified_checks=local and not any(r["kind"] in TEST_KINDS for r in baseline_checks),
-                context_limit=context_limit,
+                context_limit=context_limit, effort=effort, effort_source=effort_source,
+                lint=lint_changed if local else None,
                 formatter=format_file if local else None,
                 # Previewing the user's own local dev server is not web browsing: it needs command
                 # approval and the browser switch, not the per-task public-web consent.
@@ -2698,17 +2721,19 @@ class Engine:
             objective += "\n\n" + "\n\n".join(self.describe_image_urls(images, model_name))
             images = None
         context_limit = self._context_limit(model_id)
+        effort, effort_source = resolve_effort(request["objective"], request.get("effort"),
+                                               bool(request.get("images") or request.get("attachments")))
         outcome = run_agent(
             original, objective,
             # The reply streams to the screen as it is written (it is typed out there).
-            CompatibleAgentModel(request["approve_external"], lambda: self.models.resolve(model_id), lambda text: self._live(task, text),
+            CompatibleAgentModel(request["approve_external"], lambda: _with_effort(self.models.resolve(model_id), effort), lambda text: self._live(task, text),
                                  cancel=cancel, context_limit=context_limit),
             None, emit, cancel, budget, context_limit=context_limit,
             history=notes + list(history or []), extra_tools=tools, extra_call=extra_call,
             read_only=not local, system=system, task_id=task, hook_lifecycle=False,
             workspace=workspace, images=images,
             describe_images=lambda urls: self.describe_image_urls(urls, model_name),
-            conversation=True, checkpoint=chat_checkpoint, resume=request.get("resume"),
+            conversation=True, checkpoint=chat_checkpoint, resume=request.get("resume"), effort=effort, effort_source=effort_source,
             shell=shell_fn, shell_tool=shell_tool,
             confirm=confirm_fn, pause=pause,
         )

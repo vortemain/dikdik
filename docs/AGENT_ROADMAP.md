@@ -57,7 +57,56 @@ whose mechanism it borrows.
 4. **Show cost and cache in the UI**: context used, cached versus fresh tokens, cost per turn, and
    compaction shown as a visible step (Cline).
 
-## Phase 2: compaction that never forgets
+## Done on this branch (phases 2 and 3)
+
+Verified with scripted models only (`tests/test_compaction_checkpoint.py`, `tests/test_reasoning.py`);
+no live-provider run yet.
+
+- **Rolling checkpoint** (`context_memory.compact`): every compaction carries a typed `checkpoint`
+  (objective, requirements, decisions, work state, next move, sources, key numbers, identifiers).
+  The next compaction merges into it instead of replacing it. A summary call
+  (`agent._checkpoint_update`, one text-only request over the turns being removed) adds decisions,
+  work state and the next move; if it fails, the deterministic sections still stand. Compaction
+  now targets 50% of the working budget, keeps up to about 18k tokens (72 KB) of recent groups
+  verbatim, refuses a compaction that frees less than 10%, and never separates a tool result from
+  its call.
+- **Identifier audit**: URLs, DOIs, paths and numbers stated in the removed turns (user and
+  assistant text, notes) must appear in the new context. The summary is asked once more with the
+  missing list, and anything still missing is kept verbatim in `checkpoint.identifiers`. The
+  `context_compacted` event reports `identifier_audit`.
+- **Memory flush**: 16 KB (about 4k tokens) before the threshold, a run with `save_notes` gets one
+  prompt to update its notes; compaction waits one step for it (`memory_flush` event).
+- **Sources ledger**: `checkpoint.sources` lists what was read, fetched, searched and changed,
+  built only from successful tool calls and merged across compactions.
+- **Task-aware summary prompt**: `compact_prompt("chat" | "code")` replaces the coding-only prompt.
+- **Adaptive effort** (`reasoning.py`): a heuristic marks short factual questions with nothing
+  attached as `simple`, everything else as `deep`; a request's `effort` field (`auto`, `simple`,
+  `deep`) overrides it. A simple request gets no `task_tracker` or `record_requirements` and a
+  one-line note in the request, not the system prompt, so the system prompt stays cache-stable.
+  The provider options get `adaptive_effort` (`low` or `high`) as a hint for native adapters,
+  and `reasoning_effort: low` only when the profile set none and the model family is known to
+  accept the field. The `agent_effort` event carries `{level, source}`.
+- **Final-answer checks** for deep chat answers: named deliverables must exist, cited URLs and
+  DOIs must have been fetched or returned by a tool this run (or given by the user), and decimals
+  and percentages in sentences that report analysis results must match tool output (to the
+  stated precision). A failure sends one targeted correction; after 2 rounds the answer is
+  delivered with a caveat naming what could not be verified (`agent_answer_check` events).
+  Passing answers and simple questions cost no extra call.
+- **Stuck detection** (`StuckDetector`): signatures are the tool name plus sorted-key argument
+  JSON. Same action with the same result 4 times, the same failing action 3 times, 3 turns of
+  text with no action, and A/B alternation over 6 steps are each nudged once and stop the run
+  (paused, asking how to proceed) if they recur; identical consecutive actions get a soft
+  warning at 3 and stop at 5 (`agent_stuck` events with `level` warning, nudge or stop).
+- **Lint reflection**: in local code runs, after a batch with edits, the project's declared
+  `typecheck`/`lint` scripts (`runners.detect_local_checks`, run by `local_exec.run_tests`) run
+  and errors in the changed files are fed back, at most 3 times (`agent_lint_reflection`).
+
+Known limits: the summary call costs one model request per compaction; numbers are checked only
+when a sentence reads as an analysis result, so a fabricated figure elsewhere is not caught; a
+draft answer that fails its check may already have streamed to the screen before the corrected
+one replaces it; Python projects only get lint reflection through a declared script.
+
+## Phase 2: compaction that never forgets (done)
 
 5. **Typed rolling checkpoint** (OpenCode template, OpenHands summarizer, Goose JSON).
    - Sections: objective, requirements, decisions, work state, next move, files/sources, key
@@ -72,7 +121,7 @@ whose mechanism it borrows.
 8. **Files and sources ledger** (Cline `## Files`): a deterministic list of what was read, fetched
    and changed, merged across compactions.
 
-## Phase 3: think in proportion, verify before answering
+## Phase 3: think in proportion, verify before answering (done)
 
 9. **Adaptive effort** (OpenClaw `/think`, OpenCode variants).
    - A cheap heuristic picks low effort with no planning and few tools for short factual

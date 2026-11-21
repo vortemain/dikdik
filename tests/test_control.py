@@ -179,15 +179,19 @@ class ControlTests(unittest.TestCase):
         replies = [call(i, "read_file", path="calc.py") for i in range(8)]
         result = run_agent({"calc.py": "x = 1\n"}, "Look", Script(replies), None, lambda k, d: None, threading.Event())
         self.assertEqual(result.state, "paused")
-        self.assertIn("no progress after recovery", result.error)
+        self.assertIn("going in circles", result.error)
 
     def test_stuck_rules(self):
-        from dikdik.agent import stuck_loop
-        self.assertTrue(stuck_loop(list("xaaaa")))
-        self.assertFalse(stuck_loop(list("aaa")))
-        self.assertTrue(stuck_loop(list("ababab")))
-        self.assertFalse(stuck_loop(list("ababa")))
-        self.assertFalse(stuck_loop(list("abacab")))  # re-reading a file now and then is not a loop
+        from dikdik.reasoning import StuckDetector
+
+        def stuck(names):
+            detector = StuckDetector()
+            return [level for level in (detector.action(name, {}, {"same": True}, False) for name in names) if level and level[0] != "warn"]
+        self.assertTrue(stuck("xaaaa"))
+        self.assertFalse(stuck("aaa"))
+        self.assertTrue(stuck("ababab"))
+        self.assertFalse(stuck("ababa"))
+        self.assertFalse(stuck("abacab"))  # re-reading a file now and then is not a loop
 
     # --- approvals and hooks ---------------------------------------------------------
     def test_risk_rules(self):
@@ -698,6 +702,13 @@ class ControlTests(unittest.TestCase):
         for bad in ({"confirmation": "sometimes"}, {"condenser": "yes"}, {"theme": "dark"}, {}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 self.engine.update_app_settings(bad)
+
+    def test_effort_is_a_per_request_choice(self):
+        request = {"objective": "What is 2+2?", **AGENT}
+        self.assertNotIn("effort", self.engine._validate(request))
+        self.assertEqual(self.engine._validate({**request, "effort": "deep"})["effort"], "deep")
+        with self.assertRaisesRegex(ValueError, "effort must be"):
+            self.engine._validate({**request, "effort": "max"})
 
     def test_model_profile_override_must_exist(self):
         request = {"objective": "Hi", "mode": "agent", "verification": "syntax", "approve_external": True, "model_profile": "missing"}

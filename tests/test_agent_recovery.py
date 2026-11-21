@@ -13,6 +13,8 @@ class Script:
         self.seen = []
 
     def respond(self, messages, tools):
+        if not tools and str(messages[-1].get("content", "")).startswith("You update the working checkpoint"):
+            return ModelResponse('{"next_move": "continue"}', [])  # compaction's summary call is not a scripted step
         self.seen.append(messages)
         return next(self.responses)
 
