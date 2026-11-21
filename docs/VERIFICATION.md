@@ -9,8 +9,10 @@
   notes and `cronbach_alpha=0.812` kept, a checked final answer) and `tests/test_reasoning.py`
   (effort heuristic and override, provider options, final-answer corrections and caveat,
   stuck patterns and pause, lint reflection limited to 3).
-- Full Python suite, each module run on its own: 129 modules, 1,310 tests passed,
-  9 skipped. Several other sessions were running their suites on this machine at the same time.
+- Full Python suite: `python -m unittest discover -s tests` ran 1,310 tests, OK
+  (9 skipped), in 877 s. Running each of the 129 modules on its own gave the same result.
+  An earlier discover run stalled while other sessions were running their suites on
+  this machine at the same time; it passed when rerun.
 - Scripted models only. No live provider was called, so cost, cache and accuracy gains are
   not measured yet.
 
