@@ -7,6 +7,8 @@ Browser (original Bun-built TypeScript, HttpOnly session cookie)
 server.py ── Engine (one worker + cancellation flag)
                  ├── repository.py: bounded UTF-8 inventory, hashes, edit validator
                  ├── providers.py: explicit edits OR one approved HTTPS proposal
+                 │     └── anthropic_messages.py: native Messages API for Anthropic profiles
+                 ├── tool_output.py: large tool results kept as head + tail, full text in a file
                  ├── agent.py + agent_provider.py: original bounded tool/repair loop
                  ├── store.py: SQLite tasks + ordered events, atomic transitions
                  ├── bash_service.py: durable task-scoped command/events API

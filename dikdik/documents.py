@@ -29,7 +29,7 @@ from xml.sax.saxutils import escape
 
 from . import docextract, omml
 
-READ_LIMIT = 40_000
+READ_LIMIT = 24_000  # a page stays under the 30 KB inline cap for tool output (tool_output.INLINE_LIMIT)
 
 READ_DOCUMENT_TOOL = {
     "type": "function",

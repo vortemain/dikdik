@@ -38,22 +38,30 @@ whose mechanism it borrows.
 
 ## Phase 1: stop paying for the same tokens twice
 
-1. **Native Anthropic Messages adapter** (OpenCode `anthropic-messages.ts`, Hermes "system_and_3").
+Items 1–3 are done, with the gaps noted under each (see `docs/MODEL_RELIABILITY.md`, "Native
+Anthropic transport"); item 4 is still open.
+
+1. **Done: native Anthropic Messages adapter** (OpenCode `anthropic-messages.ts`, Hermes "system_and_3").
    - `cache_control` breakpoints on the tools, the system prompt and a rolling last message.
    - `thinking: adaptive` with `output_config.effort`; summarized thinking streamed to the UI.
    - Thinking blocks replayed unchanged.
    - Keep the OpenAI-compatible path for other providers.
-2. **Cache-stable prompt layout** (OpenHands static/dynamic split, OpenClaw cache boundary).
+   - Open: the thinking summary is shown when the reply finishes, not streamed while it is
+     written (Phase 6 UI).
+2. **Done: cache-stable prompt layout** (OpenHands static/dynamic split, OpenClaw cache boundary).
    - Byte-stable system prompt and tool list in a fixed order.
    - The date and per-turn facts move into the latest user message.
    - `prompt_cache_key` for OpenAI-compatible providers.
    - Effort held constant within a task.
-3. **Spill large tool output to files** (OpenHands `truncate.py`, OpenCode `tool-output.ts`,
+3. **Done: spill large tool output to files** (OpenHands `truncate.py`, OpenCode `tool-output.ts`,
    Hermes `archive_compaction_drops`).
    - Cap inline output at about 10–30 KB, keeping head and tail.
    - Save the full text under the task's artifacts by content hash.
    - When compaction drops a result, leave a stub with the saved path, so going back to it costs
      one local read instead of a re-fetch.
+   - Open: compaction does not yet reuse the saved path (it keeps the stub's head and tail), and
+     agent-mode tasks get head and tail without a saved file, because the project folder is not
+     the place for it.
 4. **Show cost and cache in the UI**: context used, cached versus fresh tokens, cost per turn, and
    compaction shown as a visible step (Cline).
 
