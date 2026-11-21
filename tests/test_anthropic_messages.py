@@ -298,7 +298,8 @@ class StopAndErrorTests(TransportTestCase):
                  (error(529, "overloaded_error"), "provider"), (error(500, "api_error"), "provider"),
                  (error(413, "request_too_large"), "context_length"),
                  (error(400, "invalid_request_error", "prompt is too long: 1200000 tokens > 1000000 maximum"), "context_length"),
-                 (error(400, "invalid_request_error", "max_tokens: bad"), "bad_request")]
+                 (error(400, "invalid_request_error", "max_tokens: bad"), "bad_request"),
+                 (error(400, "invalid_request_error", "Your credit balance is too low to access the Anthropic API."), "quota")]
         for reply, kind in cases:
             with self.subTest(kind=kind, status=reply[0]):
                 fake = self.serve(reply)

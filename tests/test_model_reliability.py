@@ -66,7 +66,10 @@ class ModelReliabilityTests(unittest.TestCase):
         self.assertEqual(caught.exception.kind, "rate_limit")
 
     def test_credit_and_context_errors_are_not_transient(self):
-        for code, body, kind in ((402, {}, "quota"), (400, {"error": {"metadata": {"error_type": "context_length_exceeded"}}}, "context_length")):
+        credit = {"error": {"type": "invalid_request_error", "message": "Your credit balance is too low to access the Anthropic API. "
+                                                                          "Please go to Plans & Billing to upgrade or purchase credits."}}
+        for code, body, kind in ((402, {}, "quota"), (400, {"error": {"metadata": {"error_type": "context_length_exceeded"}}}, "context_length"),
+                                 (400, credit, "quota")):
             failure = provider_failure(urllib.error.HTTPError("u", code, "PRIVATE", {}, io.BytesIO(json.dumps(body).encode())))
             self.assertEqual(failure.kind, kind)
             self.assertFalse(failure.retryable)

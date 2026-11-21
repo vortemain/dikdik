@@ -194,7 +194,7 @@ def request_body(messages: list[dict], tools: list[dict] | None, max_tokens: int
 
 def failure(exc: urllib.error.HTTPError) -> tuple[ProviderError, bool]:
     """The public error, and whether the API refused a replayed thinking signature."""
-    from .providers import provider_failure
+    from .providers import out_of_credit, provider_failure
     try:
         detail = json.loads(exc.read(8192) or b"{}")
     except (ValueError, OSError):
@@ -205,7 +205,7 @@ def failure(exc: urllib.error.HTTPError) -> tuple[ProviderError, bool]:
         return ProviderError("context_length", "The conversation is longer than this model's context window", status=exc.code), False
     if exc.code == 529 or kind == "overloaded_error":
         return ProviderError("provider", "Anthropic is overloaded right now. Try again shortly", status=exc.code), False
-    if kind == "billing_error":
+    if kind == "billing_error" or out_of_credit(message):
         return ProviderError("quota", status=exc.code), False
     signature = exc.code == 400 and "signature" in message and "thinking" in message
     return provider_failure(exc), signature

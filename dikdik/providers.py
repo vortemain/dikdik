@@ -25,6 +25,10 @@ RESPONSE_LIMIT = 256000
 STREAM_WIRE_LIMIT = 16 * 1024 * 1024  # SSE envelopes are much larger than their generated text
 
 
+def out_of_credit(message) -> bool:
+    return isinstance(message, str) and any(phrase in message.lower() for phrase in ("credit balance is too low", "insufficient credit"))
+
+
 def response_failure(data: dict, status: int | None = None) -> ProviderError | None:
     """Classify an HTTP-200/SSE error without retaining provider messages/metadata."""
     choices = data.get("choices") or []
@@ -46,6 +50,8 @@ def response_failure(data: dict, status: int | None = None) -> ProviderError | N
         "provider_overloaded": "provider", "provider_timeout": "timeout",
         "content_filter": "content_filter", "content_policy_violation": "content_filter",
     }.get(kind) if isinstance(kind, str) else None
+    if category is None and out_of_credit(error.get("message")):
+        category = "quota"  # Anthropic reports an empty balance as a 400 invalid_request_error
     if category is None:
         category = {400: "bad_request", 401: "authentication", 402: "quota", 403: "authentication",
                     404: "not_found", 408: "timeout", 422: "bad_request", 429: "rate_limit"}.get(code, "provider")
