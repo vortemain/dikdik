@@ -47,7 +47,7 @@ def _route_skills(skills: list[dict], objective: str, mode: str, new_project: bo
     skills its words match: it has no project, and the catalog still offers the rest on demand."""
     chat = mode == "chat"
     if not objective or not objective.strip():
-        return [] if chat else skills
+        return [] if chat else [row for row in skills if str(row.get("type", "")).lower() != "recipe"]
     text = objective.lower()
     is_code = not chat and (mode in ("agent", "model") or any(w in text for w in (
         "code", "function", "file", "bug", "fix", "implement", "refactor", "test", "build",
@@ -59,6 +59,8 @@ def _route_skills(skills: list[dict], objective: str, mode: str, new_project: bo
     if new_project and mode in ("agent", "model", "plan", ""):
         intent = intent | NEW_PROJECT_SKILLS
     for row in skills:
+        if str(row.get("type", "")).lower() == "recipe":
+            continue  # recipes are listed in the catalog and load only through read_skill
         triggers = str(row.get("triggers", "")).lower()
         if not triggers:
             selected.append(row)  # a user skill with no triggers is always loaded — it is an explicit choice
@@ -72,7 +74,7 @@ def _route_skills(skills: list[dict], objective: str, mode: str, new_project: bo
                            for word in triggers.split(",")):
             selected.append(row)
     if not selected and not chat:
-        return skills
+        return [row for row in skills if str(row.get("type", "")).lower() != "recipe"]
     return selected
 
 
