@@ -15,6 +15,9 @@ READ_PLAN = _tool('read_plan', 'Read the immutable plan revision for this build.
 TASK_TRACKER = _tool('task_tracker', 'Replace up to 50 reported checklist steps. Status: todo, in_progress, done. This does not verify work.',
                     {'tasks': {'type': 'array', 'items': {'type': 'object', 'properties': {'id': {'type': 'string'}, 'title': {'type': 'string'}, 'status': {'type': 'string'}}, 'required': ['title', 'status'], 'additionalProperties': False}}}, ['tasks'])
 
+SAVE_NOTES = _tool('save_notes', 'Replace your working notes: the key facts you will need later (requirements, numbers, findings, decisions). They are kept when older context is condensed, so record what you learn instead of re-reading it. Reported only.',
+                  {'notes': {'type': 'string'}}, ['notes'])
+
 
 class Planning:
     def __init__(self, engine):
@@ -90,6 +93,12 @@ class Planning:
                 revision = db.execute('SELECT revision FROM task_progress WHERE task_id=?', (task,)).fetchone()[0]
                 db.execute('INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)', (task, time.time(), 'task_tracker', json.dumps({'tasks': clean, 'revision': revision})))
         return {'tasks': clean, 'revision': revision, 'reported_only': True}
+
+    @staticmethod
+    def notes(text):
+        if not isinstance(text, str) or len(text) > 8000:
+            raise ValueError('Notes must be text of at most 8000 characters')
+        return {'saved': True, 'characters': len(text), 'reported_only': True}
 
     def progress(self, task):
         self.store.status(task)

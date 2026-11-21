@@ -43,13 +43,15 @@ def _route_skills(skills: list[dict], objective: str, mode: str, new_project: bo
     """Select skills whose triggers match the request, plus a small always-on set
     for code work. Without an objective, all enabled skills load (the Skills panel
     and simple agent tasks still see everything). An empty project always gets the
-    new-app stack and scoping guidance, whatever words the request uses."""
+    new-app stack and scoping guidance, whatever words the request uses. A chat loads only
+    skills its words match: it has no project, and the catalog still offers the rest on demand."""
+    chat = mode == "chat"
     if not objective or not objective.strip():
-        return skills
+        return [] if chat else skills
     text = objective.lower()
-    is_code = mode in ("agent", "model") or any(w in text for w in (
+    is_code = not chat and (mode in ("agent", "model") or any(w in text for w in (
         "code", "function", "file", "bug", "fix", "implement", "refactor", "test", "build",
-        "deploy", "api", "database", "config", "script", "class", "module", "package"))
+        "deploy", "api", "database", "config", "script", "class", "module", "package")))
     selected: list[dict] = []
     # Design work always gets the design and rendered-verification methods, whatever words
     # the request uses ("redesign the footer" matched no trigger before).
@@ -69,7 +71,7 @@ def _route_skills(skills: list[dict], objective: str, mode: str, new_project: bo
         if explicit or any(word.strip() and re.search(r"(?<![a-z0-9])" + re.escape(word.strip()) + r"(?![a-z0-9])", text)
                            for word in triggers.split(",")):
             selected.append(row)
-    if not selected:
+    if not selected and not chat:
         return skills
     return selected
 

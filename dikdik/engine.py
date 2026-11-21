@@ -34,7 +34,7 @@ from .locking import DataLock
 from .mcp import McpSession, McpStore
 from .model_config import ModelResolver
 from .plugins import PluginStore
-from .planning import Planning, READ_PLAN, TASK_TRACKER, WRITE_PLAN
+from .planning import Planning, READ_PLAN, SAVE_NOTES, TASK_TRACKER, WRITE_PLAN
 from .routing import RouterStore, choose as choose_route
 from .repository import approved_root, apply_edits, can_create_file, inventory, metadata, syntax_check, workspace_text
 from .workspace_files import WorkspaceFiles
@@ -1986,7 +1986,7 @@ class Engine:
         use_skills = profile is None or profile["use_skills"]
         researching = request.get("approve_browser") is True and request.get("approve_execution") is True and (profile is None or profile["allow_browser"]) and research.configured(self.models.secrets)
         setting_up = local and (profile is None or profile["allow_shell"])
-        extra_tools = ([research.SEARCH_TOOL, scholarly.LITERATURE_TOOL] if researching else []) + ([ENVIRONMENT_TOOL] if setting_up else []) + [TASK_TRACKER, analysis.ANALYZE_TOOL, documents.READ_DOCUMENT_TOOL, stats.STATISTICS_TOOL, vision.READ_IMAGE_TOOL] + ([READ_SKILL] if use_skills else []) + (session.tools if session else []) + ([BROWSER_TOOL, WEB_FETCH_TOOL] if browsing else []) + (BROWSER_ACTION_TOOLS if browsing and self.browser.info().get("interactive") else []) + ([READ_PLAN] if plan_context else []) + ([REQUEST_SECRET] if asking else []) + ([ASK_QUESTION] if asking else [])
+        extra_tools = ([research.SEARCH_TOOL, scholarly.LITERATURE_TOOL] if researching else []) + ([ENVIRONMENT_TOOL] if setting_up else []) + [TASK_TRACKER, SAVE_NOTES, analysis.ANALYZE_TOOL, documents.READ_DOCUMENT_TOOL, stats.STATISTICS_TOOL, vision.READ_IMAGE_TOOL] + ([READ_SKILL] if use_skills else []) + (session.tools if session else []) + ([BROWSER_TOOL, WEB_FETCH_TOOL] if browsing else []) + (BROWSER_ACTION_TOOLS if browsing and self.browser.info().get("interactive") else []) + ([READ_PLAN] if plan_context else []) + ([REQUEST_SECRET] if asking else []) + ([ASK_QUESTION] if asking else [])
         document_cache: dict = {}
 
         def extra_call(name, arguments):
@@ -2021,6 +2021,8 @@ class Engine:
                 return toolchain.report(sorted(files), files.get, arguments.get("tool") if isinstance(arguments.get("tool"), str) else None)
             if name == 'task_tracker':
                 return self.planning.tracker(task, arguments.get('tasks'))
+            if name == 'save_notes':
+                return self.planning.notes(arguments.get('notes'))
             if name == 'read_plan' and plan_context:
                 return {'path': 'PLAN.md', **plan_context, 'untrusted': True}
             if name == "browse_url" and browsing:
@@ -2436,7 +2438,7 @@ class Engine:
         use_skills = profile is None or profile["use_skills"]
         local = request.get("verification") == "local" and request.get("approve_execution") is True
 
-        tools = [TASK_TRACKER, documents.READ_DOCUMENT_TOOL, stats.STATISTICS_TOOL, documents.CREATE_DOCUMENT_TOOL, vision.READ_IMAGE_TOOL]
+        tools = [TASK_TRACKER, SAVE_NOTES, documents.READ_DOCUMENT_TOOL, stats.STATISTICS_TOOL, documents.CREATE_DOCUMENT_TOOL, vision.READ_IMAGE_TOOL]
         if use_skills:
             tools.append(READ_SKILL)
         if researching:
@@ -2456,6 +2458,8 @@ class Engine:
         def chat_call(name, arguments):
             if name == "task_tracker":
                 return self.planning.tracker(task, arguments.get("tasks"))
+            if name == "save_notes":
+                return self.planning.notes(arguments.get("notes"))
             if name == "read_document":
                 return documents.read(root, arguments, document_cache)
             if name == "statistics":
@@ -2547,13 +2551,18 @@ class Engine:
             "THINK LIKE AN EXPERT: Work out what the person actually needs. Reason step by step on hard problems, show key "
             "steps, units and assumptions, and check results. Distinguish evidence from opinion and correlation from "
             "causation. For legal or financial questions give accurate, practical information for their jurisdiction and "
-            "say when a professional should be consulted.\n\n"
+            "say when a professional should be consulted. Match effort to the question: answer simple questions directly "
+            "with no tools; use tools only where they add accuracy. Before delivering an analysis or deliverable, check its "
+            "numbers and claims against what the tools returned and fix any mismatch.\n\n"
             "FILES AND DATA: Files the user attaches are in attachments/ (earlier messages' files stay there for the whole "
-            "conversation). Read documents in full with read_document, look at images and scanned pages with read_image, "
-            "and analyse tables with statistics rather than by hand. When the user wants a deliverable (report, chapter, "
-            "lesson plan, spreadsheet, summary), create it with create_document — complete, no placeholders; LaTeX in it "
-            "becomes real Word equations — then summarise it and name the file. Keep a short plan with task_tracker for "
-            "multi-step work and finish it without stopping to ask permission for each step.\n"
+            "conversation). Read what the task needs with read_document: for long documents use find or the outline to go "
+            "to the relevant sections instead of paging through everything. Look at images and scanned pages with "
+            "read_image, and analyse tables with statistics rather than by hand. As you learn facts you will need later "
+            "(objectives, sample size, variable coding, key results), record them with save_notes; your notes are kept when "
+            "older context is condensed, so never re-read something you have already noted. When the user wants a "
+            "deliverable (report, chapter, lesson plan, spreadsheet, summary), create it with create_document — complete, "
+            "no placeholders; LaTeX in it becomes real Word equations — then summarise it and name the file. Keep a short "
+            "plan with task_tracker for multi-step work and finish it without stopping to ask permission for each step.\n"
             f"Commands: {shell_note}\n\n"
             "TEACH LIKE A GREAT TUTOR: When someone is learning, build understanding: start from intuition and a real-life "
             "example, define every symbol, work an example step by step with real numbers, point out the common mistake, "
@@ -2592,7 +2601,7 @@ class Engine:
             "lists and tables when they help; plain prose for simple answers. Be concise for simple questions and thorough "
             "for deep ones."
         )
-        guidance = self._skills(task, request.get("objective", ""), "agent", original) if use_skills else ""
+        guidance = self._skills(task, request.get("objective", ""), "chat") if use_skills else ""
         notes = []
         if profile and profile["instructions"]:
             notes.append({"role": "user", "content": f"Instructions from the user's agent profile “{profile['name']}”:\n{profile['instructions']}"})
@@ -2688,11 +2697,13 @@ class Engine:
         if images and not self.model_sees_images(model_id):
             objective += "\n\n" + "\n\n".join(self.describe_image_urls(images, model_name))
             images = None
+        context_limit = self._context_limit(model_id)
         outcome = run_agent(
             original, objective,
             # The reply streams to the screen as it is written (it is typed out there).
-            CompatibleAgentModel(request["approve_external"], lambda: self.models.resolve(model_id), lambda text: self._live(task, text), cancel=cancel),
-            None, emit, cancel, budget,
+            CompatibleAgentModel(request["approve_external"], lambda: self.models.resolve(model_id), lambda text: self._live(task, text),
+                                 cancel=cancel, context_limit=context_limit),
+            None, emit, cancel, budget, context_limit=context_limit,
             history=notes + list(history or []), extra_tools=tools, extra_call=extra_call,
             read_only=not local, system=system, task_id=task, hook_lifecycle=False,
             workspace=workspace, images=images,
@@ -2904,8 +2915,9 @@ class Engine:
             if name == 'task_tracker':
                 return self.planning.tracker(task, arguments.get('tasks'))
             raise ValueError('Planning tool unavailable')
-        outcome = run_agent(original, request['objective'], CompatibleAgentModel(request['approve_external'], lambda: self.models.resolve(model_id), lambda text: self._live(task, text), cancel=cancel),
-                            None, lambda kind, data: self.store.event(task, 'agent_' + kind, data), cancel, budget,
+        context_limit = self._context_limit(model_id)
+        outcome = run_agent(original, request['objective'], CompatibleAgentModel(request['approve_external'], lambda: self.models.resolve(model_id), lambda text: self._live(task, text), cancel=cancel, context_limit=context_limit),
+                            None, lambda kind, data: self.store.event(task, 'agent_' + kind, data), cancel, budget, context_limit=context_limit,
                             history=history, extra_tools=[WRITE_PLAN, TASK_TRACKER] + ([READ_SKILL] if profile is None or profile['use_skills'] else []), extra_call=call, read_only=True, workspace=WorkspaceFiles(self.root, cancel),
                             hooks=self._task_hooks.get(task), task_id=task, hook_lifecycle=False)
         plan = self.planning.get(task)

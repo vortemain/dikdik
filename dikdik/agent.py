@@ -82,6 +82,26 @@ def stuck_loop(recent: list[str]) -> bool:
     return len(tail) == 6 and tail[0] != tail[1] and tail[0::2] == [tail[0]] * 3 and tail[1::2] == [tail[1]] * 3
 
 
+def document_reread(covered: dict, arguments: dict, result: dict) -> bool:
+    """Record a read_document call; True when it returns a section already read (the same
+    lookup, or a range at least 80% inside earlier ranges), whatever page size it asks for."""
+    path = arguments.get("path")
+    if not isinstance(path, str):
+        return False
+    seen = covered.setdefault(path, {"finds": set(), "ranges": []})
+    if isinstance(arguments.get("find"), str):
+        key = arguments["find"].strip().lower()
+        known = key in seen["finds"]
+        seen["finds"].add(key)
+        return known
+    start, end = result.get("offset"), result.get("next_offset")
+    if type(start) is not int or type(end) is not int or end <= start:
+        return False
+    overlap = sum(max(0, min(end, high) - max(start, low)) for low, high in seen["ranges"])
+    seen["ranges"].append((start, end))
+    return overlap >= 0.8 * (end - start)
+
+
 def _tool(name: str, description: str, properties: dict, required: list) -> dict:
     return {"type": "function", "function": {
         "name": name, "description": description,
@@ -774,6 +794,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
     loop_warnings = 0
     seen_reads = {}
     seen_results = {}
+    document_ranges: dict = {}
+    rereads = 0
     requirements: list[dict] = []
     last_preview: tuple[int, dict] | None = None  # (candidate revision, preview result) for the release gate
     last_performance: tuple[int, dict] | None = None
@@ -1968,7 +1990,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                 failures.clear()  # A successful different action provides new information/state.
                 # A command that changed nothing and printed the same output again is a re-read too.
                 if call.name in READS or call.name == "run_command" and not result.get("changed_files"):
-                    read_key = hashlib.sha256(_json([call.name, call.arguments, result]).encode()).hexdigest()
+                    same_read = {key: value for key, value in call.arguments.items() if key not in {"max_chars", "max_results"}}
+                    read_key = hashlib.sha256(_json([call.name, same_read, result]).encode()).hexdigest()
                     count = seen_reads.pop(read_key, 0) + 1
                     seen_reads[read_key] = count
                     while len(seen_reads) > 128:
@@ -1986,6 +2009,15 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                     seen_results[result_key] = result_count
                     while len(seen_results) > 64:
                         seen_results.pop(next(iter(seen_results)))
+                    if call.name == "read_document" and document_reread(document_ranges, call.arguments, result):
+                        rereads += 1
+                        if rereads in {2, 6}:
+                            pending_progress_hint = (
+                                "You are re-reading parts of a document you have already read. Its content is in your "
+                                "retained findings. Record the facts you need with save_notes (they survive condensed "
+                                "context), then continue with the next step instead of reading the same sections again.")
+                            event("recovery", {"tool": call.name, "reason": "Re-reading parts of a document already read",
+                                               "action": "record_notes_and_continue", "rereads": rereads})
                     if result_count == 3 and count < 3:  # don't double-warn if seen_reads already caught it
                         pending_progress_hint = ("You have run three different read/search calls that returned the same result. "
                             "The information you need is likely not in the workspace, or you already have it. "

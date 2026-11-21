@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dikdik.agent import ModelResponse, ToolCall
-from dikdik.engine import Engine
+from dikdik.engine import Engine, HOSTED_CONTEXT_LIMIT
 
 
 PLAN = '# Reviewed plan\n\n1. Change x from 1 to 2.\n2. Syntax check the candidate.\n3. Review and Apply.\n'
@@ -62,6 +62,11 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(set(model.tools[0]), {'list_files', 'read_file', 'search_text', 'read_skill', 'write_plan', 'task_tracker'})
         self.assertFalse(data['result']['tests_verified'])
         self.assertEqual(self.engine.store.get(plan['task_id'])['state'], 'draft')
+
+    def test_planner_gets_the_hosted_working_context(self):
+        _, data, _ = self.plan()
+        started = next(e['data'] for e in data['events'] if e['kind'] == 'agent_model' and e['data'].get('phase') == 'start')
+        self.assertEqual(started['context_limit'], HOSTED_CONTEXT_LIMIT)
 
     def test_project_plan_list_maps_each_plan_to_its_conversation(self):
         child, _, _ = self.plan()
