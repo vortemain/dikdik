@@ -31,6 +31,12 @@ HIGH = [
     (re.compile(r"\b(mkfs|dd)\b|>\s*/dev/"), "writes to devices"),
     (re.compile(r"\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f)\b"), "rewrites or publishes history"),
 ]
+PYTHON_HIGH = [
+    (re.compile(r"\b(subprocess|os\.system|os\.popen|os\.exec\w*|os\.spawn\w*|pty)\b"), "runs other programs"),
+    (re.compile(r"\b(shutil\.rmtree|os\.remove|os\.unlink|os\.rmdir|\.unlink\(|\.rmdir\()"), "deletes files"),
+    (re.compile(r"\b(urllib\.request|urllib3|requests|httpx|aiohttp|http\.client|socket|ftplib|smtplib)\b|\bfrom\s+urllib\s+import\s+request\b"),
+     "reaches the network directly (dikdik_tools.web_fetch does not)"),
+]
 READ_TOOLS = {"list_files", "read_file", "search_text", "read_skill", "read_plan", "task_tracker", "write_plan", "finish", "delegate",
               "architecture_map", "impacted_tests", "security_scan", "quality_check", "release_gate", "record_requirements",
               "request_secret", "ask_question", "environment_check"}  # both are themselves questions to the user
@@ -60,6 +66,17 @@ def assess(call: ToolCall) -> tuple[str, str]:
         return "high", "reads a secrets file such as .env"
     if call.name in READ_TOOLS:
         return "low", "reads or reports only"
+    if call.name == "run_python":
+        code = str(call.arguments.get("code", ""))
+        for pattern, reason in PYTHON_HIGH:
+            if pattern.search(code):
+                return "high", f"the script {reason}"
+        return "medium", "runs a Python script"
+    if call.name == "command_process":
+        action = call.arguments.get("action")
+        if action == "input":
+            return "high", "sends input to a running command"
+        return ("medium", "stops a running command") if action == "stop" else ("low", "reads a running command's output")
     if call.name in {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}:
         command = str(call.arguments.get("command", "")) + "\n" + str(call.arguments.get("dependency_command", ""))
         for pattern, reason in HIGH:
@@ -88,7 +105,7 @@ def assess(call: ToolCall) -> tuple[str, str]:
     return "medium", "uses a tool"
 
 
-ACTION_TOOLS = {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"} | BROWSER_WRITE_TOOLS
+ACTION_TOOLS = {"run_command", "run_python", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"} | BROWSER_WRITE_TOOLS
 
 
 # --- structured permission rules -------------------------------------------------------
@@ -97,9 +114,9 @@ ACTION_TOOLS = {"run_command", "preview_app", "measure_performance", "repeat_com
 # can never add one). An unmatched call falls through to the normal policy.
 RULE_ACTIONS = {"*", "read", "edit", "create", "command", "browse"}
 RULE_GROUPS = {"read": READ_TOOLS, "edit": {"edit_file"}, "create": {"create_file", "record_decision"},
-               "command": {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}, "browse": {"preview_app", "browse_url", "web_fetch", "web_search"} | BROWSER_WRITE_TOOLS | BROWSER_READ_TOOLS}
+               "command": {"run_command", "run_python", "command_process", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}, "browse": {"preview_app", "browse_url", "web_fetch", "web_search"} | BROWSER_WRITE_TOOLS | BROWSER_READ_TOOLS}
 RULE_SUBJECT = {"list_files": "path", "read_file": "path", "search_text": "path", "edit_file": "path",
-                "create_file": "path", "run_command": "command", "preview_app": "command", "measure_performance": "command", "repeat_command": "command", "load_test": "command", "dast_scan": "command", "fault_test": "command", "browse_url": "url", "web_search": "query"}
+                "create_file": "path", "run_command": "command", "run_python": "code", "preview_app": "command", "measure_performance": "command", "repeat_command": "command", "load_test": "command", "dast_scan": "command", "fault_test": "command", "browse_url": "url", "web_search": "query"}
 RULE_NAME = re.compile(r"[a-z0-9_.-]{1,60}")
 
 
@@ -127,12 +144,50 @@ def _rule_matches(rule, call: ToolCall) -> bool:
     if not isinstance(pattern, str) or pattern == "*" or pattern == "":
         return True
     subject = str(call.arguments.get(RULE_SUBJECT.get(call.name, ""), ""))
+    if RULE_SUBJECT.get(call.name) == "command" and call.name != "fault_test":
+        # An allow rule names one command: "npm test*" must not approve "npm test && curl ... | sh".
+        # Deny and ask rules match any command in a chain.
+        if rule.get("effect") == "allow":
+            return not composed(subject) and fnmatch.fnmatch(subject.casefold(), pattern.casefold())
+        return any(fnmatch.fnmatch(part.casefold(), pattern.casefold()) for part in [subject, *command_segments(subject)])
     if call.name == "fault_test":
         # Two commands run: deny and ask rules match either one; an allow rule must cover both.
         both = [subject, str(call.arguments.get("dependency_command", ""))]
         matched = [fnmatch.fnmatch(s.casefold(), pattern.casefold()) for s in both]
         return all(matched) if rule.get("effect") == "allow" else any(matched)
     return fnmatch.fnmatch(subject.casefold(), pattern.casefold())
+
+
+COMPOSITION = re.compile(r"&&|\|\||[;|&`\n\r<>]|\$\(")
+
+
+def command_segments(command: str) -> list[str]:
+    """The commands in a chain (;, &&, ||, |, &, newlines), ignoring separators inside quotes."""
+    unquoted = re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", lambda m: "_" * len(m.group(0)), command)
+    parts, start = [], 0
+    for match in re.finditer(r"&&|\|\||[;|&\n\r]", unquoted):
+        parts.append(command[start:match.start()].strip())
+        start = match.end()
+    parts.append(command[start:].strip())
+    return [part for part in parts if part]
+
+
+def composed(command: str) -> bool:
+    """Whether a command chains, pipes, redirects or substitutes others (outside quotes)."""
+    unquoted = re.sub(r"'[^']*'|\"(?:\\.|[^\"\\$`])*\"", "''", command)
+    return COMPOSITION.search(unquoted) is not None
+
+
+def command_allowed(command: str, allowed) -> bool:
+    """A remembered command: exactly, or by prefix for an entry ending in * (never a chained command)."""
+    for entry in allowed or ():
+        if not isinstance(entry, str):
+            continue
+        if entry == command:
+            return True
+        if entry.endswith("*") and len(entry) > 1 and command.startswith(entry[:-1]) and not composed(command):
+            return True
+    return False
 
 
 def parse_rules(value) -> list:
@@ -166,7 +221,7 @@ def needs_approval(policy: str, risk: str, tool: str | None = None) -> bool:
     data-sending browser action and MCP call (read-only fetches and observations do not ask);
     always: every action that is not read-only."""
     if policy == "ask":
-        return tool is not None and (tool in ACTION_TOOLS or tool.startswith("mcp__"))
+        return tool is not None and (tool in ACTION_TOOLS or tool.startswith("mcp__") or (risk == "high" and tool not in READ_TOOLS))
     if policy == "always":
         return tool not in READ_TOOLS if tool is not None else risk != "low"
     return policy == "risky" and risk == "high"
@@ -334,6 +389,15 @@ def blocked_by(rules: list[dict], call: ToolCall) -> str | None:
 
 
 # --- subagents ------------------------------------------------------------------------
+RESEARCHER = {"name": "researcher", "description": "Reads long documents, papers and web pages in its own fresh context and "
+              "returns a short report with exact figures and sources, so long reading never fills this conversation.",
+              "instructions": "Read what the task needs with the tools you have, in a targeted way (find, outline, "
+                              "sections), and answer the question. Reply with a short report, at most about 400 words: "
+                              "the findings with exact numbers and short quotes, each with its source (file and section, "
+                              "or URL or DOI), then what you could not find. Do not invent sources.",
+              "source": "built-in", "tools": "research"}
+RESEARCH_TOOLS = {"read_skill", "read_document", "statistics", "read_image", "web_fetch", "web_search", "literature_search",
+                  "analyze_data"}
 EXPLORER = {"name": "explorer", "description": "Finds where things are and how they work; reads and searches only.",
             "instructions": "Investigate the repository to answer the question. Be specific: name files, functions and line numbers. Do not propose edits.", "source": "built-in"}
 

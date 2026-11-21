@@ -55,8 +55,9 @@ def check_background(command: str) -> None:
     running until its time limit, and the next attempt picks another port. Refuse it up front."""
     unquoted = re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", "''", command)
     if BACKGROUND.search(unquoted):
-        raise ValueError("Do not start servers or other background processes with run_command: it waits for them, "
-                         "so the command runs until its time limit. To see the app, call preview_app with the dev "
+        raise ValueError("Do not send commands to the background with &, nohup or Start-Process: run_command waits "
+                         "for them. Run the command itself with background set to true instead (it keeps running, "
+                         "and command_process reads its output). To see the app, call preview_app with the dev "
                          "server command (it picks a free port, waits for the server, opens the page and stops it "
                          "afterwards; a static site with index.html needs no command). To test against a running "
                          "server, start it inside the test itself.")
@@ -420,15 +421,24 @@ class Redactor:
 
 def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 120,
         on_chunk: Callable[[str], None] | None = None, env: dict[str, str] | None = None,
-        output_limit: int = OUTPUT_LIMIT, limits: dict | None = None, keep_running: bool = False) -> dict:
+        output_limit: int = OUTPUT_LIMIT, limits: dict | None = None, keep_running: bool = False,
+        argv: list[str] | None = None, background: "BackgroundShells | None" = None, owner: str = "",
+        on_exit: Callable[[dict], None] | None = None, stdin_pipe: bool = False) -> dict:
     """Run one command in `root`. Status: passed, failed, timed_out, cancelled or output_limit.
 
     With ``keep_running`` (checks), a noisy command is not stopped at the output limit: it runs to
     its exit code, keeping the start and the end of its output (failures are usually summarised last).
+    ``argv`` runs a program directly instead of `command` through the shell (`command` is then its label).
+    With ``background``, a command still running at its timeout is not stopped: it moves there (status
+    ``running`` with its ``background_id``) and ``on_exit`` gets its summary when it ends. ``stdin_pipe``
+    keeps its standard input open for ``BackgroundShells.write``.
     """
     if not isinstance(command, str) or not command.strip() or len(command) > 4000:
         raise ValueError("Command must contain 1-4000 characters")
-    argv, shell = shell_argv(command, tuple(env or ()))
+    if argv is not None:
+        argv, shell = list(argv), "python" if "python" in Path(argv[0]).name.lower() else Path(argv[0]).stem
+    else:
+        argv, shell = shell_argv(command, tuple(env or ()))
     flags = _creation_flags()
     started = time.monotonic()
     limits = DEFAULT_LIMITS if limits is None else limits
@@ -438,7 +448,7 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
         return {"status": "failed", "exit_code": None, "output": "Could not create a supervised command process tree.",
                 "shell": shell, "runs_on": "this computer"}
     try:
-        process = subprocess.Popen(argv, cwd=root, env=child_env(env), stdin=subprocess.DEVNULL,
+        process = subprocess.Popen(argv, cwd=root, env=child_env(env), stdin=subprocess.PIPE if stdin_pipe else subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags,
                                    start_new_session=os.name != "nt", preexec_fn=_posix_limits(limits))
     except OSError as exc:
@@ -456,6 +466,7 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
     output, size, over = [], 0, threading.Event()
     tail_text = []  # with keep_running: the newest output past the limit
     closing_output = threading.Event()
+    handoff, moved = threading.Lock(), []  # once moved to the background, output goes to moved[0]
     # Approved secrets reach the command as environment variables; their values never reach the output.
     redactor = Redactor(env) if env else None
 
@@ -473,6 +484,10 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
             text = decoder.decode(raw)
             if redactor is not None:
                 text = redactor.feed(text)
+            with handoff:
+                if moved:
+                    moved[0](text)
+                    continue
             if size < output_limit:
                 kept = text[: output_limit - size]
                 output.append(kept)
@@ -488,6 +503,11 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
         tail = decoder.decode(b"", final=True)
         if redactor is not None:
             tail = redactor.feed(tail) + redactor.flush()
+        with handoff:
+            if moved:
+                if tail:
+                    moved[0](tail)
+                return
         if tail and size < output_limit:
             output.append(tail)
             if on_chunk is not None:
@@ -509,6 +529,16 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
             status = "timed_out"
         elif over.is_set():
             status = "output_limit"
+        if status == "timed_out" and background is not None and process.poll() is None:
+            with handoff:
+                so_far = "".join(output)
+                shell_id, sink = background.adopt(process, tree, reader, command, shell, owner=owner, on_exit=on_exit,
+                                                  seen=len(so_far))
+                if sink is not None:
+                    moved.append(sink)
+            if sink is not None:
+                return {"status": "running", "exit_code": None, "background_id": shell_id, "output": so_far, "shell": shell,
+                        "seconds": round(time.monotonic() - started, 3), "runs_on": "this computer"}
         if status:
             tree.stop()
             _stop(process)
@@ -516,6 +546,11 @@ def run(root: Path, command: str, cancel: threading.Event, *, timeout: float = 1
         time.sleep(0.05)
     reader.join(timeout=5)
     closing_output.set()
+    if process.stdin is not None:
+        try:
+            process.stdin.close()
+        except OSError:
+            pass
     peak = tree.peak_memory()
     tree.close()
     code = process.returncode
@@ -643,14 +678,31 @@ def _end_with_dikdik(process) -> None:
 
 
 class BackgroundShells:
-    """Long-running commands (dev servers, watchers) started in the project folder.
+    """Long-running commands (dev servers, watchers) started in the project folder, and agent
+    commands that outlived their time limit (adopt).
 
-    Each shell runs in its own process group; output is buffered for later polling.
-    A shell stops when the user stops it, the engine closes, or its process exits."""
+    Each shell runs in its own process group; the newest output is kept for later reading.
+    A shell stops when the user stops it, its owner (a task) is cancelled, the engine closes,
+    or its process exits."""
 
     def __init__(self):
         self._shells: dict[str, dict] = {}
         self._lock = threading.Lock()
+        self._changed = threading.Condition(self._lock)
+
+    def _entry(self, shell_id, command, shell, process, tree=None, owner="", on_exit=None, seen=0) -> dict:
+        return {"id": shell_id, "command": command, "shell": shell, "pid": process.pid, "process": process, "tree": tree,
+                "text": "", "dropped": 0, "seen": seen, "status": "running", "exit_code": None, "started": time.time(),
+                "owner": owner, "on_exit": on_exit}
+
+    def _append(self, entry: dict, text: str) -> None:
+        with self._changed:
+            entry["text"] += text
+            excess = len(entry["text"]) - OUTPUT_LIMIT
+            if excess > 0:  # keep the newest output: a watcher's latest lines matter most
+                entry["text"] = entry["text"][excess:]
+                entry["dropped"] += excess
+            self._changed.notify_all()
 
     def start(self, root: Path, command: str, *, env: dict[str, str] | None = None) -> dict:
         import uuid
@@ -663,35 +715,39 @@ class BackgroundShells:
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags,
                                    start_new_session=os.name != "nt")
         _end_with_dikdik(process)
-        entry = {"id": shell_id, "command": command, "shell": shell_name, "pid": process.pid,
-                  "process": process, "output": [], "size": 0, "status": "running", "exit_code": None,
-                  "started": time.time()}
+        entry = self._entry(shell_id, command, shell_name, process)
         with self._lock:
             self._shells[shell_id] = entry
-        drain = threading.Thread(target=self._drain, args=(shell_id,), daemon=True)
+        drain = threading.Thread(target=self._drain, args=(entry,), daemon=True)
         entry["thread"] = drain
         drain.start()
         return {"id": shell_id, "command": command, "shell": shell_name, "pid": process.pid, "status": "running"}
 
-    def _drain(self, shell_id: str):
-        entry = self._shells.get(shell_id)
-        if not entry:
-            return
+    def adopt(self, process, tree, reader: threading.Thread, command: str, shell: str, *, owner: str = "",
+              on_exit=None, seen: int = 0):
+        """Take over a running command from run(): returns its id and the sink for its further output."""
+        import uuid
+        shell_id = uuid.uuid4().hex[:12]
+        _end_with_dikdik(process)
+        entry = self._entry(shell_id, command, shell, process, tree, owner, on_exit, seen)
+        entry["text"] = "\0" * 0
+        with self._lock:
+            self._shells[shell_id] = entry
+        entry["dropped"] = seen  # output run() already returned counts as read
+        watch = threading.Thread(target=self._watch, args=(entry, reader), daemon=True)
+        entry["thread"] = watch
+        watch.start()
+        return shell_id, lambda text: self._append(entry, text)
+
+    def _drain(self, entry: dict):
         process = entry["process"]
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         try:
             for raw in iter(lambda: process.stdout.read1(CHUNK), b""):
-                text = decoder.decode(raw)
-                with self._lock:
-                    if entry["size"] < OUTPUT_LIMIT:
-                        kept = text[: OUTPUT_LIMIT - entry["size"]]
-                        entry["output"].append(kept)
-                        entry["size"] += len(kept)
+                self._append(entry, decoder.decode(raw))
             tail = decoder.decode(b"", final=True)
             if tail:
-                with self._lock:
-                    if entry["size"] < OUTPUT_LIMIT:
-                        entry["output"].append(tail[: OUTPUT_LIMIT - entry["size"]])
+                self._append(entry, tail)
         except (OSError, ValueError):
             pass
         finally:
@@ -699,9 +755,34 @@ class BackgroundShells:
                 process.stdout.close()
             except OSError:
                 pass
-            entry["exit_code"] = process.wait()
-            with self._lock:
-                entry["status"] = "exited" if entry["process"].poll() is not None else "running"
+            self._exited(entry, process.wait())
+
+    def _watch(self, entry: dict, reader: threading.Thread):
+        reader.join()
+        code = entry["process"].wait()
+        tree = entry.get("tree")
+        if tree is not None:
+            tree.close()
+        self._exited(entry, code)
+
+    def _exited(self, entry: dict, code) -> None:
+        if entry["process"].stdin is not None:
+            try:
+                entry["process"].stdin.close()
+            except OSError:
+                pass
+        with self._changed:
+            entry["exit_code"] = code
+            if entry["status"] == "running":
+                entry["status"] = "exited"
+            self._changed.notify_all()
+            summary = {"id": entry["id"], "command": entry["command"], "status": entry["status"], "exit_code": code,
+                       "output_tail": entry["text"][-2000:]}
+        if entry.get("on_exit") is not None:
+            try:
+                entry["on_exit"](summary)
+            except Exception:
+                logs.log("background_notice_failed", logging.DEBUG, exc_info=True)
 
     def poll(self, shell_id: str) -> dict | None:
         with self._lock:
@@ -710,38 +791,84 @@ class BackgroundShells:
                 return None
             process = entry["process"]
             status = entry["status"]
-            if status == "running" and process.poll() is not None:
+            if status == "running" and process.poll() is not None and entry.get("tree") is None:
                 status = "exited"
                 entry["status"] = status
                 entry["exit_code"] = process.returncode
             return {"id": shell_id, "command": entry["command"], "shell": entry["shell"],
                     "status": status, "exit_code": entry.get("exit_code"), "pid": entry["pid"],
-                    "output": "".join(entry["output"]), "started": entry["started"]}
+                    "output": entry["text"], "started": entry["started"]}
 
-    def stop(self, shell_id: str) -> dict | None:
+    def read(self, shell_id: str, *, owner: str, wait: float = 0) -> dict | None:
+        """Output the owner has not read yet; with ``wait``, after up to that many seconds for the command to end."""
+        deadline = time.monotonic() + max(0.0, min(float(wait), 30.0))
+        with self._changed:
+            entry = self._shells.get(shell_id)
+            if not entry or entry["owner"] != owner:
+                return None
+            while entry["status"] == "running" and time.monotonic() < deadline:
+                self._changed.wait(max(0.0, deadline - time.monotonic()))
+            start = max(entry["seen"], entry["dropped"])
+            missed = start - entry["seen"]
+            text = entry["text"][start - entry["dropped"]:]
+            entry["seen"] = entry["dropped"] + len(entry["text"])
+            return {"id": shell_id, "command": entry["command"], "status": entry["status"], "exit_code": entry["exit_code"],
+                    "output": text, **({"missed_characters": missed} if missed else {})}
+
+    def write(self, shell_id: str, text: str, *, owner: str) -> dict | None:
         with self._lock:
             entry = self._shells.get(shell_id)
-            if not entry:
+            if not entry or entry["owner"] != owner:
+                return None
+            stdin = entry["process"].stdin
+            running = entry["status"] == "running"
+        if not running:
+            raise ValueError("The command has already ended")
+        if stdin is None:
+            raise ValueError("This command does not take input: start it with background true to send it input")
+        try:
+            stdin.write(text.encode("utf-8"))
+            stdin.flush()
+        except (OSError, ValueError):
+            raise ValueError("The command closed its input") from None
+        return {"id": shell_id, "sent": len(text)}
+
+    def stop(self, shell_id: str, *, owner: str | None = None) -> dict | None:
+        with self._lock:
+            entry = self._shells.get(shell_id)
+            if not entry or (owner is not None and entry["owner"] != owner):
                 return None
             process = entry["process"]
+            if entry["status"] == "running":
+                entry["status"] = "stopped"
+        if entry.get("tree") is not None:
+            entry["tree"].stop()
         if process.poll() is None:
             _stop(process)
         with self._lock:
-            entry["status"] = "stopped"
             entry["exit_code"] = process.returncode
-            return {"id": shell_id, "command": entry["command"], "status": "stopped",
-                    "exit_code": entry["exit_code"], "output": "".join(entry["output"])}
+            return {"id": shell_id, "command": entry["command"], "status": entry["status"],
+                    "exit_code": entry["exit_code"], "output": entry["text"]}
 
-    def list_shells(self) -> list[dict]:
+    def stop_owner(self, owner: str) -> list[str]:
+        with self._lock:
+            mine = [sid for sid, e in self._shells.items() if owner and e["owner"] == owner and e["status"] == "running"]
+        for shell_id in mine:
+            self.stop(shell_id)
+        return mine
+
+    def list_shells(self, owner: str | None = None) -> list[dict]:
         with self._lock:
             return [{"id": sid, "command": e["command"], "shell": e["shell"], "status": e["status"],
                      "pid": e["pid"], "exit_code": e.get("exit_code"), "started": e["started"]}
-                    for sid, e in self._shells.items()]
+                    for sid, e in self._shells.items() if owner is None or e["owner"] == owner]
 
     def close(self):
         with self._lock:
             shells = list(self._shells.values())
         for entry in shells:
+            if entry.get("tree") is not None:
+                entry["tree"].stop()
             if entry["process"].poll() is None:
                 _stop(entry["process"])
             try:

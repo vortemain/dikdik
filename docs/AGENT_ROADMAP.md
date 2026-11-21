@@ -90,7 +90,23 @@ whose mechanism it borrows.
 12. **Lint/test reflection for code** (Aider, OpenCode v1 LSP diagnostics): run the project's
     linter or type checker on edited files and feed errors back, with at most 3 reflections.
 
-## Phase 4: an open-minded toolset
+## Phase 4: an open-minded toolset (done)
+
+Done on `claude/phase4-tools-8afbd0`; details in `docs/TOOLCHAINS.md` ("Running commands and
+Python") and `docs/AGENT_SKILLS_AND_HOOKS.md` ("Recipes and narrow tools", "Research subagent").
+
+- `run_python` runs scripts through the approval gate and local execution, calling allow-listed
+  read-only tools (`read_document`, `statistics`, `web_fetch`, `web_search`, `literature_search`)
+  over a per-run loopback bridge; printed output returns, capped head and tail. It is offered
+  wherever commands are approved; per-model enablement is not implemented.
+- `run_command` describes the real shell family, takes `workdir` and `background`, reports exit
+  code and working directory, and moves a timed-out command to the background with a completion
+  notice. `command_process` reads output, sends input and stops background commands.
+- Allow rules and remembered commands work by command prefix and never cover chained commands.
+- `literature_search` and `statistics` stay tools; three recipes (`scholarly-apis`,
+  `doi-verification`, `statistics-in-python`) load on demand.
+- `delegate` has a built-in read-only `researcher`, also in chat.
+- Not done: a persistent shell session (each command is still a fresh process).
 
 13. **General tools first, narrow tools as skills** (OpenClaw, Hermes).
     - The core is shell, files, web, `read_document` and Python.

@@ -14,6 +14,7 @@ from typing import Callable, Protocol
 from .repository import _snapshot_limits, apply_edits, create_file, is_test_path, match_line_endings, syntax_check
 from .workspace_files import WorkspaceFiles, WORKING_LIMITS, read_page
 from . import architecture, engineering, parallel
+from .shell_tools import head_tail
 from .security_scan import project_files
 from .hooks import HookEngine, HookEvent
 from .model_errors import ProviderError
@@ -703,7 +704,9 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
               shell_tool: dict | None = None,
               on_write: Callable[[dict[str, str]], None] | None = None,
               describe_images: Callable[[list[str]], list[str]] | None = None,
-              conversation: bool = False) -> AgentOutcome:
+              conversation: bool = False,
+              python: Callable[[dict[str, str], dict], dict] | None = None,
+              python_tool: dict | None = None) -> AgentOutcome:
     """Deadline/cancellation are checked between steps, not during blocking callbacks.
 
     ``original`` is the untouched source (diff base, protected tests); ``start`` is the
@@ -722,6 +725,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
     enables the parallel_edit tool (see parallel.py).
     ``summary_model`` (default: ``model``) writes conversation summaries during compaction.
     ``shell_tool`` replaces the sandbox run_command definition (local mode runs in the project folder).
+    ``python(files, arguments)`` with its ``python_tool`` definition enables run_python; its results are
+    handled like a command's.
 
     Verification is an injected trusted boundary, reachable only via run_tests.
     A passed ``kind=unittest`` check is evidence of tests, not objective correctness.
@@ -750,6 +755,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
     if preview is not None and not read_only:
         extras.append(PREVIEW_TOOL)
     tools = base_tools + ([shell_tool or SHELL_TOOL] if shell is not None and not read_only else []) + extras + ([] if read_only else engineering.TOOLS)
+    if python is not None and python_tool is not None and not read_only:
+        tools = tools + [python_tool]
     if shell is not None and not read_only:
         tools = tools + [engineering.MEASURE_PERFORMANCE, engineering.REPEAT_COMMAND]  # run commands: execution approval only
     if load_test is not None and not read_only:
@@ -1730,7 +1737,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         pending_image_note = ("The browser screenshot from " + call.name + " above. Compare it with what the "
                                               "page should show; use browser_snapshot or browser_inspect for exact values.")
                     failed = "error" in result or result.get("is_error") is True
-                elif call.name == "run_command":
+                elif call.name == "run_command" or call.name == "run_python" and python is not None:
                     preview_revision = None
                     # Commands can change dependencies or other external state even
                     # when no candidate text changes (for example npm install).
@@ -1745,7 +1752,12 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         if stop:
                             return stop
                         try:
-                            ran = shell(dict(candidate), args["command"], args.get("timeout_seconds", 60))
+                            if call.name == "run_python":
+                                ran = python(dict(candidate), dict(args))
+                            else:
+                                options = {key: args[key] for key in ("workdir", "background") if key in args}
+                                ran = shell(dict(candidate), args["command"], args.get("timeout_seconds", 60),
+                                            **({"options": options} if options else {}))
                         except ValueError as exc:
                             raise ValueError(str(exc)) from None
                         except Exception:
@@ -1785,13 +1797,15 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                                 needs_repair = False
                                 event("repair", {"repair_attempts": repairs, "path": sorted(accepted)[0]})
                         result = {"status": ran.get("status"), "exit_code": ran.get("exit_code"),
-                                  "output": str(ran.get("output", ""))[-12000:],
+                                  "output": head_tail(str(ran.get("output", "")), 12000),
                                   "changed_files": sorted(accepted), "rejected_changes": rejected,
+                                  **{key: ran[key] for key in ("workdir", "background_id", "tool_calls", "refused_tool_calls", "notices")
+                                     if ran.get(key) not in (None, [], "")},
                                   **({"error": ran["error"]} if ran.get("error") else {}),
                                   **({"stop_turn": True} if ran.get("stop_turn") else {}),
                                   **({"note": ran["sync_error"]} if ran.get("sync_error") else {}),
                                   **({"restored": ran["restored"]} if isinstance(ran.get("restored"), list) and ran["restored"] else {})}
-                        if not shell_read_tip and not accepted and READ_COMMAND.match(args["command"]):
+                        if call.name == "run_command" and not shell_read_tip and not accepted and READ_COMMAND.match(args["command"]):
                             shell_read_tip = True
                             result["tip"] = ("read_file, search_text and list_files read the project directly: faster, exact "
                                              "line numbers, and no approval needed. Use them instead of shell commands for reading.")
@@ -1808,7 +1822,12 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                             if fix:
                                 result["diagnosis"] = {key: value for key, value in fix.items() if key != "next_step"}
                                 result["next_step"] = fix["next_step"]
-                        failed = ran.get("status") != "passed"
+                        if ran.get("status") == "running":
+                            result["next_step"] = ("It keeps running in the background as " + str(ran.get("background_id")) +
+                                                   "; you will get a notice when it ends. Read more of its output with "
+                                                   "command_process, or stop it there. Files it writes from now on are not "
+                                                   "tracked as your edits: read them again before editing them.")
+                        failed = ran.get("status") not in {"passed", "running"}
                 elif call.name == "run_tests":
                     if verified == candidate and not args.get("force", False):
                         result = {"cached": True, "verification_kind": verified_kind,
@@ -1989,7 +2008,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
             if not failed:
                 failures.clear()  # A successful different action provides new information/state.
                 # A command that changed nothing and printed the same output again is a re-read too.
-                if call.name in READS or call.name == "run_command" and not result.get("changed_files"):
+                if call.name in READS or call.name in {"run_command", "run_python"} and not result.get("changed_files"):
                     same_read = {key: value for key, value in call.arguments.items() if key not in {"max_chars", "max_results"}}
                     read_key = hashlib.sha256(_json([call.name, same_read, result]).encode()).hexdigest()
                     count = seen_reads.pop(read_key, 0) + 1
