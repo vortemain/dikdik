@@ -251,6 +251,25 @@ class ContextContinuityTests(unittest.TestCase):
         reasons = [d.get("reason") for k, d in events if k == "recovery"]
         self.assertIn("Re-reading parts of a document already read", reasons)
 
+    def test_providers_that_reuse_call_ids_across_turns_still_complete(self):
+        class Model:
+            def __init__(self):
+                self.count, self.seen = 0, []
+
+            def respond(self, messages, tools):
+                self.seen.append(messages)
+                self.count += 1
+                if self.count == 3:
+                    return ModelResponse("Done", [])
+                return ModelResponse("", [ToolCall("read_file:0", "read_file", {"path": f"f{self.count}.txt"})])
+        model = Model()
+        result = run_agent({"f1.txt": "one", "f2.txt": "two"}, "Inspect", model, None, lambda *_: None, threading.Event())
+        self.assertEqual(result.state, "completed", result.error)
+        ids = [call["id"] for m in model.seen[-1] if m.get("role") == "assistant" for call in m.get("tool_calls", [])]
+        self.assertEqual(len(ids), len(set(ids)))
+        for messages in model.seen:
+            assert_protocol(self, messages)
+
     def test_full_page_replacement_above_old_32k_limit_is_accepted(self):
         before, after = "old\n" * 6000, "new\n" * 8000
         args = {"path": "Contact.tsx", "before": before, "after": after}

@@ -1,6 +1,6 @@
 """Original, in-memory tool loop. Repository text and tool output are untrusted data."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import copy
 import hashlib
 import json
@@ -1413,11 +1413,17 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
         if len(calls) > 8:
             return outcome("failed", "Model must request between one and eight tools")
         batch_ids: set[str] = set()
-        for call in calls:
+        for index, call in enumerate(calls):
             if (not isinstance(call, ToolCall) or not isinstance(call.id, str) or not 1 <= len(call.id) <= 128
-                    or call.id in seen_ids or call.id in batch_ids
                     or not isinstance(call.name, str) or not 1 <= len(call.name) <= 64 or not isinstance(call.arguments, dict)):
                 return outcome("failed", "Invalid tool call or duplicate call ID")
+            if call.id in seen_ids or call.id in batch_ids:
+                # Some providers number calls per turn ("read_file:0"); give a reused ID a fresh suffix so
+                # every call and its result still pair up exactly.
+                suffix = 1
+                while f"{call.id[:120]}~{suffix}" in seen_ids or f"{call.id[:120]}~{suffix}" in batch_ids:
+                    suffix += 1
+                call = calls[index] = replace(call, id=f"{call.id[:120]}~{suffix}")
             batch_ids.add(call.id)
         try:
             serialized_args = []
