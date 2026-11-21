@@ -67,8 +67,8 @@ CREATE_DOCUMENT_TOOL = {
             "fenced ```chart block holding JSON {\"type\": \"column\"|\"bar\"|\"line\"|\"pie\", \"title\": ..., "
             "\"categories\": [...], \"series\": [{\"name\": ..., \"values\": [...]}], \"y_title\": ...} becomes a "
             "native editable Word chart. Options: title page, table of contents, academic style (Times New Roman 12, "
-            "1.5 spacing, justified) or modern. Overwrites the file if it exists; write the whole document in one call "
-            "(or use append to add sections to an existing .md draft first)."),
+            "1.5 spacing, justified) or modern. Overwrites the file if it exists. For a long document, write it "
+            "section by section into a .md draft with append, then create the .docx with source set to the draft."),
         "parameters": {
             "type": "object",
             "properties": {
@@ -83,6 +83,7 @@ CREATE_DOCUMENT_TOOL = {
                 "style": {"type": "string", "enum": ["academic", "modern"], "description": ".docx look (default academic)."},
                 "chapter_breaks": {"type": "boolean", "description": ".docx: start every level-1 heading on a new page (default true for academic)."},
                 "append": {"type": "boolean", "description": "Text formats only: append to the file instead of replacing it."},
+                "source": {"type": "string", "description": ".docx only: a Markdown file in the working folder to convert instead of content."},
             },
             "required": ["path"],
         },
@@ -207,6 +208,11 @@ def create(root: Path, arguments: dict) -> dict:
     suffix = target.suffix.lower()
     target.parent.mkdir(parents=True, exist_ok=True)
     content = arguments.get("content")
+    if suffix == ".docx" and arguments.get("source") and not content:
+        draft = _safe_target(root, arguments["source"])
+        if draft.suffix.lower() not in {".md", ".markdown", ".txt"}:
+            raise ValueError("source must be a Markdown (.md) draft in the working folder")
+        content = draft.read_text(encoding="utf-8")
     if suffix == ".docx":
         if not isinstance(content, str) or not content.strip():
             raise ValueError("Write the document's Markdown in content")

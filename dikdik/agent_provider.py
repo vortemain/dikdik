@@ -13,6 +13,11 @@ from .model_limits import MAX_MODEL_TEXT_BYTES, MAX_TOOL_ARGUMENT_BYTES
 
 DEFAULT_AGENT_OUTPUT_TOKENS = 8192
 ADAPTIVE_OUTPUT_CEILING = 65536
+OVERSIZED_HINT = (
+    "Runtime response validation: your previous reply was larger than the safe response size and was discarded; "
+    "no tools ran. Do the same work in smaller pieces. For a long document, write it section by section into a "
+    ".md draft with create_document and append: true, then create the .docx with source set to that draft "
+    "instead of repeating its text. Keep earlier findings; do not restart the investigation.")
 MAX_CALL_EXTRA_BYTES = 65536  # provider continuation data per tool call (signatures grow with the thinking)
 
 
@@ -88,6 +93,10 @@ class CompatibleAgentModel:
         except ProviderError as exc:
             if exc.kind == "output_limit":
                 raise self._truncated(configured, exc.usage) from None
+            if exc.kind == "response_limit" and not self._repair_hint.startswith(OVERSIZED_HINT):
+                # A discarded oversized reply ran no tools; ask once for the same work in smaller pieces.
+                self._repair_hint = OVERSIZED_HINT
+                raise ProviderError("response_limit", retryable=True, usage=exc.usage) from None
             if exc.kind == "protocol":
                 # A rejected transport response has executed no tools. Regenerate
                 # without SSE; the agent's existing three-attempt budget applies.

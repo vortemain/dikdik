@@ -59,6 +59,19 @@ class AgentProviderTests(unittest.TestCase):
             with self.subTest(data=data), patch("dikdik.agent_provider.chat_completion", return_value=data), self.assertRaisesRegex(ValueError, "invalid or incomplete"):
                 configured_model().respond([], [])
 
+    def test_an_oversized_response_is_retried_with_a_write_in_parts_hint(self):
+        from dikdik.model_errors import ProviderError
+        model = configured_model()
+        with patch("dikdik.agent_provider.chat_completion",
+                   side_effect=[ProviderError("response_limit"), reply([tool()])]) as transport:
+            with self.assertRaises(ProviderError) as caught:
+                model.respond([{"role": "user", "content": "Write chapters"}], [])
+            self.assertTrue(caught.exception.retryable)
+            model.respond([{"role": "user", "content": "Write chapters"}], [])
+        hint = transport.call_args_list[1].args[0][-1]["content"]
+        self.assertIn("append", hint)
+        self.assertIn("source", hint)
+
     def test_cannot_smuggle_provider_metadata_into_usage(self):
         data = reply([tool()])
         data["usage"] = {"total_tokens": -1, "private": "credential"}

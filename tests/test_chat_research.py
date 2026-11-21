@@ -176,6 +176,18 @@ Figure 4.1: Gender of respondents
         with self.assertRaises(ValueError):
             documents.create(self.root, {"path": "../escape.md", "content": "x"})
 
+    def test_docx_is_built_from_a_markdown_draft_written_in_parts(self):
+        documents.create(self.root, {"path": "draft.md", "content": "# CHAPTER FOUR\n\nResults text.\n"})
+        documents.create(self.root, {"path": "draft.md", "content": "\n# CHAPTER FIVE\n\nDiscussion text.\n", "append": True})
+        saved = documents.create(self.root, {"path": "Chapters.docx", "source": "draft.md"})
+        self.assertEqual(saved["saved"], "Chapters.docx")
+        with zipfile.ZipFile(self.root / "Chapters.docx") as archive:
+            body = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("CHAPTER FIVE", body)
+        self.assertIn("Discussion text.", body)
+        with self.assertRaises(ValueError):
+            documents.create(self.root, {"path": "Bad.docx", "source": "../outside.md"})
+
 
 class AttachmentTests(unittest.TestCase):
     def setUp(self):
