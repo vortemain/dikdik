@@ -158,7 +158,22 @@ one replaces it; Python projects only get lint reflection through a declared scr
 16. **Fresh-context research subagents** (OpenCode `explore`, Hermes `delegate_task`): long reading
     happens in a child context, and only a short report returns.
 
-## Phase 5: learn from experience
+## Done on this branch (phase 5)
+
+Verified with scripted models only (`tests/test_learning.py`); no live-provider run yet. Details in
+`docs/AGENT_SKILLS_AND_HOOKS.md` ("Memory, session search and background review").
+
+- **Durable memory**: capped `user` and per-project stores in SQLite (migration 3), a `memory` tool
+  (add, replace, remove) that refuses overflow and credentials, injected once per conversation as a
+  frozen, untrusted snapshot; view, edit and clear through `/api/memory` (no UI yet).
+- **Session search**: FTS5 index written with each objective and message, backfilled, scoped like
+  the task list; the `session_search` tool returns raw snippets with no model call.
+- **Background review**: on a recovered error, a user correction or a multi-step workflow, one
+  fast-model call proposes memory updates (applied within caps) and skills (stored for approval
+  at `/api/skill-proposals`, never enabled on their own). Unused user skills go stale at 14 days and
+  are archived at 30, deterministically. Settings `memory` and `background_review`.
+
+## Phase 5: learn from experience (done)
 
 17. **Durable memory** (OpenClaw `MEMORY.md`/`USER.md`, Hermes bounded files): per-user and
     per-project facts, size-capped, injected once per session so the cache holds, and searchable

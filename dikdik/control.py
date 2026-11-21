@@ -33,7 +33,7 @@ HIGH = [
 ]
 READ_TOOLS = {"list_files", "read_file", "search_text", "read_skill", "read_plan", "task_tracker", "write_plan", "finish", "delegate",
               "architecture_map", "impacted_tests", "security_scan", "quality_check", "release_gate", "record_requirements",
-              "request_secret", "ask_question", "environment_check"}  # both are themselves questions to the user
+              "request_secret", "ask_question", "environment_check", "session_search"}  # both are themselves questions to the user
 
 ENV_EXCLUDED = {".env.example", ".env.sample", ".env.template", ".env.defaults"}
 

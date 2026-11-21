@@ -232,6 +232,71 @@ remain in the existing task event API/search. The agent-info dialog displays eve
 source, priority and deadline. These records provide an audit trail, not a
 cryptographically tamper-proof log or an OTLP exporter.
 
+## Memory, session search and background review
+
+Phase 5 of `docs/AGENT_ROADMAP.md`. All state is in `state.sqlite3`, created by core migration 3
+(`memory_entries`, `skill_proposals`, the `session_index` FTS5 table, backfilled from existing
+conversations). Standard library only; a Python without FTS5 falls back to a plain table searched
+with `LIKE`.
+
+**Durable memory** (`dikdik/memory.py`). Two stores: `user` (who the user is, lasting preferences;
+2,000 characters) and `project` (one per project folder: conventions, commands, decisions; 3,000
+characters). Chats have no project memory. The `memory` tool takes `add`, `replace` (the one entry
+containing `old_text`) and `remove`. A write that would pass the cap is refused with an error that
+lists the current entries and asks the agent to consolidate; nothing is dropped. Content that looks
+like a credential is refused: the log redaction rules (provider key shapes, bearer tokens, values
+registered at runtime such as revealed provider keys), `password: ...`-style assignments with a
+non-word value, and long mixed-case alphanumeric tokens. Refusal messages never echo the content.
+
+Each conversation takes a snapshot of memory on its first turn and records it as its first
+`memory_snapshot` event; later turns, resumes and follow-ups reuse that exact text, so the prompt
+prefix stays byte-stable for prompt caching. Writes made during a conversation show from the next
+one. The snapshot is a user message placed before the history, inside
+`[UNTRUSTED AGENT MEMORY ...]` markers that say it is agent-reported data with no permissions.
+
+**Session search** (`dikdik/session_search.py`). Objectives, follow-ups (`user_message`) and
+replies (`agent_message`) are indexed as `Store.create` and `Store.event` write them. The
+`session_search` tool returns raw FTS5 snippets (all words first, then any word) with no model
+call, scoped like the task list: the bound project's conversations plus chats, never other
+projects, and never the current conversation. Snippets pass through log redaction. Deleting a
+conversation removes its index rows; event retention purges indexed messages with the events.
+
+**Background review** (`dikdik/review.py`). After a completed turn with model calls, a single
+dedicated thread (not the task pool) checks for triggers: a failed tool or recovery event in the
+turn (`recovered_error`), a follow-up that corrects the agent (`user_correction`), or at least five
+successful tool calls across three tools (`workflow`). With a trigger, one call to the active
+router's fast model (skipped and recorded as `learning_review {status: skipped}` without one, or
+when the conversation did not approve sharing with a model) gets a redacted record of the turn and
+the current memory, and replies with JSON. Up to five memory updates apply through the same caps
+and credential checks (source `review`); a proposed skill is stored in `skill_proposals` as
+`pending` and becomes a personal skill only when the user approves it. Each review records a
+`learning_review` event on the conversation.
+
+**Skill lifecycle.** Using a skill (`read_skill`, routing into context, or re-enabling it) records
+its last use. A deterministic sweep (at startup and after reviews, at most hourly, no model call)
+marks personal and project skills unused for 14 days `stale` and archives (disables) them after 30.
+Enabling an archived skill starts its clock again. Skill listings carry `lifecycle`.
+
+**Settings and API.** `memory` (default on) turns memory injection and both tools off;
+`background_review` (default on) turns reviews off. Review also needs `memory` on. Routes, behind
+the usual session and origin checks:
+
+| Route | Effect |
+| --- | --- |
+| `GET /api/memory` | Both stores with entries, used and limit (`project` is null without a project). |
+| `POST /api/memory` | `{action, target, content, old_text}` like the tool, as the user. |
+| `PATCH /api/memory/{user,project}` | `{entries: [...]}` replaces the store, within its cap. |
+| `DELETE /api/memory[/{target}]` | Clears one store or both. |
+| `GET /api/skill-proposals` | Proposals, newest first (`?status=pending`). |
+| `POST /api/skill-proposals/{id}/{approve,reject}` | The user's decision. |
+
+There is no UI for these yet; the web client is unchanged.
+
+**Limits.** Credential detection is pattern-based: a secret in an unusual shape (a short password
+in prose, a lowercase passphrase) can still be saved, and the user can see and clear it. Memory is
+stored unencrypted in `state.sqlite3`, like conversations. Review sends a redacted turn record to the
+configured fast model, the same provider class the conversation already approved.
+
 ## Validation
 
 `tests/test_hooks.py` exercises event trajectories, rule compatibility, malformed
@@ -247,3 +312,7 @@ Use the operating system's normal temporary directory outside this checkout:
 fixtures inside Dikdik's own Git/program directory change repository discovery
 and intentionally fail project-opening guards. Frontend validation uses
 `bun run typecheck:web`, `bun test tests/web` and `bun run build:web`.
+
+`tests/test_learning.py` covers the memory caps and overflow errors, credential refusal, the frozen
+snapshot, FTS search and its scoping, migration 3's backfill, review triggers and a scripted review
+model, skill proposals and the stale/archive sweep, the settings and the memory routes.

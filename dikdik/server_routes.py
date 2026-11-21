@@ -28,7 +28,8 @@ from .profiles import ApiError, ProfileStore
 from .providers import chat_completion
 from .routing import STRATEGIES, RouterStore
 from .secrets_store import SecretsError, SecretsStore
-from . import research
+from . import research, review
+from .memory import LIMITS as MEMORY_LIMITS, Memory
 from .skills import SkillIndex
 from .plugins import fill_prompt
 from .skills_market import InstallConflict, SkillStore
@@ -37,7 +38,8 @@ from .backends import BackendStore as _BackendStore
 from .acp_agents import AcpAgentStore as _AcpAgentStore
 
 ROUTE_PREFIXES = ("/api/research", "/api/profiles", "/api/secrets", "/api/skills", "/api/automations", "/api/mcp", "/api/agent-profiles", "/api/drafts",
-                  "/api/connections", "/api/routers", "/api/model-catalog", "/api/plugins", "/api/webhooks", "/api/backends", "/api/acp-agents")
+                  "/api/connections", "/api/routers", "/api/model-catalog", "/api/plugins", "/api/webhooks", "/api/backends", "/api/acp-agents",
+                  "/api/memory", "/api/skill-proposals")
 MANAGED_PREFIX = ("conn.", "research.", OAUTH_PREFIX)  # provider connection keys and MCP sign-ins; managed there, hidden from API keys
 
 
@@ -57,6 +59,36 @@ def build_routes(engine_or_stores):
     drafts = Drafts(stores.store)
     connections = ConnectionStore(stores.store, secrets)
     routers = getattr(stores, "routers", None) or RouterStore(stores.store)
+    memory = getattr(stores, "memory", None) or Memory(stores.store)
+
+    def memory_routes(method, parts, body, query):
+        workspace = stores.store.workspace
+        if len(parts) == 2:
+            if method == "GET":
+                return 200, memory.view(workspace)
+            if method == "POST":
+                memory.apply(body.get("action"), body.get("target"), body.get("content"), body.get("old_text"),
+                             workspace=workspace, source="user")
+                return 200, memory.view(workspace)
+            if method == "DELETE":
+                for target in MEMORY_LIMITS:
+                    if target == "user" or workspace:
+                        memory.clear(target, workspace)
+                return 200, memory.view(workspace)
+        if len(parts) == 3 and parts[2] in MEMORY_LIMITS:
+            if method == "PATCH":
+                return 200, memory.replace_all(parts[2], body.get("entries"), workspace)
+            if method == "DELETE":
+                memory.clear(parts[2], workspace)
+                return 200, memory.view(workspace)
+        return None
+
+    def proposal_routes(method, parts, body, query):
+        if method == "GET" and len(parts) == 2:
+            return 200, {"proposals": review.proposals(stores.store, query.get("status") or None)}
+        if method == "POST" and len(parts) == 4 and parts[3] in {"approve", "reject"}:
+            return 200, review.decide(stores.store, skills, parts[2], parts[3])
+        return None
 
     def draft_routes(method, parts, body, query):
         if len(parts) != 3:
@@ -545,6 +577,8 @@ def build_routes(engine_or_stores):
         "/api/webhooks": webhook_routes,
         "/api/backends": backend_routes,
         "/api/acp-agents": acp_routes,
+        "/api/memory": memory_routes,
+        "/api/skill-proposals": proposal_routes,
     }
 
     def ref_valid(ref) -> bool:

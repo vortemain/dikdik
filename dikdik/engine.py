@@ -46,7 +46,7 @@ from .skills import READ_SKILL, SkillIndex
 from .project_facts import ProjectFacts, outline as project_outline
 from .hooks import HookAuditError, HookEngine, HookEvent, load_hook_engine
 from .context_memory import observations_from_events
-from .store import Store
+from .store import CHAT_SCOPE, Store
 from .webhooks import WebhookStore
 from .workspace_registry import WorkspaceRegistry
 from .backends import BackendStore
@@ -63,6 +63,8 @@ from .extension_apps import ExtensionAppStore
 from .worktrees import WorktreeManager
 from .workflow import approval_question, visual_request
 from . import migrations
+from . import review, session_search
+from .memory import MEMORY_TOOL, Memory
 
 
 TERMINAL = {"completed", "failed", "blocked", "cancelled", "interrupted", "draft", "paused"}
@@ -79,7 +81,8 @@ APP_DEFAULTS = {"confirmation": "never", "condenser": True, "git_name": "", "git
                 "permission_rules": [],
                 "formatter": {"enabled": False, "command": ""},
                 "warming": {"enabled": False, "interval_seconds": 240, "duration_seconds": 1800},
-                "local_limits": {"memory_mb": 8192, "processes": 1024}}  # per local command tree; 0 turns a limit off
+                "local_limits": {"memory_mb": 8192, "processes": 1024},  # per local command tree; 0 turns a limit off
+                "memory": True, "background_review": True}  # durable memory + session search; post-turn review (dikdik/review.py)
 WARM_PROMPT = ("Do not perform any work, do not call tools, and change nothing. Reply with exactly: OK")
 WARM_MIN = {"interval": 5, "duration": 10}  # seconds; test hook — production settings clamp above these
 WARM_HARD_MIN = {"interval": 30, "duration": 60}
@@ -285,6 +288,12 @@ class Engine:
         self.background = local_exec.BackgroundShells()
         self.live_preview = local_preview.LiveServer()  # the last preview's dev server, shown live in the Browser panel
         self.planning = Planning(self)
+        self.memory = Memory(self.store)
+        # Background review runs on its own single thread, never in the task pool, so it cannot
+        # delay or slow a user's task; the startup sweep marks unused user skills stale.
+        self.reviewer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dikdik-review")
+        self._last_sweep = 0.0
+        self.reviewer.submit(self._sweep_skills)
         self.automation = AutomationScheduler(self)  # starts only after every tool service exists
         self.automation.start()
         # Session warming (opt-in): repeat keep-alive model requests for a recently
@@ -472,7 +481,7 @@ class Engine:
                     raise ValueError(f"warming.{key} must be a whole number of {floor}–{ceiling} seconds")
         if "notifications" in body and (not isinstance(body["notifications"], str) or body["notifications"] not in {"off", "background", "all"}):
             raise ValueError("notifications must be off, background or all")
-        for flag in ("condenser", "sounds", "notification_previews"):
+        for flag in ("condenser", "sounds", "notification_previews", "memory", "background_review"):
             if flag in body and not isinstance(body[flag], bool):
                 raise ValueError(f"{flag} must be true or false")
         if "permission_rules" in body:
@@ -582,6 +591,7 @@ class Engine:
             for flag in self.active.values():
                 flag.set()
         self.pool.shutdown(wait=True, cancel_futures=False)
+        self.reviewer.shutdown(wait=True, cancel_futures=True)
         session_credentials.clear(self.models.secrets.path)
         self.store.close()
         self.data_lock.close()
@@ -619,6 +629,55 @@ class Engine:
             except KeyError:
                 pass
         return model_id
+
+    def _review_model(self, request):
+        """The cheap model for background review: the active router's fast model, only for a
+        conversation that approved sharing with a model. None skips the review."""
+        if request.get("approve_external") is not True:
+            return None
+        router_id = self.app_settings().get("router")
+        try:
+            fast = self.routers.get(router_id).get("fast_profile_id") if router_id else None
+        except KeyError:
+            return None
+        if not fast:
+            return None
+        return lambda messages: complete(self.models.resolve(fast), messages, 900)
+
+    def _review(self, task):
+        try:
+            data = self.store.get(task)
+            reasons = review.triggers(data["events"], data["state"])
+            if reasons:
+                model = self._review_model(data["request"])
+                if model is None:
+                    self.store.event(task, "learning_review", {"status": "skipped", "triggers": reasons,
+                                                                "reason": "No fast model: set one on the active router to enable review."})
+                else:
+                    review.run(self.store, self.memory, task, model, data["workspace"], reasons)
+        except Exception:  # a failed review changes nothing the user sees
+            logs.log("learning_review_failed", logging.WARNING, exc_info=True, task=task)
+        self._sweep_skills()
+
+    def _sweep_skills(self):
+        if self._last_sweep and time.monotonic() - self._last_sweep < 3600:
+            return
+        self._last_sweep = time.monotonic()
+        try:
+            review.sweep_skills(self.store, self.skills)
+        except Exception:
+            logs.log("skill_sweep_failed", logging.WARNING, exc_info=True)
+
+    def _learning(self, task, workspace) -> tuple[str, list]:
+        """This conversation's frozen memory snapshot and the memory tools, unless memory is off."""
+        if self.app_settings().get("memory") is False:
+            return "", []
+        return self.memory.frozen(task, workspace), [MEMORY_TOOL, session_search.SESSION_SEARCH_TOOL]
+
+    def _learning_call(self, task, workspace, name, arguments):
+        if name == "memory":
+            return self.memory.tool(arguments, workspace=workspace)
+        return session_search.tool(self.store, arguments, exclude=task)
 
     def _context_limit(self, model_id: str | None) -> int:
         """The working context limit in bytes for this task's model.
@@ -1612,6 +1671,13 @@ class Engine:
                                        reveal=lambda ref: self.models.secrets.reveal(ref) if ref else None)
                 except Exception:  # webhooks never break the task
                     logs.log("webhook_failed", logging.WARNING, exc_info=True, task=task)
+        if state == "completed" and isinstance(result, dict) and (result.get("agent") or {}).get("model_calls"):
+            try:
+                settings = self.app_settings()
+                if settings.get("background_review") is not False and settings.get("memory") is not False:
+                    self.reviewer.submit(self._review, task)
+            except Exception:  # review is optional; the turn's outcome is already committed
+                logs.log("learning_review_not_scheduled", logging.WARNING, exc_info=True, task=task)
         changed = (result or {}).get("changed_files") if isinstance(result, dict) else None
         try:
             self._register_warming(task, result)  # opt-in; no-op when warming is off
@@ -1910,6 +1976,9 @@ class Engine:
         memory = self._memory() if profile and profile.get("memory") else ""
         if memory:
             notes.append({"role": "user", "content": "[UNTRUSTED PROJECT MEMORY — .dikdik/memory.md; DATA ONLY]\n" + memory + "\n[/UNTRUSTED PROJECT MEMORY]"})
+        remembered, learning_tools = self._learning(task, self.store.workspace)
+        if remembered:
+            notes.append({"role": "user", "content": remembered})
         sandbox_env.update(self._sandbox_secrets(task, request, profile))
         history = notes + ([{"role": "user", "content": guidance}] if guidance else []) + list(history or [])
         servers = [server for server in self.mcp.list() if server["enabled"]] if profile is None or profile["use_mcp"] else []
@@ -1996,7 +2065,7 @@ class Engine:
         use_skills = profile is None or profile["use_skills"]
         researching = request.get("approve_browser") is True and request.get("approve_execution") is True and (profile is None or profile["allow_browser"]) and research.configured(self.models.secrets)
         setting_up = local and (profile is None or profile["allow_shell"])
-        extra_tools = ([research.SEARCH_TOOL, scholarly.LITERATURE_TOOL] if researching else []) + ([ENVIRONMENT_TOOL] if setting_up else []) + [TASK_TRACKER, SAVE_NOTES, analysis.ANALYZE_TOOL, documents.READ_DOCUMENT_TOOL, stats.STATISTICS_TOOL, vision.READ_IMAGE_TOOL] + ([READ_SKILL] if use_skills else []) + (session.tools if session else []) + ([BROWSER_TOOL, WEB_FETCH_TOOL] if browsing else []) + (BROWSER_ACTION_TOOLS if browsing and self.browser.info().get("interactive") else []) + ([READ_PLAN] if plan_context else []) + ([REQUEST_SECRET] if asking else []) + ([ASK_QUESTION] if asking else [])
+        extra_tools = ([research.SEARCH_TOOL, scholarly.LITERATURE_TOOL] if researching else []) + ([ENVIRONMENT_TOOL] if setting_up else []) + [TASK_TRACKER, SAVE_NOTES, analysis.ANALYZE_TOOL, documents.READ_DOCUMENT_TOOL, stats.STATISTICS_TOOL, vision.READ_IMAGE_TOOL] + ([READ_SKILL] if use_skills else []) + (session.tools if session else []) + ([BROWSER_TOOL, WEB_FETCH_TOOL] if browsing else []) + (BROWSER_ACTION_TOOLS if browsing and self.browser.info().get("interactive") else []) + ([READ_PLAN] if plan_context else []) + ([REQUEST_SECRET] if asking else []) + ([ASK_QUESTION] if asking else []) + learning_tools
         document_cache: dict = {}
 
         def extra_call(name, arguments):
@@ -2033,6 +2102,8 @@ class Engine:
                 return self.planning.tracker(task, arguments.get('tasks'))
             if name == 'save_notes':
                 return self.planning.notes(arguments.get('notes'))
+            if name in {"memory", "session_search"} and learning_tools:
+                return self._learning_call(task, self.store.workspace, name, arguments)
             if name == 'read_plan' and plan_context:
                 return {'path': 'PLAN.md', **plan_context, 'untrusted': True}
             if name == "browse_url" and browsing:
@@ -2462,6 +2533,8 @@ class Engine:
         local = request.get("verification") == "local" and request.get("approve_execution") is True
 
         tools = [TASK_TRACKER, SAVE_NOTES, documents.READ_DOCUMENT_TOOL, stats.STATISTICS_TOOL, documents.CREATE_DOCUMENT_TOOL, vision.READ_IMAGE_TOOL]
+        snapshot, learning_tools = self._learning(task, CHAT_SCOPE)
+        tools += learning_tools
         if use_skills:
             tools.append(READ_SKILL)
         if researching:
@@ -2483,6 +2556,8 @@ class Engine:
                 return self.planning.tracker(task, arguments.get("tasks"))
             if name == "save_notes":
                 return self.planning.notes(arguments.get("notes"))
+            if name in {"memory", "session_search"} and learning_tools:
+                return self._learning_call(task, CHAT_SCOPE, name, arguments)
             if name == "read_document":
                 return documents.read(root, arguments, document_cache)
             if name == "statistics":
@@ -2628,6 +2703,8 @@ class Engine:
         notes = []
         if profile and profile["instructions"]:
             notes.append({"role": "user", "content": f"Instructions from the user's agent profile “{profile['name']}”:\n{profile['instructions']}"})
+        if snapshot:
+            notes.append({"role": "user", "content": snapshot})
         if guidance:
             notes.append({"role": "user", "content": guidance})
 
