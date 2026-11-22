@@ -8,6 +8,8 @@ import { modelPicker } from "./model-picker";
 import { folderPicker } from "./folder-picker";
 import { confirmDialog, inputDialog, formDialog, showSecret } from "./dialogs";
 import { skillsPane } from "./skills-pane";
+import { memoryPane } from "./memory-pane";
+import { CHAT_COMMANDS_OFF, CHAT_COMMANDS_ON, chatCommands } from "./chat-commands";
 import { pluginsPane } from "./plugins-pane";
 import { mcpPane } from "./mcp-pane";
 import { boundedFilePreview, detectLanguage, fileFacts, highlight, highlightLines, languageLabel, supportedLanguages, projectStack } from "./highlight";
@@ -61,6 +63,7 @@ let modelOverride: { id: string; name: string } | null = null;
 let modelProfiles: { id: string; name: string; model: string }[] = [], skillNames: string[] = [];
 let slashItems: SlashCommand[] = [], slashIndex = 0, slashModels = false;
 let taskRequest: TaskRequest | null = null;
+const commandsChoice = chatCommands({ getItem: storageGet, setItem: storageSet });
 const confirmCards = new Map<string, HTMLElement>();
 const confirmDecisions = new Map<string, (accept: boolean) => void>();  // open approvals, newest last
 const secretCards = new Map<string, HTMLElement>();  // open secret requests
@@ -2116,7 +2119,15 @@ function setUrl(task: string | null): void {
   if (!loc || typeof globalThis.history?.replaceState !== "function") return;
   globalThis.history.replaceState(null, "", task ? `${loc.pathname}?task=${encodeURIComponent(task)}` : loc.pathname);
 }
+/** The chat's Commands switch shows this chat's own choice; when on, a badge says so in words. */
+function syncChatCommands(): void {
+  const on = isChat() && commandsChoice.get(selected);
+  input("chat-commands").checked = on;
+  el("chat-commands-field").title = on ? CHAT_COMMANDS_ON : CHAT_COMMANDS_OFF;
+  el("chat-commands-note").hidden = !on;
+}
 function syncComposer(): void {
+  syncChatCommands();
   textarea('objective').placeholder = isChat() ? "Ask anything — research, analysis, code, data, explanations… Dikdik can help."
     : select('mode').value === 'plan' ? "Let\u2019s work on a plan" : selected ? "Reply to Dikdik\u2026" : "Ask Dikdik to build, fix or change something\u2026";
   el("task-actions").hidden = !selected;
@@ -2155,6 +2166,7 @@ function selectTask(id: string): void {
 }
 function newTask(): void {
   composerSize.reset();
+  commandsChoice.reset();
   stopStream();
   viewEpoch++;
   selected = null; watching = false; reviewTask = null; reviewKey = ""; selectedState = "";
@@ -2833,6 +2845,7 @@ async function connect(): Promise<void> {
         modelsPane(el("panel-profiles"), paneDeps)),
       secrets: keysPane(el("panel-secrets"), paneDeps),
       skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
+      memory: memoryPane(el("panel-memory"), paneDeps),
       plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
       mcp: mcpPane(el("panel-mcp"), paneDeps),
     });
@@ -3007,7 +3020,7 @@ themeSelect.addEventListener("change", () => {
   applyTheme(themeSelect.value);
 });
 
-const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps", git: "Git" };
+const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", memory: "Memory", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps", git: "Git" };
 
 // --- automations ----------------------------------------------------------
 let automations: Automation[] = [];
@@ -3498,6 +3511,12 @@ async function ensureTrusted(forceLocal = false): Promise<void> {
   applyRunMode();
 }
 select("run-mode").addEventListener("change", applyRunMode);
+input("chat-commands").addEventListener("change", () => {
+  const on = input("chat-commands").checked;
+  commandsChoice.set(selected, on);
+  syncChatCommands();
+  message(on ? "Commands on for this chat. Dikdik asks you before each one." : "Commands off for this chat.");
+});
 try {
   // The old UI persisted its implicit Ask default on startup. Migrate that once;
   // subsequent explicit choices, including Ask, remain authoritative.
@@ -3515,7 +3534,7 @@ function composerRequest(text: string, goalMaxTurns?: number, mode?: Mode) {
   if (mode === "chat") {
     // Chat mode: research, analysis, files, and shell (with the same approval as code mode).
     // The user's execution approval carries through; without it, chat is read-only research.
-    const approveExec = input("execution").checked;
+    const approveExec = commandsChoice.get(selected);
     return buildTaskRequest({
       objective: text, mode: "chat",
       verification: approveExec ? "local" : "syntax",
@@ -3672,6 +3691,7 @@ el("task-form").addEventListener("submit", async event => {
       return;
     }
     const task = await api<TaskSummary>("/api/tasks", composerRequest(text, goalTurns));
+    if (isChat()) commandsChoice.adopt(task.id);
     clearAttachments();
     if (pendingFolder) { const folder = pendingFolder; pendingFolder = null; await patchTask(task.id, { folder }).catch(() => undefined); }
     void composerDrafts.sent(originalScope, originalText);
@@ -3832,7 +3852,7 @@ async function resumeTask(): Promise<void> {
   if (!selected || !taskRequest) return;
   const r = taskRequest, task = selected;
   const chosen = modelOverride?.id ?? r.model_profile;
-  const confirmation = confirmationForRunMode(runMode()) ?? r.confirmation;
+  const confirmation = r.mode === "chat" ? r.confirmation : confirmationForRunMode(runMode()) ?? r.confirmation;
   const body = {
     verification: r.verification, approve_external: r.approve_external === true, approve_execution: r.approve_execution === true,
     ...(r.approve_browser ? { approve_browser: true } : {}), ...(r.agent_profile ? { agent_profile: r.agent_profile } : {}),

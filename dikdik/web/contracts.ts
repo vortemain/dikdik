@@ -246,6 +246,8 @@ export function buildTaskRequest(input: {
   if (policy.requiresExternal && !input.approveExternal) throw new Error("Approve sending code and the objective to the external provider.");
   if (policy.requiresExecution && !input.approveExecution) throw new Error("Approve running commands on this computer before starting this task.");
   const browsing = input.mode === "agent" && input.approveBrowser === true;
+  // A chat with commands switched on runs them in its own folder, asking before each one.
+  const chatCommands = input.mode === "chat" && input.verification === "local" && input.approveExecution;
   if (browsing && !input.approveExecution) throw new Error("Approve browser tool execution to use the browser.");
   let edits: Edit[] = [];
   if (policy.showEdits) {
@@ -260,8 +262,8 @@ export function buildTaskRequest(input: {
   }
   return {
     objective: input.objective, mode: input.mode, edits,
-    verification: policy.verification,
-    approve_execution: (policy.requiresExecution || browsing) && input.approveExecution,
+    verification: chatCommands ? "local" : policy.verification,
+    approve_execution: chatCommands || ((policy.requiresExecution || browsing) && input.approveExecution),
     approve_external: policy.requiresExternal && input.approveExternal,
     ...(browsing ? { approve_browser: true } : {}),
     ...(["agent", "plan"].includes(input.mode) && input.agentProfile ? { agent_profile: input.agentProfile } : {}),
@@ -270,6 +272,7 @@ export function buildTaskRequest(input: {
     ...(input.mode === "agent" && input.approveSecrets && input.approveExecution && (policy.requiresExecution || browsing) ? { approve_secrets: true } : {}),
     ...(input.goalMaxTurns ? goalTurns(input.mode, input.goalMaxTurns) : {}),
     ...(input.confirmation && input.mode === "agent" ? { confirmation: input.confirmation } : {}),
+    ...(chatCommands ? { confirmation: "ask" as const } : {}),
   };
 }
 function goalTurns(mode: Mode, turns: number): { goal_max_turns: number } {

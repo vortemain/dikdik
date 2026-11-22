@@ -189,7 +189,7 @@ Verified with scripted models only (`tests/test_learning.py`); no live-provider 
 
 - **Durable memory**: capped `user` and per-project stores in SQLite (migration 3), a `memory` tool
   (add, replace, remove) that refuses overflow and credentials, injected once per conversation as a
-  frozen, untrusted snapshot; view, edit and clear through `/api/memory` (no UI yet).
+  frozen, untrusted snapshot; view, edit and clear in Settings → Memory (or `/api/memory`).
 - **Session search**: FTS5 index written with each objective and message, backfilled, scoped like
   the task list; the `session_search` tool returns raw snippets with no model call.
 - **Background review**: on a recovered error, a user correction or a multi-step workflow, one

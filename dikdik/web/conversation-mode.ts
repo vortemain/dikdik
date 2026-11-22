@@ -101,11 +101,12 @@ export function createConversationMode(deps: ConversationModeDeps): Conversation
     deps.select("mode").hidden = chat;
     deps.select("verification").hidden = chat;
     hide("options-toggle", chat);
+    hide("chat-commands-field", !chat);
     const approvals = deps.el("approvals");
     if (chat) {
       deps.input("external").checked = true;   // a chat always talks to the model
       hide("external-field", true);
-      hide("execution-field", false);          // "Run commands" stays available, off by default
+      hide("execution-field", true);           // the chat's own Commands switch replaces it
       hide("browser-field", true);
       hide("secrets-field", true);
       approvals.hidden = false;

@@ -276,8 +276,10 @@
               <label id="secrets-field" class="toggle" title="Agent commands can read the keys you exposed to commands (Settings → API keys) as environment variables. Their values are redacted from output." hidden><input id="secrets-approval" type="checkbox">Use saved secrets</label>
               <label id="browser-field" class="toggle" title="Allows web fetch and browser tools for this task. Page content is sent to your model as untrusted data. Website interactions follow your action approval settings."><input id="browser-approval" type="checkbox">Browse public web</label>
             </div>
+            <p id="chat-commands-note" class="chat-commands-note" role="status" hidden><span class="chat-commands-badge"><svg class="i" aria-hidden="true"><use href="#i-terminal"/></svg>Commands on</span><span id="chat-commands-text">They run on this computer, and Dikdik asks you before each one.</span></p>
             <div class="composer-controls">
               <button id="attach" class="ghost icon" type="button" aria-label="Attach files" title="Attach images or text files (or paste / drop them)"><svg class="i"><use href="#i-paperclip"/></svg></button>
+              <label id="chat-commands-field" class="toggle chat-commands-switch" title="Let Dikdik run commands for this chat. They run on this computer, and Dikdik asks you before each one." hidden><input id="chat-commands" type="checkbox" role="switch" aria-describedby="chat-commands-help"><svg class="i" aria-hidden="true"><use href="#i-terminal"/></svg><span class="chat-commands-word">Commands</span></label><span id="chat-commands-help" class="sr-only">Off by default. Commands run on this computer, and Dikdik asks you before each one. Remembered for this chat only.</span>
               <label id="run-mode-pill" class="pill run-mode-pill" title="How Dikdik works in this project"><span class="sr-only">Permissions</span><svg class="i"><use href="#i-shield"/></svg><select id="run-mode"><option value="auto">Auto</option><option value="ask">Ask before commands</option><option value="plan">Plan only</option><option value="classic">Classic (copy, then Apply)</option></select></label>
               <label id="mode-pill" class="pill classic-only" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="plan">Plan</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
               <label id="verification-pill" class="pill classic-only" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="local">On this computer</option></select></label>
@@ -463,6 +465,7 @@
       <button class="settings-tab" type="button" role="tab" data-pane="agents" aria-selected="false"><svg class="i"><use href="#i-sparkle"/></svg>Agents</button>
       <button class="settings-tab" type="button" role="tab" data-pane="secrets" aria-selected="false"><svg class="i"><use href="#i-key"/></svg>API keys</button>
       <button class="settings-tab" type="button" role="tab" data-pane="skills" aria-selected="false"><svg class="i"><use href="#i-book"/></svg>Skills</button>
+      <button class="settings-tab" type="button" role="tab" data-pane="memory" aria-selected="false"><svg class="i"><use href="#i-archive"/></svg>Memory</button>
       <button class="settings-tab" type="button" role="tab" data-pane="plugins" aria-selected="false"><svg class="i"><use href="#i-puzzle"/></svg>Plugins</button>
       <button class="settings-tab" type="button" role="tab" data-pane="mcp" aria-selected="false"><svg class="i"><use href="#i-plug"/></svg>MCP servers</button>
       <button class="settings-tab" type="button" role="tab" data-pane="automations" aria-selected="false"><svg class="i"><use href="#i-clock"/></svg>Automations</button>
@@ -543,6 +546,10 @@
           <button type="submit" class="primary small">Add skill</button>
         </form>
         <div id="panel-skills" class="m4-panel-mount"></div>
+      </section>
+      <section class="settings-pane" data-pane="memory" role="tabpanel" hidden>
+        <p class="lead">What Dikdik remembers between conversations: facts about you, and facts about the open project. Each store has a size limit. A conversation sees the memory as it was when the conversation started.</p>
+        <div id="panel-memory" class="m4-panel-mount"></div>
       </section>
       <section class="settings-pane" data-pane="plugins" role="tabpanel" hidden>
         <p class="lead">A plugin bundles skills, subagents, block rules and MCP server definitions. Nothing in a plugin runs or loads until you review what it adds and trust it; its MCP servers then appear under MCP servers, switched off.</p>
