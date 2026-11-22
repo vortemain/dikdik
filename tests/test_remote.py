@@ -111,7 +111,7 @@ class TlsTests(unittest.TestCase):
             threading.Thread(target=server.serve_forever, daemon=True).start()
             try:
                 context = ssl.create_default_context(cafile=str(cert))  # trust exactly this test certificate
-                context.check_hostname = False  # CN=localhost has no SAN for 127.0.0.1; the chain is still verified
+                context.check_hostname = False  # dikdik-scan: ignore[PY005] CN=localhost has no SAN for 127.0.0.1; the chain is still verified
                 conn = http.client.HTTPSConnection("127.0.0.1", server.server_port, timeout=20, context=context)
                 conn.request("GET", "/api/tasks", headers={"Host": "localhost", "Authorization": "Bearer tok"})
                 self.assertEqual(conn.getresponse().status, 200)

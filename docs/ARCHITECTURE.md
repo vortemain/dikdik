@@ -87,6 +87,87 @@ file outside the project). The gate also covers:
   execution approval and confirmed like `run_command`. Operational diagnostics go to redacted JSON lines in
 `<data>/logs/dikdik.jsonl` (`dikdik/logs.py`); no route serves them.
 
+### Secure by default in what the agent writes
+
+`dikdik/secure_output.py` applies the scanner's rules to everything a run writes, in agent mode and
+in chat, without a tool call from the model:
+
+- **Credentials are never written.** `edit_file`, `create_file` and `create_document` (text, Word
+  Markdown, sheet cells, title and subtitle) refuse content that adds a live-looking credential (the
+  critical and high secret rules: AWS, GitHub, Anthropic, OpenAI, Stripe live, Slack, Google keys and
+  PEM private keys with a key body). Placeholders, repetitive values and sample JWTs pass. A file a
+  command writes is not refused (it already exists), so the credential is replaced with
+  `REDACTED-CREDENTIAL` and the file is rewritten at once (`on_write`, in agent and chat mode); the
+  command result lists `credentials_removed`. A value the user typed in the objective or earlier user
+  messages may be written where they asked, private keys included (recognised by their first key
+  line); it is masked from the release gate and reported as a security note in the answer and in
+  `result.security.provided_credentials`.
+- **Introduced findings are reflected.** After each batch of tool calls, files written by edits or
+  commands (compared with the turn's baseline) and `create_document` deliverables are scanned. A
+  deliverable is scanned as the files it holds: its content by extension, each fenced code block in
+  Markdown and Word content in its own language (a shell snippet in a guide gets the shell rules)
+  and each sheet as CSV. Critical and high security findings go back to the model as a user message,
+  at most two rounds per run (`secure_output.ROUNDS`), like lint reflection. A `run_python` or
+  `run_code` program (with the extra `files` it brings) is scanned in its language before it runs;
+  while rounds remain, a risky program is not run and the findings are returned instead. After the
+  rounds, it runs and its findings are kept for the report.
+- **Leftovers are reported.** On completion, unresolved findings, newly added `dikdik-scan: ignore`
+  comments and user-provided credentials are appended to the final answer, returned as
+  `result.security` (`findings`, `reflections`, `suppressed`, `provided_credentials`) and emitted as
+  an event.
+- **Redaction.** Every agent event payload, and the assistant and tool messages of the checkpoint
+  transcript, pass through `secure_output.scrub`, the same masking the operational logs use
+  (`logs.redact`: the secret rules, registered session, provider and answer values, `Bearer` tokens).
+  User messages stay as typed so a resumed run still recognises a credential the user provided.
+
+Data flow (`security_scan.flow_findings`, `js_flow_findings`): within each function, in source order,
+values from request objects (`request.args`, `.form`, `.json`, `req.query`, `req.body`, ...),
+`input()`, `sys.argv` and the parameters of route handlers are followed through assignments,
+concatenation, f-strings and calls. Sanitizers end a flow (`int`, `float`, `shlex.quote`,
+`os.path.basename`, `secure_filename`, `html.escape`; `Number`, `parseInt`, `path.basename` in
+JavaScript). PY012/JS006 report untrusted input reaching a shell, `eval`/`exec` or SQL text (and
+replace the plain PY001/PY002/PY007/PY008 finding on that line), PY013/JS007 a file path and
+PY014/JS008 the URL of an outbound request. Branches are not modelled, so a value checked against an
+allowlist in an `if` still reports; these are high, not critical, so a false positive is reflected
+and reported but never blocks completion.
+
+Events: `agent_security_findings` with `stage` (`edit`, `document`, `script`, `command` or `final`),
+`action` (`reflect`, `report`, `removed`), `reflection` (round number, when reflecting), `paths` and
+`findings` (rule, title, severity, file, line, CWE, redacted evidence, remediation). The other rules
+this adds are PY011 (world-writable `chmod`/`umask`), PY005 for `check_hostname = False`, JS004
+(`rejectUnauthorized: false`, `NODE_TLS_REJECT_UNAUTHORIZED=0`), JS005 (world-writable `fs.chmod`),
+SH001 to SH003 for shell and PowerShell scripts (remote script piped to a shell, world-writable
+`chmod`, `curl -k`, `wget --no-check-certificate`, `-SkipCertificateCheck`), CFG001 for configuration
+that turns TLS verification off (`verify_ssl: false`, `strict-ssl=false`, `sslVerify = false`,
+`insecure_skip_verify: true`) and XLS001 for CSV and sheet cells whose formula runs a program (`=cmd|`,
+`DDE`, `WEBSERVICE`, `CALL`). The command risk assessment (`control.assess`) rates downloaded scripts
+piped into a shell, secrets or environment sent over the network, recursive deletes (including
+PowerShell and `rmdir /s`) and world-writable permissions as high risk, so they always ask in the
+guarded modes.
+
+### Clarifying questions and credentials in answers
+
+`ask_question` is offered in every interactive task, chat and agent, with or without command
+approval. Requests that nobody can answer carry `questions: false` and never get it: automation runs,
+the OpenAI-compatible gateway and ACP. Both system prompts say to ask one short question, with
+choices, when ambiguity would change the result, and not to ask for what tools can find. The web
+client shows a question card (choices, a free-text answer, Skip).
+
+Credentials never reach the model through an answer. The model can mark a question `sensitive` with an
+environment variable `name` (the card then shows a masked field), the user can tick "this answer is a
+password, token or key", and any credential-shaped value pasted into an ordinary answer is detected.
+Each value is sealed in the secret store (as `name`, or `ANSWER_SECRET_n`), registered for redaction
+and replaced with `$NAME` in the tool result, the `question_answered` event (`secrets` lists the names)
+and the transcript. In an agent task with approved commands, the value is also in this run's command
+environment. Writing such a value into a file is still refused, because the model never sees it.
+
+Limits: pattern, AST and intra-procedural flow rules only; no flow across functions, files or
+branches. JavaScript flow is followed line by line through `const`/`let`/`var`. A credential a command
+writes is stripped after the fact; anything the command sent elsewhere in the meantime is outside
+Dikdik's view. Secrets typed into the main message box (not a question card) are not sealed; they
+count as the user's own values.
+
+
 States: `queued → running → completed | failed | blocked | cancelled`.
 `draft` is an initialized conversation awaiting its first approved turn, not a
 claim of completed execution. Planner children have separate histories and no

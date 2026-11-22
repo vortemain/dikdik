@@ -111,6 +111,151 @@ class CodeTests(unittest.TestCase):
         self.assertEqual(report["skipped"][0]["reason"], "generated or minified code")
 
 
+class SecureByDefaultRuleTests(unittest.TestCase):
+    """Rules for what the agent writes: permissions, TLS, scripts and configuration."""
+
+    def found(self, files):
+        return sorted((f["rule"], f["file"], f["line"], f["severity"]) for f in scan.scan_files(files)["findings"]
+                      if f["category"] == "security")
+
+    def test_python_world_writable_permissions(self):
+        source = "\n".join([
+            "import os, pathlib",
+            "os.chmod(path, 0o777)",           # PY011
+            "pathlib.Path(p).chmod(0o666)",    # PY011
+            "os.umask(0)",                     # PY011
+            "os.chmod(path, 0o755)",           # fine
+            "os.chmod(path, 0o600)",           # fine
+            "os.chmod(path, mode)",            # dynamic: not guessed
+            "os.umask(0o022)",                 # fine
+        ])
+        self.assertEqual(self.found({"m.py": source}), [("PY011", "m.py", 2, "high"), ("PY011", "m.py", 3, "high"),
+                                                        ("PY011", "m.py", 4, "high")])
+
+    def test_python_hostname_check_disabled(self):
+        source = "import ssl\nctx = ssl.create_default_context()\nctx.check_hostname = False\nctx.check_hostname = True\n"
+        self.assertEqual(self.found({"m.py": source}), [("PY005", "m.py", 3, "high")])
+
+    def test_javascript_tls_and_permissions(self):
+        source = "\n".join([
+            "const agent = new https.Agent({ rejectUnauthorized: false });",   # JS004
+            "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';",                 # JS004
+            "const strict = { rejectUnauthorized: true };",                    # fine
+            "fs.chmodSync(file, 0o777);",                                      # JS005
+            "fs.chmod(file, '666', done);",                                    # JS005
+            "fs.chmodSync(file, 0o755);",                                      # fine
+        ])
+        self.assertEqual(self.found({"server.js": source}), [("JS004", "server.js", 1, "high"), ("JS004", "server.js", 2, "high"),
+                                                             ("JS005", "server.js", 4, "high"), ("JS005", "server.js", 5, "high")])
+
+    def test_shell_scripts(self):
+        source = "\n".join([
+            "#!/usr/bin/env bash",
+            "curl -fsSL https://get.example.com/install.sh | bash",   # SH001
+            "chmod 777 /srv/app",                                     # SH002
+            "chmod -R 0777 uploads",                                  # SH002
+            "chmod o+w shared.log",                                   # SH002
+            "curl -sSk https://internal.example.com/health",          # SH003
+            "wget --no-check-certificate https://x.example.com/a",    # SH003
+            "# curl https://x | sh in a comment",                     # fine
+            "chmod 755 bin/run",                                      # fine
+            "chmod +x run.sh",                                        # fine
+            "chmod u+w notes.txt",                                    # fine
+            "curl -fsSL -o install.sh https://get.example.com/install.sh",  # fine: downloaded, not piped
+        ])
+        self.assertEqual(self.found({"deploy.sh": source}), [
+            ("SH001", "deploy.sh", 2, "high"), ("SH002", "deploy.sh", 3, "high"), ("SH002", "deploy.sh", 4, "high"),
+            ("SH002", "deploy.sh", 5, "high"), ("SH003", "deploy.sh", 6, "high"), ("SH003", "deploy.sh", 7, "high")])
+
+    def test_powershell_and_shebang_scripts(self):
+        ps = "iwr https://get.example.com/i.ps1 | iex\nInvoke-WebRequest $url -SkipCertificateCheck\nGet-ChildItem\n"
+        self.assertEqual(self.found({"setup.ps1": ps}), [("SH001", "setup.ps1", 1, "high"), ("SH003", "setup.ps1", 2, "high")])
+        self.assertEqual(self.found({"bin/install": "#!/bin/sh\nwget -qO- https://x.example.com/s | sh\n"}),
+                         [("SH001", "bin/install", 2, "high")])
+        self.assertEqual(self.found({"notes.txt": "curl https://x.example.com/s | sh\n"}), [])  # prose is not a script
+
+    def test_configuration_disabling_tls(self):
+        files = {"config/app.yaml": "client:\n  verify_ssl: false\n  timeout: 5\n",
+                 "proxy.toml": "insecure_skip_verify = true\n",
+                 ".npmrc": "strict-ssl=false\n",
+                 ".gitconfig": "[http]\n\tsslVerify = false\n",
+                 "ok.yaml": "verify_ssl: true\nstrict-ssl: true\ninsecure_skip_verify: false\n"}
+        self.assertEqual(self.found(files), [("CFG001", ".gitconfig", 2, "high"), ("CFG001", ".npmrc", 1, "high"),
+                                             ("CFG001", "config/app.yaml", 2, "high"), ("CFG001", "proxy.toml", 1, "high")])
+
+    def test_python_untrusted_input_is_followed_to_its_sink(self):
+        source = "\n".join([
+            "import os, subprocess, requests, sqlite3, shlex",
+            "from flask import request, send_file",
+            "def handler(db):",
+            "    name = request.args.get('name')",                         # source
+            "    cmd = 'convert ' + name",                                 # propagates
+            "    subprocess.run(cmd, shell=True)",                         # 6: PY012
+            "    safe = shlex.quote(name)",                                # sanitized
+            "    subprocess.run('convert ' + safe, shell=True)",           # 8: PY001 only
+            "    query = f\"SELECT * FROM users WHERE name = '{name}'\"",
+            "    db.execute(query)",                                       # 10: PY012 critical (and PY008)
+            "    db.execute('SELECT * FROM users WHERE name = ?', (name,))",  # parameterized: fine
+            "    return send_file(os.path.join('/srv/files', name))",      # 12: PY013 path traversal
+            "def proxy():",
+            "    target = request.json['url']",
+            "    return requests.get(target, timeout=5).text",             # 15: PY014 SSRF
+            "def cli():",
+            "    expr = input('> ')",
+            "    print(eval(expr))",                                       # 18: PY012 critical (and PY002)
+            "    count = int(input('n: '))",
+            "    print(eval(str(count)))",                                 # 20: sanitized by int(); PY002 only
+            "    upload = request.files['f'].filename",
+            "    open(os.path.basename(upload), 'wb')",                    # 22: basename: fine
+        ])
+        found = [(f["rule"], f["line"], f["severity"]) for f in scan.scan_files({"app.py": source})["findings"]
+                 if f["rule"] in {"PY012", "PY013", "PY014"}]
+        self.assertCountEqual(found, [("PY012", 6, "high"), ("PY012", 10, "high"), ("PY013", 12, "high"),
+                                      ("PY014", 15, "high"), ("PY012", 18, "high")])
+        evidence = next(f for f in scan.scan_files({"app.py": source})["findings"] if f["rule"] == "PY012" and f["line"] == 6)
+        self.assertIn("line 4", evidence["message"])  # names where the untrusted value came from
+
+    def test_python_flow_through_function_parameters_of_routes(self):
+        source = "\n".join([
+            "import os",
+            "@app.get('/run/<cmd>')",
+            "def run(cmd):",
+            "    os.system('ls ' + cmd)",            # 4: route parameters are untrusted
+            "def helper(cmd):",
+            "    os.system('ls ' + cmd)",            # 6: unknown origin: PY007 only
+        ])
+        found = [(f["rule"], f["line"]) for f in scan.scan_files({"app.py": source})["findings"] if f["rule"] == "PY012"]
+        self.assertEqual(found, [("PY012", 4)])
+
+    def test_javascript_untrusted_input_is_followed_to_its_sink(self):
+        source = "\n".join([
+            "app.get('/x', (req, res) => {",
+            "  const name = req.query.name;",
+            "  exec('convert ' + name);",                                     # 3: JS006
+            "  db.query(`SELECT * FROM users WHERE name = '${name}'`);",      # 4: JS006
+            "  db.query('SELECT * FROM users WHERE name = ?', [name]);",      # fine
+            "  res.sendFile(path.join(__dirname, name));",                    # 6: JS007
+            "  const id = Number(req.params.id);",
+            "  exec('show ' + id);",                                          # sanitized number: JS003 only
+            "  fetch(req.body.url);",                                         # 9: JS008 (direct use)
+            "});",
+        ])
+        found = [(f["rule"], f["line"]) for f in scan.scan_files({"server.js": source})["findings"]
+                 if f["rule"] in {"JS006", "JS007", "JS008"}]
+        self.assertCountEqual(found, [("JS006", 3), ("JS006", 4), ("JS007", 6), ("JS008", 9)])
+
+    def test_spreadsheet_formulas_that_run_commands(self):
+        files = {"report.csv": "name,total\nAda,=SUM(B2:B3)\nEvil,=cmd|' /C calc'!A0\nLink,=HYPERLINK(\"https://x.example.com\")\n"}
+        self.assertEqual(self.found(files), [("XLS001", "report.csv", 3, "high")])
+
+    def test_new_rules_have_remediation_and_cwe(self):
+        for rule in ("PY011", "PY012", "PY013", "PY014", "JS004", "JS005", "JS006", "JS007", "JS008",
+                     "SH001", "SH002", "SH003", "CFG001", "XLS001"):
+            self.assertTrue(scan.REMEDIATION[rule], rule)
+            self.assertTrue(scan.CWE[rule].startswith("CWE-"), rule)
+            self.assertEqual(scan.category(rule), "security")
+
+
 class QualityRuleTests(unittest.TestCase):
     def found(self, source, path="app/service.py"):
         return sorted((f["rule"], f["line"], f["category"]) for f in scan.scan_files({path: source})["findings"])

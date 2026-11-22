@@ -73,21 +73,20 @@ def search(store, query: str, exclude: str | None = None, limit: int = 8) -> lis
     limit = max(1, min(int(limit), 20))
     from .store import WORKSPACE_CLAUSES
     where, params = store._mine("t.")
-    scope = sql.clause(where, WORKSPACE_CLAUSES)
     with store.connect() as db:
         if _fts(db):
             rows = []
             for joiner in (" AND ", " OR "):
                 rows = db.execute(
                     "SELECT s.task_id, s.kind, s.time, snippet(session_index, 0, '>>', '<<', '…', 24) AS snippet, t.request, t.title "
-                    f"FROM session_index s JOIN tasks t ON t.id = s.task_id WHERE session_index MATCH ? AND {scope} "
+                    f"FROM session_index s JOIN tasks t ON t.id = s.task_id WHERE session_index MATCH ? AND {sql.clause(where, WORKSPACE_CLAUSES)} "
                     "AND s.task_id IS NOT ? ORDER BY rank LIMIT ?", (_match(words, joiner), *params, exclude, limit)).fetchall()
                 if rows:
                     break
         else:
             rows = db.execute(
                 "SELECT s.task_id, s.kind, s.time, substr(s.text, 1, 300) AS snippet, t.request, t.title "
-                f"FROM session_index s JOIN tasks t ON t.id = s.task_id WHERE s.text LIKE ? ESCAPE '\\' AND {scope} "
+                f"FROM session_index s JOIN tasks t ON t.id = s.task_id WHERE s.text LIKE ? ESCAPE '\\' AND {sql.clause(where, WORKSPACE_CLAUSES)} "
                 "AND s.task_id IS NOT ? ORDER BY s.time DESC LIMIT ?",
                 ("%" + re.sub(r"([%_\\])", r"\\\1", words[0]) + "%", *params, exclude, limit)).fetchall()
     results = []

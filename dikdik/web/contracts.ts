@@ -495,6 +495,21 @@ export function openConfirmations(events: TaskEvent[]): string[] {
   }
   return [...open];
 }
+/** Clarifying questions still waiting for an answer. */
+export function openQuestions(events: TaskEvent[]): string[] {
+  const open = new Set<string>();
+  for (const event of events) {
+    const id = textOf(event.data?.id, 200);
+    if (event.kind === "question_requested" && id) open.add(id);
+    else if (event.kind === "question_answered" && id) open.delete(id);
+    else if (isTerminal(event.kind)) open.clear();
+  }
+  return [...open];
+}
+/** The body for POST /api/tasks/{id}/question. A secret answer is sent as typed and sealed on the server. */
+export function questionAnswer(id: string, text: string, secret: boolean, sensitive: boolean): { id: string; answer: string; secret?: true } {
+  return secret || sensitive ? { id, answer: text, secret: true } : { id, answer: text.trim() };
+}
 export function attachmentList(value: unknown): AttachmentMeta[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap(item => {
@@ -676,6 +691,17 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [{ ...base, role: "system", title: "Pausing after this step" }];
     case "forked":
       return [{ ...base, role: "system", title: "Forked from another conversation", details: { from_task: textOf(d.from_task, 64), from_seq: numOrUndef(d.from_seq) } }];
+    case "question_requested": {
+      const choices = Array.isArray(d.choices) ? d.choices.filter((c): c is string => typeof c === "string").map(c => c.slice(0, 200)).slice(0, 10) : [];
+      const sensitive = d.sensitive === true;
+      return [{ ...base, role: "system", title: sensitive ? "The assistant needs a secret value" : "The assistant has a question",
+        body: textOf(d.question, 2000), details: { id: textOf(d.id, 64), choices: sensitive ? [] : choices, sensitive, name: textOf(d.name, 64) } }];
+    }
+    case "question_answered": {
+      const sealed = Array.isArray(d.secrets) ? d.secrets.filter((n): n is string => typeof n === "string").map(n => n.slice(0, 64)) : [];
+      return [{ ...base, role: "system", title: sealed.length ? `Answered · sealed ${sealed.join(", ")}` : "Answered",
+        body: textOf(d.answer, 2000), details: { id: textOf(d.id, 64), secrets: sealed } }];
+    }
     case "secret_requested":
       return [{ ...base, role: "system", title: "The agent needs a secret", body: textOf(d.reason, 300), details: { id: textOf(d.id, 64), name: textOf(d.name, 64) } }];
     case "secret_answered":

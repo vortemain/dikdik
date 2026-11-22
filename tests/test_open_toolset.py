@@ -394,7 +394,7 @@ class RecipeSkillTests(unittest.TestCase):
         guidance, names = self.index.context("Find papers on malaria vaccines with OpenAlex and check each DOI with Crossref",
                                              "chat")
         for recipe in ("scholarly-apis", "doi-verification", "statistics-in-python"):
-            self.assertIn(f"- {recipe}:", guidance)
+            self.assertIn(recipe, guidance)  # a chat lists skill ids; read_skill loads the body
             self.assertNotIn(recipe, names)
         self.assertNotIn("api.openalex.org/works", guidance)
         loaded = self.index.load("scholarly-apis")

@@ -201,15 +201,19 @@ class AgentIntegrationTests(unittest.TestCase):
         self.assertEqual(outcome.state, "completed")  # a quality risk is documented, not blocking
         self.assertEqual(outcome.release_gate["decision"], "APPROVED_WITH_DOCUMENTED_RISK")
 
-    def test_finish_is_refused_when_the_change_adds_a_credential(self):
+    def test_a_credential_is_never_written_so_nothing_completes(self):
+        # The edit is refused before it lands; the release gate still rejects a credential that
+        # reaches the files another way (GateTests).
         outcome, events = self.drive(
             [("edit_file", {"path": "calc.py", "before": "a - b", "after": f'a + b\nKEY = "{AWS}"'})],
             [("run_tests", {})], [("finish", {})], [("security_scan", {})])
         self.assertNotEqual(outcome.state, "completed")
-        refusal = next(d for k, d in events if k == "tool" and d.get("phase") == "end" and d["name"] == "finish")
-        self.assertIn("release gate rejects", refusal["observation"]["error"])
+        self.assertNotIn(AWS, outcome.files["calc.py"])
+        edit = next(d for k, d in events if k == "tool" and d.get("phase") == "end" and d["name"] == "edit_file")
+        self.assertIn("live-looking credential", edit["observation"]["error"])
         scan = next(d for k, d in events if k == "tool" and d.get("phase") == "end" and d["name"] == "security_scan")
-        self.assertEqual(scan["observation"]["summary"]["critical"], 1)
+        self.assertEqual(scan["observation"]["summary"]["critical"], 0)
+        self.assertNotIn(AWS, json.dumps(events))
 
 
 class MutationHardeningTests(unittest.TestCase):

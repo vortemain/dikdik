@@ -436,7 +436,7 @@ class AutomationScheduler:
         if row is None:
             raise ValueError("Automation draft not found")
         fields = self._fields(json.loads(row["spec"]), creating=True)
-        task_id = self.engine.submit({"objective": fields["objective"], **fields["run"]})
+        task_id = self.engine.submit({"objective": fields["objective"], **fields["run"], "questions": False})
         run_id, now = uuid.uuid4().hex, self.clock()
         with self.store.connect() as db:
             db.execute("INSERT INTO automation_draft_runs VALUES(?,?,?,?)", (run_id, draft_id, task_id, now))
@@ -499,7 +499,7 @@ class AutomationScheduler:
             return True
 
     def _submit_request(self, auto: dict) -> dict:
-        return {"objective": auto["objective"], **json.loads(auto["request"])}
+        return {"objective": auto["objective"], **json.loads(auto["request"]), "questions": False}  # nobody is there to answer
 
     def tick(self):
         now = self.clock()

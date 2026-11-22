@@ -1001,6 +1001,8 @@ pre.numbered .ln::before { content: attr(data-n); position: absolute; left: 0; w
 .confirm-card.risk-high { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
 .confirm-card.risk-high .result-icon { color: var(--danger); }
 .confirm-card:focus-within { box-shadow: 0 0 0 3px var(--accent-soft); }
+.question-card .question-choices { flex-wrap: wrap; justify-content: flex-start; }
+.question-card .question-secret { display: flex; align-items: center; gap: 6px; }
 .confirm-url { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); font-size: 13px; }
 .confirm-url .i { color: var(--accent); flex: 0 0 auto; }
 .confirm-url a, .confirm-url span { color: var(--ink); word-break: break-all; min-width: 0; }
