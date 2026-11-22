@@ -250,10 +250,16 @@ REQUEST_SECRET = _tool(
 
 ASK_QUESTION = _tool(
     "ask_question",
-    "Ask the user a clarifying question and wait for their answer. Use when you need a decision or preference "
-    "that only the user can provide. The answer comes back as plain text; an empty answer means the user skipped it.",
+    "Ask the user a clarifying question and wait for their answer. Use it when the request is ambiguous in a way that "
+    "changes the result (audience, scope, format, which data or file) or you need a decision only the user can make; "
+    "do not ask for what you can find or reasonably infer. Offer choices when there are clear options. The answer comes "
+    "back as plain text; an empty answer means the user skipped it. When you need a password, token or key, set "
+    "sensitive to true and give name: the answer is sealed in the secret store, never shown to you, and you get "
+    "$NAME (commands receive it as that environment variable). Credentials pasted into any answer are sealed the same way.",
     {"question": {"type": "string", "description": "The question to ask the user"},
-     "choices": {"type": "array", "items": {"type": "string"}, "description": "Optional list of choices for the user to pick from"}},
+     "choices": {"type": "array", "items": {"type": "string"}, "description": "Optional list of choices for the user to pick from"},
+     "sensitive": {"type": "boolean", "description": "True when the answer is a password, token or key"},
+     "name": {"type": "string", "description": "Environment variable name for a sensitive answer, e.g. DB_PASSWORD"}},
     ["question"])
 
 
@@ -264,8 +270,9 @@ class QuestionRequests:
         self.lock = threading.Lock()
         self.pending: dict[tuple[str, str], dict] = {}
 
-    def wait(self, task: str, request_id: str, cancel, timeout: float = 1800) -> str | None:
-        slot = {"event": threading.Event(), "answer": None}
+    def wait(self, task: str, request_id: str, cancel, timeout: float = 1800) -> tuple[str, bool] | None:
+        """(answer, marked secret by the user), or None when skipped by cancelling or timing out."""
+        slot = {"event": threading.Event(), "answer": None, "secret": False}
         with self.lock:
             self.pending[(task, request_id)] = slot
         try:
@@ -273,17 +280,18 @@ class QuestionRequests:
             while not slot["event"].wait(0.2):
                 if cancel.is_set() or time.monotonic() > deadline:
                     return None
-            return slot["answer"]
+            return slot["answer"], slot["secret"]
         finally:
             with self.lock:
                 self.pending.pop((task, request_id), None)
 
-    def answer(self, task: str, request_id: str, value) -> None:
+    def answer(self, task: str, request_id: str, value, secret: bool = False) -> None:
         with self.lock:
             slot = self.pending.get((task, request_id))
         if slot is None:
             raise KeyError(request_id)
         slot["answer"] = str(value) if value is not None else ""
+        slot["secret"] = secret is True
         slot["event"].set()
 
 

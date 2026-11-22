@@ -67,7 +67,9 @@ class StopTests(unittest.TestCase):
             self.assertFalse(client.is_alive(), 'Stop waited for the provider timeout')
             self.assertLess(time.monotonic() - start, 1)
             self.assertEqual(results, ['cancelled'])
-            self.assertTrue(disconnected.wait(1), 'The cancelled stream socket was left open')
+            # Only an end-of-stream read sets this (the handler's 3 s read timeout does not), so a longer wait
+            # under a loaded test run cannot pass an open socket.
+            self.assertTrue(disconnected.wait(5), 'The cancelled stream socket was left open')
         finally:
             cancel.set()
             client.join(3)

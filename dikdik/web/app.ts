@@ -1,5 +1,5 @@
 import { browserHistory, browserView, displayUrl, buildTaskRequest, commandActivity, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parsePlans, parseVerification, planStatus, planTitle, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
-import { attachmentList, confirmationForRunMode, contextUsage, costProjection, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
+import { attachmentList, confirmationForRunMode, contextUsage, costProjection, goalState, isResumable, openConfirmations, openQuestions, parseGoal, parseSlash, questionAnswer, slashMatches, usageMetrics } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, BrowserPage, ChatMessage, ChecklistItem, FileStatus, Mode, SlashCommand, TaskRequest, DiffReview, PlanSummary, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
@@ -64,6 +64,7 @@ let taskRequest: TaskRequest | null = null;
 const confirmCards = new Map<string, HTMLElement>();
 const confirmDecisions = new Map<string, (accept: boolean) => void>();  // open approvals, newest last
 const secretCards = new Map<string, HTMLElement>();  // open secret requests
+const questionCards = new Map<string, HTMLElement>();  // open clarifying questions
 // Organisation and files: read by functions that run at load time.
 let modelReady = true, activeTag = "", listLimit = 40, folderOptions: string[] = [], filtersOpen = false;
 let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean; title_model?: string; notifications?: 'off' | 'background' | 'all'; notification_previews?: boolean } | null = null;
@@ -529,6 +530,61 @@ function secretCard(msg: ChatMessage): HTMLLIElement {
   else { secretCards.set(id, li); setTimeout(() => field.focus?.(), 0); }
   return li;
 }
+/** The assistant asked a clarifying question. A sensitive one (or one the user marks secret) is typed in a
+ * masked field and sealed on the server: the model, the chat and the log only ever see $NAME. */
+function questionCard(msg: ChatMessage): HTMLLIElement {
+  const id = detailField(msg.details, "id"), name = detailField(msg.details, "name");
+  const details = (msg.details ?? {}) as { choices?: string[]; sensitive?: boolean };
+  const sensitive = details.sensitive === true, choices = Array.isArray(details.choices) ? details.choices : [];
+  const li = make("li", "msg msg-system msg-confirm"); li.id = msg.id;
+  const card = make("form", "confirm-card question-card");
+  const head = make("div", "result-head");
+  const badge = make("span", "result-icon"); badge.append(icon(sensitive ? "key" : "sparkle"));
+  head.append(badge, make("span", "result-title", msg.title));
+  card.append(head);
+  if (msg.body) card.append(make("p", "result-text", msg.body));
+  const controls: (HTMLInputElement | HTMLButtonElement)[] = [];
+  const field = make("input"); field.type = sensitive ? "password" : "text"; field.autocomplete = "off";
+  const secretBox = make("input"); secretBox.type = "checkbox";
+  const answer = async (text: string, secret: boolean) => {
+    if (!selected) return;
+    for (const control of controls) control.disabled = true;
+    try { await api(`/api/tasks/${encodeURIComponent(selected)}/question`, questionAnswer(id, text, secret, sensitive)); field.value = ""; }
+    catch (error) { for (const control of controls) control.disabled = false; message(error instanceof Error ? error.message : "Could not send the answer", true); }
+  };
+  if (choices.length) {
+    const row = make("div", "result-actions question-choices");
+    for (const choice of choices) {
+      const button = make("button", "small", choice); button.type = "button";
+      button.onclick = () => { void answer(choice, false); };
+      row.append(button); controls.push(button);
+    }
+    card.append(row);
+  }
+  field.placeholder = sensitive ? `Value for ${name || "the secret"}` : choices.length ? "Or type your own answer" : "Your answer";
+  field.setAttribute("aria-label", sensitive ? `Value for ${name || "the secret"}` : "Your answer");
+  card.append(field); controls.push(field);
+  if (!sensitive) {
+    const label = make("label", "hint question-secret");
+    label.append(secretBox, document.createTextNode(" This answer is a password, token or key: seal it, never show it to the model"));
+    card.append(label); controls.push(secretBox);
+    secretBox.onchange = () => { field.type = secretBox.checked ? "password" : "text"; };
+  }
+  card.append(make("p", "hint", sensitive
+    ? `Sealed under API keys as ${name || "a new key"}. The assistant only sees $${name || "NAME"}, never the value.`
+    : "Keys and tokens pasted here are sealed automatically and replaced with a $NAME reference."));
+  const actions = make("div", "result-actions");
+  const send = make("button", "small primary", "Answer"); send.type = "submit";
+  const skip = make("button", "small", "Skip"); skip.type = "button";
+  actions.append(send, skip); controls.push(send, skip);
+  card.append(actions);
+  li.append(card);
+  card.onsubmit = event => { event.preventDefault(); if (field.value.trim()) void answer(field.value, secretBox.checked); };
+  skip.onclick = () => { void answer("", false); };
+  if (openQuestions(liveEvents).includes(id)) { questionCards.set(id, li); setTimeout(() => field.focus?.(), 0); }
+  else { for (const control of controls) control.disabled = true; field.placeholder = "Answered"; }
+  return li;
+}
 /** safePageLink is imported from ./code-render — used in confirmationCard and chat widgets. */
 function confirmationCard(msg: ChatMessage): HTMLLIElement {
   const d = (msg.details ?? {}) as { id?: string; tool?: string; risk?: string; reason?: string; arguments?: unknown };
@@ -631,6 +687,11 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
   if (msg.kind === "file_created") { lastRole = "assistant"; return createdFileCard(msg); }
   if (msg.kind === "confirmation_requested") { lastRole = "system"; return confirmationCard(msg); }
   if (msg.kind === "secret_requested") { lastRole = "system"; return secretCard(msg); }
+  if (msg.kind === "question_requested") { lastRole = "system"; return questionCard(msg); }
+  if (msg.kind === "question_answered") {
+    const card = questionCards.get(detailField(msg.details, "id"));
+    if (card) { for (const control of card.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button")) control.disabled = true; questionCards.delete(detailField(msg.details, "id")); }
+  }
   if (msg.kind === "secret_answered") {
     const card = secretCards.get(detailField(msg.details, "id"));
     if (card) { for (const control of card.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button")) control.disabled = true; secretCards.delete(detailField(msg.details, "id")); }

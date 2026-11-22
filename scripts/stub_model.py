@@ -22,6 +22,8 @@ Behaviour (keyed on words in the latest user message):
 - "SLOW": slow read_file calls, so Pause/Stop can be clicked mid-run
   (alternating two files, which Dikdik's stuck detector stops after 6 calls);
 - "SECRET": asks for a DEMO_TOKEN secret with request_secret (needs command approval in the task);
+- "QUESTION": asks a clarifying question with choices, then a sensitive one (REPORT_DB_PASSWORD), and replies
+  with the tool results it received, so sealed answers can be checked (works in chat and agent tasks);
 - "FILES": creates three files and edits one, a delay apart (the Explorer follows live);
 - "PREVIEW": previews a Next.js project twice with `npx next dev` (needs command approval);
 - "MARKDOWN": a reply with a table, an alert, a quote and a file path, plus
@@ -126,6 +128,16 @@ def make_handler(expected_key: str, log_path: str | None, delay: float):
                 data = reply("Checking it.", [call("run_tests", {}, n)])
             elif "SECRET" in objective and "request_secret" in tools and "request_secret" not in done:
                 data = reply("I need a token for this.", [call("request_secret", {"name": "DEMO_TOKEN", "reason": "To call the demo API"}, n)])
+            elif "QUESTION" in scenario and "ask_question" in tools and done.count("ask_question") < 1:
+                data = reply("", [call("ask_question", {"question": "Which API key should the report script use? Paste it, or pick one.",
+                                                        "choices": ["The staging key", "The production key"]}, n)])
+            elif "QUESTION" in scenario and "ask_question" in tools and done.count("ask_question") < 2:
+                data = reply("", [call("ask_question", {"question": "What is the database password?", "sensitive": True,
+                                                        "name": "REPORT_DB_PASSWORD"}, n)])
+            elif "QUESTION" in scenario:
+                # Echo exactly what came back, so a check can confirm sealed values never reach the model.
+                answers = [text_of(m["content"]) for m in messages if m["role"] == "tool"][-2:]
+                data = reply("The answers I received:\n\n" + "\n\n".join(f"- `{a[:300]}`" for a in answers))
             elif "FILES" in objective and done.count("create_file") < len(FILES):
                 time.sleep(delay)
                 path, text = FILES[done.count("create_file")]

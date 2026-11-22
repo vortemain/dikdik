@@ -696,6 +696,9 @@ def _arguments(call: ToolCall, tools: list[dict] = TOOLS) -> None:
                 raise ValueError(f"{call.name}.{key} must be an integer from {field.get('minimum', '-infinity')} to {field.get('maximum', 'infinity')}")
 
 
+CLARIFY = ("\nAsk the user (ask_question) only when the request is ambiguous in a way that changes the result, or you need a "
+           "decision or a value only they have; never for what the repository or tools can tell you. For a password, token or "
+           "key set sensitive and name: you receive $NAME, never the value, and commands get it as that environment variable.")
 STEER_NOTE = ("[The user sent this while you were working. Take it into account from now on; "
               "it may change or narrow the request.]\n\n")
 
@@ -836,7 +839,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
     answer_rounds = 0
     lint_reflections = 0
     security_reflections = 0
-    document_texts: dict[str, str] = {}  # text deliverables (create_document) as written so far
+    document_args: dict[str, dict] = {}  # each create_document deliverable as written so far
     document_findings: dict[str, list[dict]] = {}
     script_findings: list[dict] = []  # scripts that ran with findings after the reflections ran out
     provided = secure_output.provided_values("\n".join([objective, *(str(m.get("content", "")) for m in (history or [])
@@ -1043,6 +1046,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
             'Inspect real failures, repair them, then recheck the changed behavior. Keep checks proportional to the request. '
             'Finish with what changed, what actually ran and any remaining blocker. Do not claim visual inspection, interaction coverage or perfection without evidence. '
             f'Capabilities this run: shell={shell is not None}{f" ({shell_note})" if shell is not None and shell_note else ""}; local preview={"preview_app" in extra_names}; host verifier={verify is not None}.')
+    if "ask_question" in extra_names and not conversation and CLARIFY not in messages[0]['content']:
+        messages[0]['content'] += CLARIFY
     if not read_only and not conversation and "environment_check" in extra_names and 'Setting up this computer:' not in messages[0]['content']:
         messages[0]['content'] += (
             '\nSetting up this computer: the project may need tools this computer does not have yet. Before building '
@@ -1858,9 +1863,9 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                 elif call.name == "release_gate" and not read_only:
                     result = gate()
                 elif call.name in extra_names:
-                    written = args.get("content") if call.name == "create_document" and isinstance(args.get("path"), str) else None
-                    if isinstance(written, str):
-                        leaked = secure_output.new_secrets("", written, provided)
+                    written = secure_output.document_files(args) if call.name == "create_document" and isinstance(args.get("path"), str) else None
+                    if written:
+                        leaked = secure_output.new_secrets("", "\n".join(written.values()), provided)
                         if leaked:
                             raise ValueError(secure_output.refusal(args["path"], leaked))
                     # MCP tools act outside the candidate; their text comes back as data.
@@ -1870,9 +1875,11 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         result = {"error": "The tool call failed"}
                     if not isinstance(result, dict):
                         result = {"error": "The tool returned an invalid result"}
-                    if isinstance(written, str) and "error" not in result:
+                    if written and "error" not in result:
                         path = args["path"].replace("\\", "/")
-                        document_texts[path] = (document_texts.get(path, "") if args.get("append") is True else "") + written
+                        earlier = document_args.get(path, {}).get("content") if args.get("append") is True else None
+                        document_args[path] = {**args, **({"content": earlier + args["content"]}
+                                                          if isinstance(earlier, str) and isinstance(args.get("content"), str) else {})}
                         batch_documents.add(path)
                     if call.name.startswith("browser_") or call.name == "browse_url":
                         on_app = str(result.get("url", "")).startswith("http://preview.dikdik.example")
@@ -1893,7 +1900,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         pending_image_note = ("The browser screenshot from " + call.name + " above. Compare it with what the "
                                               "page should show; use browser_snapshot or browser_inspect for exact values.")
                     failed = "error" in result or result.get("is_error") is True
-                elif call.name == "run_command" or call.name == "run_python" and python is not None:
+                elif call.name == "run_command" or call.name in {"run_python", "run_code"} and python is not None:
                     preview_revision = None
                     # Commands can change dependencies or other external state even
                     # when no candidate text changes (for example npm install).
@@ -1907,7 +1914,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         stop = interrupted()
                         if stop:
                             return stop
-                        risks = secure_output.script_findings(args.get("code", ""), "python", provided) if call.name == "run_python" else []
+                        risks = (secure_output.script_findings(args.get("code", ""), args.get("language", "python") if call.name == "run_code" else "python",
+                                                               provided, args.get("files")) if call.name in {"run_python", "run_code"} else [])
                         held = None
                         if risks and security_reflections < secure_output.ROUNDS:
                             security_reflections += 1
@@ -1921,7 +1929,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         try:
                             if held is not None:
                                 ran = held
-                            elif call.name == "run_python":
+                            elif call.name in {"run_python", "run_code"}:
                                 ran = python(dict(candidate), dict(args))
                             else:
                                 options = {key: args[key] for key in ("workdir", "background") if key in args}
@@ -1931,7 +1939,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                             raise ValueError(str(exc)) from None
                         except Exception:
                             ran = {"status": "inconclusive", "error": "The command could not be run", "changed": {}}
-                        accepted, rejected = {}, []
+                        accepted, rejected, stripped = {}, [], []
                         # An interrupted command may have buffered partial output or
                         # writes.  Neither is evidence we can safely replay, and the
                         # model needs an explicit tool result before exact resume.
@@ -1952,11 +1960,15 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                                 if allowed is not True:
                                     rejected.append(path)
                                     continue
+                            text, removed = secure_output.strip_new_secrets(candidate.get(path, ""), text, provided)
+                            stripped += [{"file": path, "rule": f["rule"]} for f in removed]
                             accepted[path] = text
                         if accepted:
                             updated = {**candidate, **accepted}
                             _snapshot_limits(updated, **limits)
                             candidate = updated
+                            if stripped and on_write is not None:
+                                on_write(candidate)  # the credential leaves the folder now, not at the end of the turn
                             candidate_revision += 1
                             verified = None
                             unverified_completion = None
@@ -1976,6 +1988,13 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                                   **({"restored": ran["restored"]} if isinstance(ran.get("restored"), list) and ran["restored"] else {})}
                         if risks:
                             result["security_findings"] = secure_output.compact(risks)
+                        if stripped:
+                            result["credentials_removed"] = stripped
+                            result["warning"] = ("The command wrote a live-looking credential; it was replaced with REDACTED-CREDENTIAL. "
+                                                 "Read secrets from environment variables (request_secret) instead of writing them to files.")
+                            event("security_findings", {"stage": "command", "action": "removed", "paths": sorted({s["file"] for s in stripped}),
+                                                        "findings": [{"rule": s["rule"], "severity": "critical", "file": s["file"],
+                                                                      "title": "Credential written by a command"} for s in stripped]})
                         batch_scan.update(accepted)
                         if call.name == "run_command" and not shell_read_tip and not accepted and READ_COMMAND.match(args["command"]):
                             shell_read_tip = True
@@ -2194,7 +2213,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
             if not failed:
                 failures.clear()  # A successful different action provides new information/state.
                 # A command that changed nothing and printed the same output again is a re-read too.
-                if call.name in READS or call.name in {"run_command", "run_python"} and not result.get("changed_files"):
+                if call.name in READS or call.name in {"run_command", "run_python", "run_code"} and not result.get("changed_files"):
                     same_read = {key: value for key, value in call.arguments.items() if key not in {"max_chars", "max_results"}}
                     read_key = hashlib.sha256(_json([call.name, same_read, result]).encode()).hexdigest()
                     count = seen_reads.pop(read_key, 0) + 1
@@ -2247,7 +2266,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                 context_bytes += _message_size(note)
         if batch_documents:
             for path in batch_documents:
-                document_findings[path] = secure_output.introduced({path: document_texts[path]}, {}, provided)
+                document_findings[path] = secure_output.introduced(secure_output.document_files(document_args[path]), {}, provided)
         if batch_scan or batch_documents:
             risky = secure_output.introduced({path: candidate[path] for path in batch_scan if path in candidate}, baseline, provided)
             risky += [f for path in batch_documents for f in document_findings[path]]

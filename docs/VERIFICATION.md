@@ -1,4 +1,26 @@
-# Verification record — updated 2026-10-28
+# Verification record — updated 2026-11-23
+
+## Secure by default and clarifying questions (latest)
+
+- Tests: `tests/test_security_scan.py` (each new rule with its false-positive cases, data flow
+  through assignments, sanitizers and route parameters in Python and JavaScript, spreadsheet
+  formulas), `tests/test_secure_output.py` (credential refusal and user-provided values including
+  pasted private keys, command-written credentials stripped and rewritten, scripts and `run_code`
+  programs held before running, Word/Markdown code blocks and sheets, reflection limited to 2,
+  final report, task result), `tests/test_ask_question.py` (questions in chat and agent tasks,
+  `questions: false`, pasted credentials and sensitive answers sealed and never shown to the model
+  or the event log), `tests/test_control.py` (risky commands), `tests/web/questions.test.ts`.
+- Repository scan: `python -m dikdik.security_scan . --exclude 'benchmarks/tasks/*' --fail-on high`
+  exits 0 (0 critical, 0 high). The data-flow rules found nothing in Dikdik's own 484 files.
+- Frontend: `bun run typecheck:web`, `bun run test:web` (228 pass) and `bun run build:web`.
+- Real browser with the **stand-in model** (`scripts/stub_model.py`, scenario `QUESTION`; not a live
+  provider), scratch project and data folder: in Chat and in Code mode the question card showed its
+  choices, free text and a masked field for the sensitive question. A live-looking test key pasted
+  as an answer came back as "Answered · sealed ANSWER_SECRET_1"; the stand-in's reply, which echoes
+  the tool results it received, contained only `$ANSWER_SECRET_1` and `$REPORT_DB_PASSWORD`. A byte
+  search of all 85 files in the data and project folders (state database, write-ahead log, logs)
+  found none of the three test values.
+- Not checked: a live provider; `cargo test` (no Rust changes).
 
 ## Agent roadmap phases 2–3: rolling checkpoint, effort, answer checks, stuck detection (latest)
 

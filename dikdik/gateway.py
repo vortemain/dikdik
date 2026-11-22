@@ -57,6 +57,7 @@ class Gateway:
         settings = {key: value for key, value in extra.items() if key != "timeout_seconds"}
         settings.setdefault("mode", "agent")
         settings.setdefault("verification", "syntax")
+        settings["questions"] = False  # an API caller cannot answer a clarifying question mid-request
         timeout = extra.get("timeout_seconds", 300)
         if isinstance(timeout, bool) or not isinstance(timeout, int) or not 10 <= timeout <= 3600:
             raise ValueError("dikdik.timeout_seconds must be a number between 10 and 3600")

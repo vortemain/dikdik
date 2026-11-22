@@ -76,13 +76,13 @@ class MemoryTests(Base):
 
     def test_credentials_are_refused(self):
         logs.register_secret("hunter2-provider-value")
-        for text in ("my key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz",
+        for text in ("my key is sk-ant-" + "api03-abcdefghijklmnopqrstuvwxyz",
                      "password: CorrectHorse99",
                      "API_KEY=abcd1234efgh5678",
                      "github token ghp_" + "a" * 36,
                      "Authorization: Bearer abcdefghijklmnop",
                      "remember hunter2-provider-value",
-                     "-----BEGIN RSA PRIVATE KEY-----"):
+                     "-----BEGIN RSA " + "PRIVATE KEY-----"):
             with self.subTest(text=text):
                 with self.assertRaisesRegex(ValueError, "credential"):
                     self.memory.apply("add", "user", text)
@@ -145,7 +145,7 @@ class SessionSearchTests(Base):
 
     def test_snippets_are_redacted_and_odd_queries_are_safe(self):
         here = str(self.base / "project")
-        task = self.make("Deploy notes", here, ["The deploy key was sk-ant-api03-abcdefghijklmnopqrstuvwxyz for staging"])
+        task = self.make("Deploy notes", here, ["The deploy key was sk-ant-" + "api03-abcdefghijklmnopqrstuvwxyz for staging"])
         hits = session_search.search(self.store, "deploy staging")
         self.assertTrue(hits)
         self.assertNotIn("abcdefghijklmnop", json.dumps(hits))

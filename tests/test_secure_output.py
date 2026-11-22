@@ -54,6 +54,23 @@ class SecretTests(unittest.TestCase):
         self.assertEqual(provided, {AWS})
         self.assertEqual(secure_output.new_secrets("", f'AWS = "{AWS}"\n', provided), [])
 
+    def test_a_private_key_the_user_pasted_is_theirs_to_write_and_passes_the_gate(self):
+        pem = "-----BEGIN " + "RSA PRIVATE KEY-----\n" + "MIIEowIBAAKCAQEA7d3k9Qx2Lm8VbN4pT6rY1sW0zJcH5gF" + "\nAbCd\n-----END RSA PRIVATE KEY-----\n"
+        provided = secure_output.provided_values("Save this deploy key as deploy.pem:\n" + pem)
+        self.assertEqual(secure_output.new_secrets("", pem, provided), [])
+        self.assertEqual(secure_output.introduced({"deploy.pem": pem}, {}, provided), [])
+        self.assertEqual(secure_output.provided_in({"deploy.pem": pem}, provided), [{"file": "deploy.pem", "rule": "SEC003"}])
+        other = pem.replace("7d3k9Qx2", "Zq81mN0p")
+        self.assertEqual([f["rule"] for f in secure_output.new_secrets("", other, provided)], ["SEC003"])
+
+    def test_scrubbing_removes_new_credentials_from_command_output_files(self):
+        text, found = secure_output.strip_new_secrets("A = 1\n", f'A = 1\nKEY = "{OPENAI}"\n', set())
+        self.assertNotIn(OPENAI, text)
+        self.assertIn("REDACTED-CREDENTIAL", text)
+        self.assertEqual([f["rule"] for f in found], ["SEC005"])
+        same, none = secure_output.strip_new_secrets("", f'KEY = "{AWS}"\n', {AWS})
+        self.assertEqual((same, none), (f'KEY = "{AWS}"\n', []))
+
     def test_scrub_masks_credentials_anywhere_in_a_payload(self):
         payload = {"arguments": {"content": f"key={OPENAI}", "path": "a.py"}, "list": [AWS, 3], "tokens": 12}
         scrubbed = json.dumps(secure_output.scrub(payload))
@@ -72,10 +89,23 @@ class FindingTests(unittest.TestCase):
         self.assertEqual(sorted((f["rule"], f["file"]) for f in found), [("PY005", "app.py"), ("SH002", "new.sh")])
 
     def test_scripts_are_scanned_by_language_and_provided_values_are_masked(self):
-        self.assertEqual([f["rule"] for f in secure_output.script_findings("x = eval(input())\n")], ["PY002"])
+        self.assertEqual([f["rule"] for f in secure_output.script_findings("x = eval(input())\n")], ["PY012"])
         self.assertEqual([f["rule"] for f in secure_output.script_findings("curl -k https://x.example.com", "bash")], ["SH003"])
         self.assertEqual(secure_output.script_findings(f"client = Client('{OPENAI}')\n", provided={OPENAI}), [])
         self.assertEqual([f["rule"] for f in secure_output.script_findings(f"client = Client('{OPENAI}')\n")], ["SEC005"])
+
+    def test_documents_are_scanned_inside_code_blocks_and_sheets(self):
+        markdown = "# Setup\n\nRun this:\n\n```python\nimport os\nos.system('ping ' + input())\n```\n\n```bash\ncurl -k https://x.example.com\n```\n"
+        parts = secure_output.document_files({"path": "Guide.docx", "content": markdown})
+        self.assertEqual(sorted(parts), ["Guide.docx", "Guide.docx#1.py", "Guide.docx#2.sh"])
+        self.assertEqual(sorted((f["rule"], f["file"]) for f in secure_output.introduced(parts, {})),
+                         [("PY012", "Guide.docx#1.py"), ("SH003", "Guide.docx#2.sh")])
+        sheets = {"path": "Book.xlsx", "sheets": [{"name": "Data", "rows": [["name", "total"], ["Evil", "=cmd|' /C calc'!A0"]]}]}
+        parts = secure_output.document_files(sheets)
+        self.assertEqual([(f["rule"], f["file"]) for f in secure_output.introduced(parts, {})], [("XLS001", "Book.xlsx#Data.csv")])
+        leaked = {"path": "Keys.xlsx", "sheets": [{"name": "S", "rows": [["aws", AWS]]}]}
+        self.assertEqual([f["rule"] for f in secure_output.new_secrets("", "\n".join(secure_output.document_files(leaked).values()))],
+                         ["SEC001"])
 
     def test_reflection_and_caveat_name_rule_location_and_fix(self):
         found = secure_output.introduced({"app.py": "import os\nos.system(cmd)\n"}, {})
@@ -164,7 +194,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(ran, ["print(2 + 2)"])
         found = [d for k, d in events if k == "security_findings"]
         self.assertEqual([(d["stage"], d["action"]) for d in found], [("script", "reflect")])
-        self.assertEqual(found[0]["findings"][0]["rule"], "PY002")
+        self.assertEqual(found[0]["findings"][0]["rule"], "PY012")
 
     def test_a_script_that_stays_risky_runs_after_two_rounds_and_is_reported(self):
         ran = []
@@ -179,10 +209,58 @@ class AgentTests(unittest.TestCase):
                            conversation=True, python=python, python_tool=PYTHON)
         self.assertEqual(result.state, "completed", result.error)
         self.assertEqual(len(ran), 1)
-        self.assertEqual([f["rule"] for f in result.security["findings"]], ["PY002"])
+        self.assertEqual([f["rule"] for f in result.security["findings"]], ["PY012"])
         answer = [d["content"] for k, d in events if k == "message"][-1]
         self.assertTrue(answer.startswith("The answer is 4."))
-        self.assertIn("PY002", answer)
+        self.assertIn("PY012", answer)
+
+    def test_a_credential_a_command_writes_is_stripped_and_the_file_rewritten(self):
+        written = []
+
+        def shell(files, command, timeout):
+            return {"status": "passed", "exit_code": 0, "output": "", "changed": {"config.py": f'KEY = "{OPENAI}"\n'}}
+        model = Replies(step(1, "run_command", command="python make_config.py"), step(2, "run_tests"), step(3, "finish"))
+        result, events = self.run_task(model, "Generate the config file", shell=shell, on_write=lambda files: written.append(dict(files)))
+        self.assertEqual(result.state, "completed", result.error)
+        self.assertNotIn(OPENAI, result.files["config.py"])
+        self.assertIn("REDACTED-CREDENTIAL", result.files["config.py"])
+        self.assertTrue(written and "REDACTED-CREDENTIAL" in written[-1]["config.py"])  # the folder is fixed at once
+        end = next(d for k, d in events if k == "tool" and d["phase"] == "end" and d["id"] == "c1")
+        self.assertEqual(end["observation"]["credentials_removed"], [{"file": "config.py", "rule": "SEC005"}])
+        self.assertNotIn(OPENAI, json.dumps(events))
+
+    def test_run_code_programs_are_checked_in_their_language(self):
+        ran = []
+        code_tool = {"type": "function", "function": {"name": "run_code", "parameters": {
+            "type": "object", "properties": {"language": {"type": "string"}, "code": {"type": "string"}}, "required": ["code"]}}}
+
+        def program(files, arguments):
+            ran.append(arguments)
+            return {"status": "passed", "exit_code": 0, "output": "ok", "changed": {}}
+        model = Replies(step(1, "run_code", language="javascript", code="const a = new https.Agent({ rejectUnauthorized: false });"),
+                        step(2, "run_code", language="javascript", code="console.log('ok');"), ModelResponse("Done.", []))
+        events = []
+        result = run_agent({}, "Print a greeting with Node", model, None, lambda k, d: events.append((k, d)), threading.Event(),
+                           conversation=True, python=program, python_tool=code_tool)
+        self.assertEqual(result.state, "completed", result.error)
+        self.assertEqual([a["code"] for a in ran], ["console.log('ok');"])
+        found = [d for k, d in events if k == "security_findings"]
+        self.assertEqual([(d["stage"], d["findings"][0]["rule"], d["findings"][0]["file"]) for d in found],
+                         [("script", "JS004", "script.js")])
+
+    def test_spreadsheets_with_credentials_are_refused(self):
+        calls = []
+        model = Replies(step(1, "create_document", path="keys.xlsx", sheets=[{"name": "S", "rows": [["aws", AWS]]}]),
+                        ModelResponse("I will not store keys in a spreadsheet.", []))
+        sheet_tool = {"type": "function", "function": {"name": "create_document", "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"}, "sheets": {"type": "array", "items": {"type": "object"}}}, "required": ["path"]}}}
+        events = []
+        result = run_agent({}, "Make a spreadsheet of our keys", model, None, lambda k, d: events.append((k, d)), threading.Event(),
+                           extra_tools=[sheet_tool], extra_call=lambda name, args: calls.append(args) or {"saved": args["path"]},
+                           read_only=True, conversation=True)
+        self.assertEqual(result.state, "completed", result.error)
+        self.assertEqual(calls, [])
+        self.assertNotIn(AWS, json.dumps(events))
 
     def test_documents_refuse_credentials_and_reflect_risky_code(self):
         saved = []

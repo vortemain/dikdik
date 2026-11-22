@@ -183,8 +183,74 @@ class SecureByDefaultRuleTests(unittest.TestCase):
         self.assertEqual(self.found(files), [("CFG001", ".gitconfig", 2, "high"), ("CFG001", ".npmrc", 1, "high"),
                                              ("CFG001", "config/app.yaml", 2, "high"), ("CFG001", "proxy.toml", 1, "high")])
 
+    def test_python_untrusted_input_is_followed_to_its_sink(self):
+        source = "\n".join([
+            "import os, subprocess, requests, sqlite3, shlex",
+            "from flask import request, send_file",
+            "def handler(db):",
+            "    name = request.args.get('name')",                         # source
+            "    cmd = 'convert ' + name",                                 # propagates
+            "    subprocess.run(cmd, shell=True)",                         # 6: PY012
+            "    safe = shlex.quote(name)",                                # sanitized
+            "    subprocess.run('convert ' + safe, shell=True)",           # 8: PY001 only
+            "    query = f\"SELECT * FROM users WHERE name = '{name}'\"",
+            "    db.execute(query)",                                       # 10: PY012 critical (and PY008)
+            "    db.execute('SELECT * FROM users WHERE name = ?', (name,))",  # parameterized: fine
+            "    return send_file(os.path.join('/srv/files', name))",      # 12: PY013 path traversal
+            "def proxy():",
+            "    target = request.json['url']",
+            "    return requests.get(target, timeout=5).text",             # 15: PY014 SSRF
+            "def cli():",
+            "    expr = input('> ')",
+            "    print(eval(expr))",                                       # 18: PY012 critical (and PY002)
+            "    count = int(input('n: '))",
+            "    print(eval(str(count)))",                                 # 20: sanitized by int(); PY002 only
+            "    upload = request.files['f'].filename",
+            "    open(os.path.basename(upload), 'wb')",                    # 22: basename: fine
+        ])
+        found = [(f["rule"], f["line"], f["severity"]) for f in scan.scan_files({"app.py": source})["findings"]
+                 if f["rule"] in {"PY012", "PY013", "PY014"}]
+        self.assertCountEqual(found, [("PY012", 6, "high"), ("PY012", 10, "high"), ("PY013", 12, "high"),
+                                      ("PY014", 15, "high"), ("PY012", 18, "high")])
+        evidence = next(f for f in scan.scan_files({"app.py": source})["findings"] if f["rule"] == "PY012" and f["line"] == 6)
+        self.assertIn("line 4", evidence["message"])  # names where the untrusted value came from
+
+    def test_python_flow_through_function_parameters_of_routes(self):
+        source = "\n".join([
+            "import os",
+            "@app.get('/run/<cmd>')",
+            "def run(cmd):",
+            "    os.system('ls ' + cmd)",            # 4: route parameters are untrusted
+            "def helper(cmd):",
+            "    os.system('ls ' + cmd)",            # 6: unknown origin: PY007 only
+        ])
+        found = [(f["rule"], f["line"]) for f in scan.scan_files({"app.py": source})["findings"] if f["rule"] == "PY012"]
+        self.assertEqual(found, [("PY012", 4)])
+
+    def test_javascript_untrusted_input_is_followed_to_its_sink(self):
+        source = "\n".join([
+            "app.get('/x', (req, res) => {",
+            "  const name = req.query.name;",
+            "  exec('convert ' + name);",                                     # 3: JS006
+            "  db.query(`SELECT * FROM users WHERE name = '${name}'`);",      # 4: JS006
+            "  db.query('SELECT * FROM users WHERE name = ?', [name]);",      # fine
+            "  res.sendFile(path.join(__dirname, name));",                    # 6: JS007
+            "  const id = Number(req.params.id);",
+            "  exec('show ' + id);",                                          # sanitized number: JS003 only
+            "  fetch(req.body.url);",                                         # 9: JS008 (direct use)
+            "});",
+        ])
+        found = [(f["rule"], f["line"]) for f in scan.scan_files({"server.js": source})["findings"]
+                 if f["rule"] in {"JS006", "JS007", "JS008"}]
+        self.assertCountEqual(found, [("JS006", 3), ("JS006", 4), ("JS007", 6), ("JS008", 9)])
+
+    def test_spreadsheet_formulas_that_run_commands(self):
+        files = {"report.csv": "name,total\nAda,=SUM(B2:B3)\nEvil,=cmd|' /C calc'!A0\nLink,=HYPERLINK(\"https://x.example.com\")\n"}
+        self.assertEqual(self.found(files), [("XLS001", "report.csv", 3, "high")])
+
     def test_new_rules_have_remediation_and_cwe(self):
-        for rule in ("PY011", "JS004", "JS005", "SH001", "SH002", "SH003", "CFG001"):
+        for rule in ("PY011", "PY012", "PY013", "PY014", "JS004", "JS005", "JS006", "JS007", "JS008",
+                     "SH001", "SH002", "SH003", "CFG001", "XLS001"):
             self.assertTrue(scan.REMEDIATION[rule], rule)
             self.assertTrue(scan.CWE[rule].startswith("CWE-"), rule)
             self.assertEqual(scan.category(rule), "security")
