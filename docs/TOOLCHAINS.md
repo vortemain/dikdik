@@ -112,7 +112,7 @@ Python programs.
 | javascript | node, bun, deno | interpreted |
 | typescript | bun, deno, node 22.6 or later (`--experimental-strip-types`) | interpreted |
 | bash | bash (Git Bash on Windows, never WSL's `bash.exe`) | interpreted |
-| powershell | pwsh, Windows PowerShell | `-File`, `-NoProfile -NonInteractive` |
+| powershell | pwsh, Windows PowerShell | `-File`, `-NoProfile -NonInteractive`; `-ExecutionPolicy Bypass` only when the effective policy would refuse an unsigned local script |
 | ruby, php, perl, lua, r (Rscript), julia | that interpreter | interpreted |
 | java | java 11 or later | single-file source launch |
 | go | go | `go build` with its own `go.mod`, `GOTOOLCHAIN=local` |
@@ -127,6 +127,9 @@ accepted.
 
 The source, the helpers below and any build output live in a temporary
 `.dikdik-run-*` folder inside the folder the program runs in, removed afterwards.
+It holds a `.gitignore` of `*` so Git never lists it, Dikdik's file inventory skips it
+like any dot-folder, and one left behind by an interrupted run is removed by the next
+run in that folder once it is an hour old.
 Inside the project means Node resolves the project's `node_modules`. A compiled
 language is built there first (the build gets no tool token and counts against the
 same time limit); a build error returns with `phase: "build"`. Only what the program
@@ -143,7 +146,9 @@ a random port and a random 48-character token. A program calls a tool with
 `{"tool": "...", "arguments": {...}}`; the reply is `{"result": ...}` or
 `{"refused": true, "error": "..."}`. Only read-only tools the conversation already
 offers are allowed (`read_document`, `statistics`, `web_fetch`, `web_search`,
-`literature_search`), at most 200 calls a run, handled one at a time. Each call passes
+`literature_search`), at most 200 calls a run. Each request is read on its own thread,
+so a caller that never finishes its request cannot stall the others, and the tool calls
+themselves run one at a time; a call still waiting when the run ends is refused. Each call passes
 the same permission rules, approvals and hooks as the model's own call, and reads the
 same folder. Requests with a wrong token, an `Origin` header or a Host other than the
 loopback address and port are refused (a web page cannot reach it), and the endpoint

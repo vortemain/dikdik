@@ -80,6 +80,18 @@ class DetectionTests(unittest.TestCase):
             self.assertIn("javascript", found)
             self.assertEqual("typescript" in found, expected, version)
 
+    @unittest.skipUnless(os.name == "nt", "execution policy is a Windows setting")
+    def test_powershell_bypasses_the_execution_policy_only_when_it_blocks_scripts(self):
+        root = Path(self.temp.name).resolve()
+        for policy, bypass in (("RemoteSigned", False), ("Unrestricted", False), ("Restricted", True), ("AllSigned", True), ("", True)):
+            code_tool.forget()
+            fake_program(self.bin, "powershell", "ps")
+            with patch.object(code_tool, "_version", return_value=policy):
+                info = code_tool.detect(str(self.bin))["powershell"]
+            _, argv = code_tool._commands("powershell", info, root, root)
+            self.assertEqual("Bypass" in argv, bypass, policy)
+            self.assertEqual(argv[-2], "-File")
+
     def test_aliases_and_missing_languages(self):
         self.assertEqual(code_tool.language_name("JS"), "javascript")
         self.assertEqual(code_tool.language_name("c#"), "csharp")
@@ -132,6 +144,23 @@ class BoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad):
                 code_tool.run(self.root, "python", "print(1)", cancel, files={bad: "x = 1"})
 
+    def test_the_run_folder_is_git_ignored_and_stale_ones_are_swept(self):
+        stale = self.root / ".dikdik-run-0123456789ab"
+        stale.mkdir()
+        (stale / "program.exe").write_text("x", encoding="utf-8")
+        old = time.time() - 2 * code_tool.STALE_SECONDS
+        os.utime(stale, (old, old))
+        recent = self.root / ".dikdik-run-ba9876543210"
+        recent.mkdir()  # another run may still be using it
+        code = "import os\nprint(open(os.path.join(os.path.dirname(__file__), '.gitignore')).read().strip())"
+        result = code_tool.run(self.root, "python", code, threading.Event(), timeout=60)
+        self.assertEqual(result["output"].strip(), "*")
+        self.assertFalse(stale.exists())
+        self.assertTrue(recent.exists())
+        from dikdik.repository import inventory
+        (recent / "left.py").write_text("x = 1\n", encoding="utf-8")
+        self.assertNotIn(".dikdik-run-ba9876543210/left.py", inventory(self.root))  # never a changed project file
+
     def test_extra_files_sit_next_to_the_program(self):
         result = code_tool.run(self.root, "python", "import helper\nprint(helper.VALUE * 2)", threading.Event(),
                                files={"helper.py": "VALUE = 21\n"}, workdir="sub", timeout=60)
@@ -167,6 +196,39 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(OSError):  # the run ended: nothing listens any more
             post(url, {"tool": "read_document", "arguments": {}}, token)
         self.assertEqual(tool.call_count, 2)
+
+    def test_a_stalled_caller_does_not_block_other_calls(self):
+        import socket
+        tool = Mock(return_value={"ok": True})
+        with code_tool.ToolBridge(tool, {"read_document"}) as bridge:
+            with socket.create_connection(("127.0.0.1", bridge.port), timeout=5) as stalled:
+                stalled.sendall(b"POST /call HTTP/1.1\r\nHost: 127.0.0.1\r\n")  # never finishes its request
+                started = time.monotonic()
+                self.assertEqual(post(bridge.url, {"tool": "read_document", "arguments": {}}, bridge.token),
+                                 (200, {"result": {"ok": True}}))
+                self.assertLess(time.monotonic() - started, 5)
+
+    def test_a_call_waiting_when_the_run_ends_is_refused(self):
+        release, entered = threading.Event(), threading.Event()
+
+        def slow(name, arguments):
+            entered.set()
+            release.wait(10)
+            return {"done": arguments["n"]}
+        replies = []
+        with code_tool.ToolBridge(slow, {"read_document"}) as bridge:
+            first = threading.Thread(target=lambda: replies.append(post(bridge.url, {"tool": "read_document", "arguments": {"n": 1}}, bridge.token)))
+            first.start()
+            entered.wait(5)
+            second = threading.Thread(target=lambda: replies.append(post(bridge.url, {"tool": "read_document", "arguments": {"n": 2}}, bridge.token)))
+            second.start()
+            time.sleep(0.3)  # the second call now waits behind the first
+            bridge._open = False  # the run ends while it waits
+            release.set()
+            first.join(10)
+            second.join(10)
+        self.assertIn((200, {"result": {"done": 1}}), replies)
+        self.assertIn(410, [status for status, _ in replies])
 
     def test_get_and_other_paths_are_refused(self):
         with code_tool.ToolBridge(Mock(), {"read_document"}) as bridge:

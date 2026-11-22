@@ -5,7 +5,7 @@
 // Server-provided text is always textContent, never parsed as HTML.
 import { make, icon } from "./dom";
 import { codeBlock, languageFor, looksLikeDiff, safePageLink } from "./code-render";
-import type { ChatMessage, ChecklistItem } from "./contracts";
+import { codeLanguage, isCodeTool, type ChatMessage, type ChecklistItem } from "./contracts";
 
 export interface StepLabel { icon: string; title: string; arg: string }
 
@@ -17,6 +17,8 @@ export const TOOL_LABELS: Record<string, [string, string, string]> = {
   create_file: ["file-plus", "Created", "path"],
   run_tests: ["terminal", "Ran checks", ""],
   run_command: ["terminal", "Ran", "command"],
+  run_code: ["terminal", "Ran code", ""],
+  run_python: ["terminal", "Ran code", ""],
   finish: ["flag", "Finished", ""],
   task_tracker: ["list", "Updated the task list", ""],
   write_plan: ["pencil", "Wrote the plan", ""],
@@ -57,6 +59,10 @@ export function stepLabel(msg: ChatMessage): StepLabel {
       if (name.startsWith("mcp__")) {
         const [, server = "", tool = ""] = name.split("__");
         return { icon: "plug", title: `${server} · ${tool}`, arg: "" };
+      }
+      if (isCodeTool(name)) {
+        const lines = detailField(details, "code").split("\n").filter(line => line.trim()).length;
+        return { icon: "terminal", title: `Ran ${codeLanguage(name, details).label}`, arg: lines ? `${lines} line${lines === 1 ? "" : "s"}` : "" };
       }
       const known = TOOL_LABELS[name];
       if (!known) return { icon: "terminal", title: name || "Tool", arg: "" };
@@ -302,6 +308,9 @@ export function renderOutputUI(text: string, tool: string, path = ""): HTMLEleme
   if (tool === "run_command") {
     return codeBlock(text, "bash", { wrap: true });
   }
+  if (isCodeTool(tool)) {
+    return codeBlock(text, "", { wrap: true });
+  }
   const trimmed = text.trim();
   if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
     try {
@@ -462,6 +471,17 @@ export function createChatWidgets(deps: ChatWidgetDeps) {
     }
     if (msg.kind === "agent_tool_call" && toolName(msg) === "run_command" && detailField(details, "command")) {
       blocks.push(codeBlock(detailField(details, "command"), "bash", { wrap: true }));
+      return blocks;
+    }
+    if (msg.kind === "agent_tool_call" && isCodeTool(toolName(msg)) && detailField(details, "code")) {
+      const language = codeLanguage(toolName(msg), details);
+      blocks.push(codeBlock(detailField(details, "code"), language.id, { wrap: true }));
+      const files = typeof details === "object" && details !== null ? (details as Record<string, unknown>).files : undefined;
+      if (typeof files === "object" && files !== null) {
+        for (const [name, text] of Object.entries(files as Record<string, unknown>).slice(0, 20)) {
+          if (typeof text === "string") blocks.push(codeBlock(text, languageFor(name) || language.id, { filename: name, wrap: true }));
+        }
+      }
       return blocks;
     }
     if (msg.kind === "agent_thinking") {

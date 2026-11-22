@@ -37,6 +37,7 @@ OUTPUT_CAP = 12000
 MAX_CALLS = 200
 REQUEST_LIMIT = 1024 * 1024
 MAX_FILES = 20
+STALE_SECONDS = 3600
 # Read-only tools a program may call, when the conversation itself offers them.
 CALLABLE = ("read_document", "statistics", "web_fetch", "web_search", "literature_search")
 ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|/(?!/)|~[\\/])\S")
@@ -53,7 +54,7 @@ LANGUAGES: dict[str, dict] = {
     "bash": dict(label="Bash", source="script.sh", runners=(("bash", ()),)),
     "powershell": dict(label="PowerShell", source="script.ps1",
                        runners=(("pwsh", ("-NoProfile", "-NonInteractive", "-File")),
-                                ("powershell", ("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File")))),
+                                ("powershell", ("-NoProfile", "-NonInteractive", "-File")))),
     "ruby": dict(label="Ruby", source="script.rb", runners=(("ruby", ()),)),
     "php": dict(label="PHP", source="script.php", runners=(("php", ()),)),
     "perl": dict(label="Perl", source="script.pl", runners=(("perl", ()),)),
@@ -107,6 +108,15 @@ def _node_strips_types(node: str) -> bool:
     return bool(match) and (int(match.group(1)), int(match.group(2))) >= (22, 6)
 
 
+def _policy_blocks_scripts(program: str) -> bool:
+    """Whether this PowerShell's effective execution policy refuses an unsigned local script file.
+    Only then does run_code add -ExecutionPolicy Bypass (for that one process)."""
+    if os.name != "nt":
+        return False
+    policy = _version(program, "-NoProfile", "-NonInteractive", "-Command", "Get-ExecutionPolicy").strip().lower()
+    return policy not in ("remotesigned", "unrestricted", "bypass")
+
+
 def detect(path: str | None = None) -> dict[str, dict]:
     """The languages that can run here: {language: {"program", "runner"}}. Python always can (Dikdik's
     own). Cached per search path, so once per session unless something is installed."""
@@ -129,6 +139,9 @@ def detect(path: str | None = None) -> dict[str, dict]:
                 if not match:
                     continue
                 found[language] = {"program": program, "runner": runner, "framework": f"net{match.group(1)}.0"}
+                break
+            if language == "powershell":
+                found[language] = {"program": program, "runner": runner, "bypass": _policy_blocks_scripts(program)}
                 break
             if language == "go":
                 match = re.search(r"go(\d+)\.(\d+)", _version(program, "version"))
@@ -275,8 +288,10 @@ def _check_files(files) -> None:
 
 
 # --- the loopback tool endpoint --------------------------------------------------------
-class _Server(HTTPServer):
+class _Server(socketserver.ThreadingMixIn, HTTPServer):
     allow_reuse_address = False  # on Windows SO_REUSEADDR would let another process take the port
+    daemon_threads = True
+    block_on_close = False  # a caller that never finishes its request cannot hold up the end of the run
 
     def server_bind(self):
         socketserver.TCPServer.server_bind(self)  # no reverse DNS lookup of 127.0.0.1
@@ -286,7 +301,8 @@ class _Server(HTTPServer):
 class ToolBridge:
     """A loopback HTTP endpoint for one run. It refuses requests without the run's token, from
     a browser (an Origin header, another Host), tools outside the allow-list and calls past the
-    cap, and is closed when the run ends. Calls are handled one at a time, in arrival order."""
+    cap, and is closed when the run ends. Each request is read on its own thread, so a slow caller
+    cannot stall the others; tool calls still run one at a time."""
 
     def __init__(self, call_tool: Callable[[str, dict], dict] | None, allowed, max_calls: int = MAX_CALLS):
         self.call_tool, self.allowed, self.max_calls = call_tool, frozenset(allowed or ()), max_calls
@@ -294,6 +310,7 @@ class ToolBridge:
         self.calls = 0
         self.refused = 0
         self._open = False
+        self._calling = threading.Lock()
         bridge = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -351,6 +368,18 @@ class ToolBridge:
             pass
 
     def _handle(self, handler) -> None:
+        # The bounded body is read before any refusal: replying with it unread makes Windows reset
+        # the connection, and the caller would see a reset instead of the refusal.
+        try:
+            length = int(handler.headers.get("Content-Length", ""))
+        except ValueError:
+            return self._send(handler, 411, {"refused": True, "error": "Content-Length is required"})
+        if length < 0 or length > REQUEST_LIMIT:
+            return self._send(handler, 413, {"refused": True, "error": "Request too large"})
+        try:
+            body = handler.rfile.read(length)
+        except OSError:
+            return
         if not self._open:
             return self._send(handler, 410, {"refused": True, "error": "This run has ended"})
         if handler.path != "/call":
@@ -361,16 +390,14 @@ class ToolBridge:
         if not hmac.compare_digest(handler.headers.get("X-Dikdik-Token", "").encode("utf-8", "replace"), self.token.encode()):
             return self._send(handler, 403, {"refused": True, "error": "Unknown caller"})
         try:
-            length = int(handler.headers.get("Content-Length", ""))
+            request = json.loads(body.decode("utf-8") or "{}")
         except ValueError:
-            return self._send(handler, 411, {"refused": True, "error": "Content-Length is required"})
-        if length < 0 or length > REQUEST_LIMIT:
-            return self._send(handler, 413, {"refused": True, "error": "Request too large"})
-        try:
-            request = json.loads(handler.rfile.read(length).decode("utf-8") or "{}")
-        except (OSError, ValueError):
             return self._send(handler, 400, {"refused": True, "error": "The body must be JSON: {\"tool\", \"arguments\"}"})
-        self._send(handler, 200, self._answer(request if isinstance(request, dict) else {}))
+        with self._calling:
+            if not self._open:
+                return self._send(handler, 410, {"refused": True, "error": "This run has ended"})
+            reply = self._answer(request if isinstance(request, dict) else {})
+        self._send(handler, 200, reply)
 
     def _answer(self, request: dict) -> dict:
         tool, arguments = request.get("tool"), request.get("arguments", {})
@@ -524,6 +551,8 @@ def _commands(name: str, info: dict, root: Path, folder: Path) -> tuple[list[str
                 [program, str(folder / "out" / "program.dll")])
     if name == "bash":
         return None, [program, source.as_posix()]
+    if name == "powershell" and info.get("bypass"):
+        arguments = (*arguments[:-1], "-ExecutionPolicy", "Bypass", arguments[-1])
     return None, [program, *arguments, str(source)]
 
 
@@ -533,6 +562,17 @@ def _cleanup(folder: Path) -> None:
         if not folder.exists():
             return
         time.sleep(0.2)
+
+
+def _sweep(folder: Path) -> None:
+    """Remove run folders an interrupted Dikdik left behind (no run lasts an hour)."""
+    try:
+        stale = [path for path in folder.glob(".dikdik-run-*")
+                 if path.is_dir() and not path.is_symlink() and time.time() - path.stat().st_mtime > STALE_SECONDS]
+    except OSError:
+        return
+    for path in stale:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def run(root: Path, language, code: str, cancel: threading.Event, *, files=None, timeout: float = 120, workdir=None,
@@ -546,7 +586,9 @@ def run(root: Path, language, code: str, cancel: threading.Event, *, files=None,
     scratch = folder_path / f".dikdik-run-{secrets.token_hex(6)}"
     started = time.monotonic()
     try:
+        _sweep(folder_path)
         scratch.mkdir()
+        _write(scratch / ".gitignore", "*\n")
         for helper, text in HELPERS.items():
             _write(scratch / helper, text, bom=helper.endswith(".ps1"))
         for relative, text in (files or {}).items():
