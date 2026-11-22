@@ -322,7 +322,9 @@ the usual session and origin checks:
 | `GET /api/skill-proposals` | Proposals, newest first (`?status=pending`). |
 | `POST /api/skill-proposals/{id}/{approve,reject}` | The user's decision. |
 
-There is no UI for these yet; the web client is unchanged.
+**Settings → Memory** uses these routes: it shows both stores one fact per line with their size
+caps, saves an edit (refused if it would pass the cap), clears a store after a confirmation, switches
+`memory` and `background_review`, and lists pending skill proposals with Approve and Reject.
 
 **Limits.** Credential detection is pattern-based: a secret in an unusual shape (a short password
 in prose, a lowercase passphrase) can still be saved, and the user can see and clear it. Memory is

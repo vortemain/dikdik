@@ -9,6 +9,7 @@ import { modelPicker } from "./model-picker";
 import { folderPicker } from "./folder-picker";
 import { confirmDialog, inputDialog, formDialog, showSecret } from "./dialogs";
 import { skillsPane } from "./skills-pane";
+import { memoryPane } from "./memory-pane";
 import { pluginsPane } from "./plugins-pane";
 import { mcpPane } from "./mcp-pane";
 import { boundedFilePreview, detectLanguage, fileFacts, highlight, highlightLines, languageLabel, supportedLanguages, projectStack } from "./highlight";
@@ -33,7 +34,7 @@ import { Typewriter } from './typewriter';
 import { createAskDrawer } from './ask-drawer';
 import { createConversationMode, isChatConversation } from './conversation-mode';
 import { citationMarkers, compactTokens, duration, groupable, groupTitle, pendingModelCall, sourceLabel, steeringStatus, thinkingDurations, thinkingLabel, thinkingSummary, toolTimings, turnCost, turnCostText } from './chat-space';
-import { startGreeting, suggestionsFor, chatSuggestions, renderSuggestions, factsFromFiles } from './welcome';
+import { startGreeting, suggestionsFor, chatSuggestions, renderSuggestions, factsFromFiles, timeGreeting } from './welcome';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
   const found = document.getElementById(id);
@@ -2184,8 +2185,22 @@ function setUrl(task: string | null): void {
   if (!loc || typeof globalThis.history?.replaceState !== "function") return;
   globalThis.history.replaceState(null, "", task ? `${loc.pathname}?task=${encodeURIComponent(task)}` : loc.pathname);
 }
+/** An empty conversation shows the message box in the middle of the welcome; an open one keeps it at the bottom. */
+function placeComposer(): void {
+  const main = document.getElementById("main"), composer = document.getElementById("composer"), slot = document.getElementById("welcome-composer");
+  if (!main || !composer || !slot || typeof slot.append !== "function") return;
+  const landing = !selected;
+  setClass(main, "landing", landing);
+  const home = landing ? slot : main;
+  if (composer.parentElement === home) return;
+  const focused = typeof composer.contains === "function" && composer.contains(document.activeElement) ? document.activeElement : null;
+  home.append(composer);
+  if (focused instanceof HTMLElement) focused.focus();
+  if (landing) el("welcome-hello").textContent = timeGreeting(new Date().getHours());
+}
 function syncComposer(): void {
-  textarea('objective').placeholder = isChat() ? "Ask anything — research, analysis, code, data, explanations… Dikdik can help."
+  placeComposer();
+  textarea('objective').placeholder = isChat() ? (selected ? "Reply to Dikdik…" : "How can I help you today?")
     : select('mode').value === 'plan' ? "Let\u2019s work on a plan" : selected ? "Reply to Dikdik\u2026" : "Ask Dikdik to build, fix or change something\u2026";
   el("task-actions").hidden = !selected;
   syncSend();
@@ -2251,13 +2266,12 @@ function setState(state: string): void {
       const existing = row.querySelector(".conv-spiral-loader");
       const active = state === "running" || state === "queued" || (!isTerminal(state) && !!state);
       if (active && !existing) {
-        const spiral = make("span", `conv-state conv-spiral-loader state-${state}`);
-        spiral.setAttribute("aria-label", "Running");
-        spiral.append(icon("spiral"));
-        row.prepend(spiral);
+        row.querySelector(".conv-mark")?.remove();
+        row.prepend(runningMark(state));
       } else if (!active && existing) {
         existing.remove();
       }
+      setClass(row, "conv-running", active);
     }
   }
 }
@@ -2397,6 +2411,14 @@ function taskRow(task: TaskSummary): HTMLElement {
   }
   return row;
 }
+/** A running conversation's mark: the same ring spinner as a running step in the chat. */
+function runningMark(state: string): HTMLElement {
+  const mark = make("span", `conv-state conv-spiral-loader state-${state}`);
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", state === "queued" ? "Queued" : "Running");
+  mark.append(make("span", "conv-ring"));
+  return mark;
+}
 function isTaskActive(task: TaskSummary): boolean {
   if (task.state === "running" || task.state === "queued") return true;
   if (task.id === selected && selectedState && !isTerminal(selectedState)) return true;
@@ -2412,10 +2434,8 @@ function taskRowBase(task: TaskSummary): HTMLElement {
   const label = make("span", "conv-obj", name);
   item.title = `${name} — ${task.state}`;
   if (isTaskActive(task)) {
-    const spiral = make("span", `conv-state conv-spiral-loader state-${task.state}`);
-    spiral.setAttribute("aria-label", "Running");
-    spiral.append(icon("spiral"));
-    item.append(spiral);
+    item.append(runningMark(task.state));
+    setClass(item, "conv-running", true);
   } else {
     // Only what needs a look gets a mark: a run waiting for you, or one that failed.
     const kind = statusKind(task.state);
@@ -2901,6 +2921,7 @@ async function connect(): Promise<void> {
         modelsPane(el("panel-profiles"), paneDeps)),
       secrets: keysPane(el("panel-secrets"), paneDeps),
       skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
+      memory: memoryPane(el("panel-memory"), paneDeps),
       plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
       mcp: mcpPane(el("panel-mcp"), paneDeps),
     });
@@ -3075,7 +3096,7 @@ themeSelect.addEventListener("change", () => {
   applyTheme(themeSelect.value);
 });
 
-const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps", git: "Git" };
+const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", memory: "Memory", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps", git: "Git" };
 
 // --- automations ----------------------------------------------------------
 let automations: Automation[] = [];
@@ -3581,13 +3602,11 @@ function composerRequest(text: string, goalMaxTurns?: number, mode?: Mode) {
   else if (openMode === "chat") mode = "chat";
   else if (isChat() && !selected) mode = "chat";
   if (mode === "chat") {
-    // Chat mode: research, analysis, files, and shell (with the same approval as code mode).
-    // The user's execution approval carries through; without it, chat is read-only research.
-    const approveExec = input("execution").checked;
+    // Chat mode: research, analysis, files, and commands in the chat's own folder.
+    // Commands are always available in a chat; each one asks the user first.
     return buildTaskRequest({
-      objective: text, mode: "chat",
-      verification: approveExec ? "local" : "syntax",
-      approveExecution: approveExec, approveExternal: true, edits: "", approveSecrets: false,
+      objective: text, mode: "chat", verification: "local",
+      approveExecution: true, approveExternal: true, edits: "", approveSecrets: false,
       approveBrowser: false,
       modelProfile: modelOverride?.id, attachments: attached.map(file => file.id),
     });
@@ -3900,7 +3919,7 @@ async function resumeTask(): Promise<void> {
   if (!selected || !taskRequest) return;
   const r = taskRequest, task = selected;
   const chosen = modelOverride?.id ?? r.model_profile;
-  const confirmation = confirmationForRunMode(runMode()) ?? r.confirmation;
+  const confirmation = r.mode === "chat" ? r.confirmation : confirmationForRunMode(runMode()) ?? r.confirmation;
   const body = {
     verification: r.verification, approve_external: r.approve_external === true, approve_execution: r.approve_execution === true,
     ...(r.approve_browser ? { approve_browser: true } : {}), ...(r.agent_profile ? { agent_profile: r.agent_profile } : {}),

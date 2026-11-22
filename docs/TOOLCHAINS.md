@@ -69,7 +69,8 @@ the live catalogs.
 The agent works with the shell it really has, and runs Python for real computation
 (`dikdik/shell_tools.py`, `dikdik/python_tool.py`, `dikdik/local_exec.py`). Both tools
 are offered in agent mode with local verification and in a chat whose commands the
-user approved; both go through the same approval gate as every command.
+user approved; both go through the same approval gate as every command. Every chat offers
+them, in the chat's own folder, and asks the user before each command (`confirmation: ask`).
 
 ### `run_command`
 
