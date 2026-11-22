@@ -41,6 +41,13 @@ class EffortTests(unittest.TestCase):
             self.assertEqual(classify_effort(text), DEEP, text)
         self.assertEqual(classify_effort("What is this?", attachments=True), DEEP)
 
+    def test_greetings_and_short_chat_are_simple(self):
+        for text in ("hi", "Hello!", "thanks", "good morning, Dikdik", "ok great"):
+            self.assertEqual(classify_effort(text), SIMPLE, text)
+        for text in ("Build me a todo app", "Plan my week around three exams and a part-time job",
+                     "Analyse this", "Create a lesson plan"):
+            self.assertEqual(classify_effort(text), DEEP, text)
+
     def test_a_request_field_overrides_the_heuristic(self):
         self.assertEqual(resolve_effort("What is 2+2?", None), (SIMPLE, "auto"))
         self.assertEqual(resolve_effort("What is 2+2?", "deep"), (DEEP, "user"))

@@ -349,8 +349,11 @@ class SkillIndex:
         selected = _route_skills(all_skills, objective, mode, new_project)
         selected.sort(key=lambda row: (row["scope"] == "installed", row["id"].lower() not in ALWAYS_ON))
         # Every enabled skill remains discoverable even if its body does not fit.
-        catalog = "Available skills (use read_skill with the id for full guidance or resources):\n" + "\n".join(
-            f"- {row['id']}: {row['description'][:160]}" for row in all_skills)
+        if mode == "chat":  # a conversation needs the ids only; read_skill gives the guidance on demand
+            catalog = "Skills you can load with read_skill when a task needs one: " + ", ".join(row["id"] for row in all_skills)
+        else:
+            catalog = "Available skills (use read_skill with the id for full guidance or resources):\n" + "\n".join(
+                f"- {row['id']}: {row['description'][:160]}" for row in all_skills)
         if len(catalog.encode()) > CONTEXT_LIMIT // 2:
             catalog = "Available skill ids (use read_skill for guidance):\n" + ", ".join(row["id"] for row in all_skills)
         if len(catalog.encode()) > CONTEXT_LIMIT // 2:

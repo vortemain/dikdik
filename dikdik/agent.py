@@ -910,7 +910,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
         *[{"role": m["role"], "content": m["content"]} for m in (history or [])
           if m.get("role") in {"user", "assistant"} and isinstance(m.get("content"), str)],
         *([{"role": "user", "content": "Note: no test runner is available for this task. run_tests only "
-            "checks syntax, so explain how the change should be verified."}] if verify is None else []),
+            "checks syntax, so explain how the change should be verified."}] if verify is None and not conversation else []),
         {"role": "user", "content": objective if turn_start == baseline else
          objective + "\n\n(The candidate already contains changes from earlier in this conversation.)"},
     ]

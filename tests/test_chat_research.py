@@ -322,6 +322,19 @@ class ChatConversationTests(unittest.TestCase):
                                                "release-management", "planning"}, loaded)
                     self.assertLessEqual(len(loaded), 3, loaded)
 
+    def test_a_greeting_gets_a_lean_first_request_without_coding_notes(self):
+        model = Mock()
+        model.respond.return_value = ModelResponse("Hi! How can I help?", [])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            chat = self.wait(self.engine.submit({"objective": "hi", "mode": "chat", "verification": "syntax", "approve_external": True}))
+        self.assertEqual(model.respond.call_count, 1)
+        sent = model.respond.call_args_list[0].args[0]
+        notes = json.dumps(sent[1:])
+        self.assertNotIn("run_tests", notes)
+        self.assertLess(len(notes.encode()), 2500, notes[:400])
+        effort = next(e["data"] for e in chat["events"] if e["kind"] == "agent_effort")
+        self.assertEqual(effort["level"], "simple")
+
     def test_chat_saves_working_notes_and_rejects_oversized_ones(self):
         turns = iter([ModelResponse("", [ToolCall("1", "save_notes", {"notes": "N=91; objectives 1-4"}),
                                          ToolCall("2", "save_notes", {"notes": "x" * 8001})]),

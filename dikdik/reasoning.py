@@ -23,11 +23,14 @@ REASONING_MODELS = re.compile(r"(?:^|[/:])(?:o[134](?:-|$)|gpt-5|gemini-(?:2\.5|
 
 
 def classify_effort(objective: str, attachments: bool = False) -> str:
-    """Simple for a short factual question with nothing attached; deep for anything else."""
+    """Simple for a short factual question or short chat (a greeting, thanks) with nothing attached;
+    deep for anything else."""
     text = objective.strip()
     if attachments or not text or len(text) > 240 or text.count("\n") > 2 or WORK.search(text):
         return DEEP
-    return SIMPLE if QUESTION.match(text) or text.endswith("?") else DEEP
+    if QUESTION.match(text) or text.endswith("?"):
+        return SIMPLE
+    return SIMPLE if len(text) <= 40 and "\n" not in text else DEEP
 
 
 def resolve_effort(objective: str, requested: str | None, attachments: bool = False) -> tuple[str, str]:
