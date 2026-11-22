@@ -922,11 +922,38 @@ export function browserView(events: TaskEvent[]): BrowserView {
   return view;
 }
 
+const CODE_LANGUAGES: Record<string, [string, string]> = {
+  python: ["python", "Python"], py: ["python", "Python"], python3: ["python", "Python"],
+  javascript: ["javascript", "JavaScript"], js: ["javascript", "JavaScript"], node: ["javascript", "JavaScript"],
+  typescript: ["typescript", "TypeScript"], ts: ["typescript", "TypeScript"],
+  bash: ["bash", "Bash"], sh: ["bash", "Bash"], shell: ["bash", "Bash"],
+  powershell: ["powershell", "PowerShell"], pwsh: ["powershell", "PowerShell"], ps1: ["powershell", "PowerShell"],
+  ruby: ["ruby", "Ruby"], rb: ["ruby", "Ruby"], php: ["php", "PHP"], perl: ["perl", "Perl"], pl: ["perl", "Perl"],
+  lua: ["lua", "Lua"], r: ["r", "R"], rscript: ["r", "R"], julia: ["julia", "Julia"], jl: ["julia", "Julia"],
+  java: ["java", "Java"], go: ["go", "Go"], golang: ["go", "Go"], rust: ["rust", "Rust"], rs: ["rust", "Rust"],
+  c: ["c", "C"], cpp: ["cpp", "C++"], "c++": ["cpp", "C++"], csharp: ["csharp", "C#"], "c#": ["csharp", "C#"],
+  cs: ["csharp", "C#"], dotnet: ["csharp", "C#"],
+};
+
+/** Tools that run a program the agent wrote: run_code, and run_python from earlier conversations. */
+export function isCodeTool(tool: string): boolean { return tool === "run_code" || tool === "run_python"; }
+
+/** A run_code call's language as a highlighter id and a readable name; run_python is Python. */
+export function codeLanguage(tool: string, args: unknown): { id: string; label: string } {
+  if (tool === "run_python") return { id: "python", label: "Python" };
+  const raw = typeof args === "object" && args !== null ? (args as Record<string, unknown>).language : undefined;
+  const key = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  const known = CODE_LANGUAGES[key];
+  if (known) return { id: known[0], label: known[1] };
+  const shown = /^[a-z0-9+#.-]{1,20}$/.test(key) ? key : "";
+  return { id: "", label: shown || "code" };
+}
+
 /** Readable text for a tool observation; falls back to JSON for unknown shapes. */
 export function observationText(tool: string, observation: unknown): string {
   if (typeof observation !== "object" || observation === null) return textOf(observation, 8000);
   const o = observation as Record<string, unknown>;
-  if (typeof o.error === "string" && tool !== "run_command") return `Error: ${textOf(o.error, 2000)}`;
+  if (typeof o.error === "string" && tool !== "run_command" && !isCodeTool(tool)) return `Error: ${textOf(o.error, 2000)}`;
   if (o.truncated === true && typeof o.preview === "string") return textOf(o.preview, 8000) + "\n…(truncated)";
   const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
   switch (tool) {
@@ -958,9 +985,15 @@ export function observationText(tool: string, observation: unknown): string {
         return `${String(c.kind)}: ${String(c.status)}${output}`;
       }).join("\n\n") || textOf(JSON.stringify(o, null, 2), 8000);
     }
+    case "run_code":
+    case "run_python":
     case "run_command": {
       if (o.status === undefined) return `Error: ${textOf(o.error, 2000)}`;  // rejected before it ran
-      const lines = [`exit ${o.exit_code === null || o.exit_code === undefined ? "–" : String(o.exit_code)} · ${String(o.status)}`];
+      const head = [`exit ${o.exit_code === null || o.exit_code === undefined ? "–" : String(o.exit_code)}`, String(o.status)];
+      if (isCodeTool(tool)) head.push(codeLanguage(tool, o).label);
+      if (o.phase === "build") head.push("build failed");
+      if (typeof o.tool_calls === "number" && o.tool_calls > 0) head.push(`${o.tool_calls} tool call${o.tool_calls === 1 ? "" : "s"}`);
+      const lines = [head.join(" · ")];
       const changed = strings(o.changed_files), rejected = strings(o.rejected_changes);
       if (changed.length) lines.push(`Kept changes: ${changed.join(", ")}`);
       if (rejected.length) lines.push(`Rejected changes: ${rejected.join(", ")}`);

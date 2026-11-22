@@ -1,4 +1,5 @@
 import { browserHistory, browserView, displayUrl, buildTaskRequest, commandActivity, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parsePlans, parseVerification, planStatus, planTitle, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
+import { codeLanguage, isCodeTool } from "./contracts";
 import { attachmentList, confirmationForRunMode, contextUsage, costProjection, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, BrowserPage, ChatMessage, ChecklistItem, FileStatus, Mode, SlashCommand, TaskRequest, DiffReview, PlanSummary, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
@@ -539,12 +540,18 @@ function confirmationCard(msg: ChatMessage): HTMLLIElement {
   const head = make("div", "result-head");
   const badge = make("span", "result-icon");
   badge.append(icon(browserPage ? "globe" : "shield"));
-  const asking = d.tool === "browse_url" ? "opening a web page" : d.tool === "run_command" ? "running a command" : d.tool || "this action";
+  const asking = d.tool === "browse_url" ? "opening a web page" : d.tool === "run_command" ? "running a command"
+    : isCodeTool(d.tool ?? "") ? `running ${codeLanguage(d.tool ?? "", args).label} code` : d.tool || "this action";
   head.append(badge, make("span", "result-title", `Allow ${asking}?`), make("span", "verify-badge", d.risk === "high" ? "High risk" : d.risk === "medium" ? "Needs review" : "Low risk"));
   card.append(head);
   if (d.reason) card.append(make("p", "result-text", d.reason));
   if (browserPage) card.append(browserPage);  // a readable address, not raw JSON
   else if (typeof args.command === "string") card.append(codeBlock(args.command, "bash", { wrap: true }));
+  else if (isCodeTool(d.tool ?? "") && typeof args.code === "string") {
+    card.append(codeBlock(args.code, codeLanguage(d.tool ?? "", args).id, { wrap: true }));
+    const rest = Object.fromEntries(Object.entries(args).filter(([key]) => key !== "code" && key !== "language"));
+    if (Object.keys(rest).length) card.append(renderStructuredUI(rest, { title: "Options" }));
+  }
   else card.append(renderStructuredUI(args, { title: "Arguments" }));
   const actions = make("div", "result-actions");
   const allow = make("button", "small primary", "Allow"); allow.type = "button"; allow.title = "Allow (Y, Enter or Ctrl+Enter)";

@@ -63,13 +63,13 @@ skill ids or copied bodies.
 | release-management | Prepare artifacts, rollout and recovery evidence. |
 | git-workflows | Preserve user changes and maintain focused repository work. |
 | browser-verification | Match web claims to available rendered/interactive evidence. |
-| scholarly-apis | Recipe: query OpenAlex, PubMed E-utilities and Crossref with `web_fetch` or `run_python`. |
+| scholarly-apis | Recipe: query OpenAlex, PubMed E-utilities and Crossref with `web_fetch` or `run_code`. |
 | doi-verification | Recipe: check that each DOI exists and matches the cited paper, singly or for a whole list. |
-| statistics-in-python | Recipe: analyses the `statistics` tool cannot express, in `run_python`, with checks. |
+| statistics-in-python | Recipe: analyses the `statistics` tool cannot express, in `run_code` (Python, or R when installed), with checks. |
 
 ### Recipes and narrow tools
 
-General tools come first: shell, files, web, `read_document` and `run_python`. A
+General tools come first: shell, files, web, `read_document` and `run_code`. A
 recipe is a skill with `type: recipe` in its front matter that teaches how to
 compose them for one job. Recipes appear in the catalog by name and description
 only; their bodies are never routed into the initial context, whatever the request
@@ -80,9 +80,9 @@ Narrow tools were reviewed against that rule (November 2026):
 | Tool | Decision | Why |
 | --- | --- | --- |
 | `literature_search` | Keep | One call normalises OpenAlex, PubMed and arXiv records and verifies a DOI through Crossref, with no key and bounded output. The `scholarly-apis` recipe covers what it cannot express (paging, filters, counts). |
-| `statistics` | Keep | Deterministic, tested analyses that resolve columns by name and report assumptions. `statistics-in-python` covers custom models through `run_python`. |
+| `statistics` | Keep | Deterministic, tested analyses that resolve columns by name and report assumptions. `statistics-in-python` covers custom models through `run_code`. |
 | `read_document`, `create_document`, `read_image` | Keep | File formats (DOCX, PDF, XLSX, OCR) that would otherwise need packages the user may not have. |
-| `analyze_data` | Keep | A bounded first look at a data file; heavier work moves to `run_python`. |
+| `analyze_data` | Keep | A bounded first look at a data file; heavier work moves to `run_code`. |
 
 ### Research subagent
 
@@ -90,7 +90,7 @@ Narrow tools were reviewed against that rule (November 2026):
 project or personal agent named `researcher` takes precedence). It starts with a fresh context
 and only reading tools (`read_document`, `statistics`, `read_image`, `web_fetch`,
 `web_search`, `literature_search`, `analyze_data`, `read_skill`), never commands,
-`run_python` or edits, and returns a short report with sources (at most 6,000
+`run_code` or edits, and returns a short report with sources (at most 6,000
 characters). Long documents and web pages are read in the child, so they never
 fill the main conversation. It has 12 model calls, 40 tool calls and five minutes,
 uses the side model when one is configured, and its tool calls pass the parent's

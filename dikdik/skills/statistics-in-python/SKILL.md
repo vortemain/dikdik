@@ -1,6 +1,6 @@
 ---
 name: statistics-in-python
-description: Run an analysis in run_python when the statistics tool cannot express it (custom recoding, logistic or multiple regression with interactions, effect sizes, bootstraps, sample-size calculations), and check its numbers.
+description: Run an analysis in run_code (Python, or R when installed) when the statistics tool cannot express it (custom recoding, logistic or multiple regression with interactions, effect sizes, bootstraps, sample-size calculations), and check its numbers.
 category: research
 version: "1.0"
 type: recipe
@@ -10,11 +10,25 @@ triggers: "logistic regression, multiple regression, bootstrap, sample size calc
 # Statistics in Python
 
 Start with the `statistics` tool: it reads the table, resolves columns by name or
-number and reports tests with their assumptions. Move to `run_python` when the
+number and reports tests with their assumptions. Move to `run_code` when the
 analysis needs something it does not offer, and keep the tool's `overview` as the
 map of columns.
 
-## Get the data into the script
+## Pick the language
+
+`run_code` lists the languages installed on this computer.
+
+- **R** (`language: "r"`, when listed) for models and tests R does natively:
+  `glm(outcome ~ age + sex, family = binomial)` with `exp(cbind(OR = coef(m), confint.default(m)))`,
+  `t.test`, `wilcox.test`, `chisq.test`, `fisher.test`, `cor.test`, `shapiro.test`,
+  `aov` and `TukeyHSD`, and `power.t.test` or `power.prop.test` for sample sizes.
+  Read CSV with `read.csv("attachments/data.csv", fileEncoding = "UTF-8-BOM")`; check
+  for a package with `requireNamespace("readxl", quietly = TRUE)` before `library()`.
+- **Python** (always there) for everything else, and when the data needs
+  `dikdik_tools` (`read_document`, `statistics`) first.
+- Do not mix both for one result: report numbers from the language that computed them.
+
+## Get the data into a Python script
 
 - CSV or TSV: `csv.DictReader(open("attachments/data.csv", encoding="utf-8-sig"))`.
 - Excel, ODS or a Word table: `statistics(path, "overview")` from `dikdik_tools`

@@ -53,7 +53,7 @@ from .workspace_registry import WorkspaceRegistry
 from .backends import BackendStore
 from .acp_agents import AcpAgentStore
 from .acp_client import AcpError, AcpSession, host_env
-from . import local_exec, python_tool, shell_tools
+from . import code_tool, local_exec, shell_tools
 from . import analysis, docextract, documents, scholarly, stats, tool_output, vision
 from . import dast, engineering, faults, loadtest, parallel, tracing, visual
 from . import logs
@@ -1700,7 +1700,7 @@ class Engine:
         return self._with_notices(task, result)
 
     def _script_gate(self, task, confirm, hooks=None):
-        """A run_python script's tool call passes the same permission rules, approvals and hooks as the model's own."""
+        """A run_code program's tool call passes the same permission rules, approvals and hooks as the model's own."""
         def gate(name, arguments):
             call = ToolCall("py-" + uuid.uuid4().hex[:12], name, dict(arguments))
             if hooks is not None:
@@ -1993,7 +1993,7 @@ class Engine:
                 local_exec.check_command_scope(command, self.root)
                 folder = shell_tools.resolve_workdir(self.root, options.get("workdir"))
             else:
-                python_tool.check_code(script.get("code"), self.root)
+                code_tool.check_code(script.get("language"), script.get("code"), self.root, script.get("files"))
                 folder = shell_tools.resolve_workdir(self.root, script.get("workdir"))
             refreshed = sync(files)
             if refreshed:
@@ -2006,9 +2006,10 @@ class Engine:
             timeout = min(max(int(timeout or 60), 1500), 1800) if installing else 3 if background else min(int(timeout or 60), 600)
             chunk, done = stream_command(command, "this computer", timeout)
             if script is not None:
-                result = python_tool.run(self.root, script["code"], cancel, timeout=timeout, workdir=script.get("workdir"),
-                                         call_tool=script["call_tool"], allowed=script["allowed"], on_chunk=chunk,
-                                         env=sandbox_env or None, limits=self._local_limits())
+                result = code_tool.run(self.root, script.get("language"), script["code"], cancel, timeout=timeout,
+                                       workdir=script.get("workdir"), files=script.get("files"),
+                                       call_tool=script["call_tool"], allowed=script["allowed"], on_chunk=chunk,
+                                       env=sandbox_env or None, limits=self._local_limits())
             else:
                 result = local_exec.run(folder, command, cancel, timeout=timeout, on_chunk=chunk, env=sandbox_env or None,
                                         limits=self._local_limits(), background=self.background, owner=task,
@@ -2019,6 +2020,7 @@ class Engine:
             workspace.forget_paths()
             if installing:  # what is installed changed: look again before the next command or check
                 toolchain.forget()
+                code_tool.forget()
                 local_exec.forget_installed()
             try:
                 if script is None:
@@ -2341,7 +2343,7 @@ class Engine:
             self.store.event(task, "subagent", {"phase": "end", "agent": name, "state": child.state, "tool_calls": child.tool_calls, "findings": findings[:4000]})
             return {"agent": name, "state": child.state, "findings": findings[:8000]}
 
-        callable_names = {tool["function"]["name"] for tool in extra_tools} & set(python_tool.CALLABLE)
+        callable_names = {tool["function"]["name"] for tool in extra_tools} & set(code_tool.CALLABLE)
         script_gate = self._script_gate(task, confirm, hooks)
 
         def script_tool(name, arguments):
@@ -2349,7 +2351,7 @@ class Engine:
             return agent_call(name, arguments)
 
         def python_shell(files, arguments):
-            return local_shell(files, "run_python", arguments.get("timeout_seconds", 120),
+            return local_shell(files, f"run_code {arguments.get('language', 'python')}", arguments.get("timeout_seconds", 120),
                                script={**arguments, "call_tool": script_tool, "allowed": callable_names})
 
         resume = request.get("resume")
@@ -2391,7 +2393,7 @@ class Engine:
                 shell_tool=shell_tools.run_command_tool(local_exec.shell_kind(), os.name == "nt") if local else None,
                 on_write=write_now if local else None,
                 python=python_shell if shelling else None,
-                python_tool=python_tool.run_python_tool(callable_names) if shelling else None,
+                python_tool=code_tool.run_code_tool(callable_names) if shelling else None,
                 extra_tools=extra_tools, extra_call=extra_call if extra_tools else None,
                 pause=pause, confirm=confirm, checkpoint=checkpoint, resume=resume, images=request.get("images"),
                 describe_images=lambda urls: self.describe_image_urls(urls, self.models.describe(model_id).get("model", "")),
@@ -2723,9 +2725,10 @@ class Engine:
                                                  "shell": local,
                                                  "model": {k: v for k, v in model.items() if k != "problem"}})
         shell_note = (
-            "You CAN run commands (run_command) and Python scripts (run_python) in your working folder, each with "
-            "the user's approval: Python for loops, bulk filtering and every calculation, analyses the statistics tool "
-            "does not cover, or charts as PNG images (then embed them in a Word document with ![Figure n: caption](file.png)). "
+            "You CAN run commands (run_command) and programs in any installed language (run_code) in your working folder, "
+            "each with the user's approval: code for loops, bulk filtering and every calculation, analyses the statistics "
+            "tool does not cover, or charts as PNG images (then embed them in a Word document with ![Figure n: caption](file.png)). "
+            "Pick the language that fits: Python by default, R for statistics when it is installed, the project's own language for its code. "
             "Explain what a command does before running it."
         ) if local else (
             "You cannot run shell commands in this conversation (the user has not turned that on). Everything else "
@@ -2882,7 +2885,7 @@ class Engine:
                     local_exec.check_command_scope(command, root)
                     folder = shell_tools.resolve_workdir(root, options.get("workdir"))
                 else:
-                    python_tool.check_code(script.get("code"), root)
+                    code_tool.check_code(script.get("language"), script.get("code"), root, script.get("files"))
                     folder = shell_tools.resolve_workdir(root, script.get("workdir"))
                 refreshed = sync(files)
                 if refreshed:
@@ -2892,9 +2895,10 @@ class Engine:
                 timeout = 3 if background else min(int(timeout or 60), 600)
                 chunk, done = stream_command(command, "this computer", timeout)
                 if script is not None:
-                    result = python_tool.run(root, script["code"], cancel, timeout=timeout, workdir=script.get("workdir"),
-                                             call_tool=script["call_tool"], allowed=script["allowed"], on_chunk=chunk,
-                                             limits=self._local_limits())
+                    result = code_tool.run(root, script.get("language"), script["code"], cancel, timeout=timeout,
+                                           workdir=script.get("workdir"), files=script.get("files"),
+                                           call_tool=script["call_tool"], allowed=script["allowed"], on_chunk=chunk,
+                                           limits=self._local_limits())
                 else:
                     result = local_exec.run(folder, command, cancel, timeout=timeout, on_chunk=chunk, limits=self._local_limits(),
                                             background=self.background, owner=task, on_exit=self._background_notice(task),
@@ -2910,16 +2914,16 @@ class Engine:
             shell_fn = shell_inner
             shell_tool = shell_tools.run_command_tool(local_exec.shell_kind(), os.name == "nt")
             tools = tools + [shell_tools.COMMAND_PROCESS_TOOL]
-            callable_names = {tool["function"]["name"] for tool in tools} & set(python_tool.CALLABLE)
+            callable_names = {tool["function"]["name"] for tool in tools} & set(code_tool.CALLABLE)
 
             def script_tool(name, arguments):
                 self._script_gate(task, confirm_fn)(name, arguments)
                 return chat_call(name, arguments)
 
             def python_fn(files, arguments):
-                return shell_inner(files, "run_python", arguments.get("timeout_seconds", 120),
+                return shell_inner(files, f"run_code {arguments.get('language', 'python')}", arguments.get("timeout_seconds", 120),
                                    script={**arguments, "call_tool": script_tool, "allowed": callable_names})
-            python_def = python_tool.run_python_tool(callable_names)
+            python_def = code_tool.run_code_tool(callable_names)
 
             def confirm_fn(call):
                 risk, why = assess(call)

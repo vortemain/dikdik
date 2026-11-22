@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 
 from .agent import ToolCall, _tool
+from .code_tool import SHELLS, language_name
 from .docextract import attachment_text
 from .providers import chat_completion
 from . import migrations
@@ -36,6 +37,19 @@ PYTHON_HIGH = [
     (re.compile(r"\b(shutil\.rmtree|os\.remove|os\.unlink|os\.rmdir|\.unlink\(|\.rmdir\()"), "deletes files"),
     (re.compile(r"\b(urllib\.request|urllib3|requests|httpx|aiohttp|http\.client|socket|ftplib|smtplib)\b|\bfrom\s+urllib\s+import\s+request\b"),
      "reaches the network directly (dikdik_tools.web_fetch does not)"),
+]
+# Other languages: what makes a program high risk, beyond the shell command checks for bash and PowerShell.
+CODE_HIGH = [
+    (re.compile(r"child_process|\bexecSync\b|\bspawnSync\b|Deno\.Command|Bun\.spawn|Start-Process|Invoke-Expression|\biex\b|"
+                r"os/exec|exec\.Command|std::process::Command|Process\.Start|Runtime\.getRuntime|ProcessBuilder|"
+                r"\b(?:system|shell_exec|passthru|proc_open|popen)\s*\(|%x\{|\bIO\.popen|\brun\(`"), "runs other programs"),
+    (re.compile(r"\brm\s+-[a-zA-Z]*[rf]|Remove-Item|\bfs\.(?:rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)\b|\bunlink\s*\(|"
+                r"File\.Delete|Directory\.Delete|os\.Remove(?:All)?\b|remove_dir_all|remove_file|Files\.delete|"
+                r"FileUtils\.rm|\bfile\.remove\b|\brmdir\b"), "deletes files"),
+    (re.compile(r"\bfetch\s*\(|\bhttps?\.(?:request|get)\b|XMLHttpRequest|WebSocket|\bnet\.(?:connect|createConnection)\b|"
+                r"Invoke-WebRequest|Invoke-RestMethod|\biwr\b|\birm\b|\b(?:curl|wget|nc|ssh|scp)\b|net/http|\breqwest\b|"
+                r"HttpClient|WebClient|Net::HTTP|open-uri|\bsocket\b|fsockopen|download\.file|\bhttr\b|HTTP\.jl|Downloads\.download|"
+                r"java\.net|LWP::|IO::Socket", re.I), "reaches the network directly (the Dikdik tool helpers do not)"),
 ]
 READ_TOOLS = {"list_files", "read_file", "search_text", "read_skill", "read_plan", "task_tracker", "write_plan", "finish", "delegate",
               "architecture_map", "impacted_tests", "security_scan", "quality_check", "release_gate", "record_requirements",
@@ -66,12 +80,18 @@ def assess(call: ToolCall) -> tuple[str, str]:
         return "high", "reads a secrets file such as .env"
     if call.name in READ_TOOLS:
         return "low", "reads or reports only"
-    if call.name == "run_python":
-        code = str(call.arguments.get("code", ""))
-        for pattern, reason in PYTHON_HIGH:
+    if call.name in ("run_python", "run_code"):
+        files = call.arguments.get("files")
+        code = "\n".join([str(call.arguments.get("code", "")), *(map(str, files.values()) if isinstance(files, dict) else ())])
+        language = language_name(call.arguments.get("language")) if call.name == "run_code" else "python"
+        if language == "python":
+            checks, what = PYTHON_HIGH, "script"
+        else:
+            checks, what = CODE_HIGH + (HIGH if language in SHELLS else []), "program"
+        for pattern, reason in checks:
             if pattern.search(code):
-                return "high", f"the script {reason}"
-        return "medium", "runs a Python script"
+                return "high", f"the {what} {reason}"
+        return "medium", "runs a Python script" if language == "python" else f"runs a {language} program"
     if call.name == "command_process":
         action = call.arguments.get("action")
         if action == "input":
@@ -105,7 +125,7 @@ def assess(call: ToolCall) -> tuple[str, str]:
     return "medium", "uses a tool"
 
 
-ACTION_TOOLS = {"run_command", "run_python", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"} | BROWSER_WRITE_TOOLS
+ACTION_TOOLS = {"run_command", "run_python", "run_code", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"} | BROWSER_WRITE_TOOLS
 
 
 # --- structured permission rules -------------------------------------------------------
@@ -114,9 +134,9 @@ ACTION_TOOLS = {"run_command", "run_python", "preview_app", "measure_performance
 # can never add one). An unmatched call falls through to the normal policy.
 RULE_ACTIONS = {"*", "read", "edit", "create", "command", "browse"}
 RULE_GROUPS = {"read": READ_TOOLS, "edit": {"edit_file"}, "create": {"create_file", "record_decision"},
-               "command": {"run_command", "run_python", "command_process", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}, "browse": {"preview_app", "browse_url", "web_fetch", "web_search"} | BROWSER_WRITE_TOOLS | BROWSER_READ_TOOLS}
+               "command": {"run_command", "run_python", "run_code", "command_process", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}, "browse": {"preview_app", "browse_url", "web_fetch", "web_search"} | BROWSER_WRITE_TOOLS | BROWSER_READ_TOOLS}
 RULE_SUBJECT = {"list_files": "path", "read_file": "path", "search_text": "path", "edit_file": "path",
-                "create_file": "path", "run_command": "command", "run_python": "code", "preview_app": "command", "measure_performance": "command", "repeat_command": "command", "load_test": "command", "dast_scan": "command", "fault_test": "command", "browse_url": "url", "web_search": "query"}
+                "create_file": "path", "run_command": "command", "run_python": "code", "run_code": "code", "preview_app": "command", "measure_performance": "command", "repeat_command": "command", "load_test": "command", "dast_scan": "command", "fault_test": "command", "browse_url": "url", "web_search": "query"}
 RULE_NAME = re.compile(r"[a-z0-9_.-]{1,60}")
 
 
@@ -138,7 +158,9 @@ def _rule_matches(rule, call: ToolCall) -> bool:
     action = rule.get("action")
     if not isinstance(action, str):
         return False
-    if action != "*" and action != call.name and call.name not in RULE_GROUPS.get(action, ()):
+    legacy = action == "run_python" and call.name == "run_code" and \
+        str(call.arguments.get("language", "")).strip().lower() in ("python", "py", "python3")
+    if action != "*" and action != call.name and call.name not in RULE_GROUPS.get(action, ()) and not legacy:
         return False
     pattern = rule.get("resource", "*")
     if not isinstance(pattern, str) or pattern == "*" or pattern == "":

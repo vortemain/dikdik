@@ -768,8 +768,9 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
     ``effort`` ("simple" or "deep"; classified from the objective when None) sets how much
     planning and checking the request gets. ``lint(files, changed_paths)`` runs the project's
     linter or type checker after edits; its errors in those files are fed back up to 3 times.
-    ``python(files, arguments)`` with its ``python_tool`` definition enables run_python; its results are
-    handled like a command's.
+    ``python(files, arguments)`` with its ``python_tool`` definition (run_code) enables running programs in
+    any installed language; its results are handled like a command's. A run_python call (earlier
+    transcripts) runs as run_code in Python.
     ``steer()`` returns messages the user sent during the run; they are added after each batch of
     tool results so the run can change course without stopping.
 
@@ -1034,6 +1035,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
             'Choose checks from the request: reproduce bugs and test the affected behavior; for UI/design work use preview_app when offered, '
             'check desktop/mobile layout and exercise the requested controls with expected results. A build or test pass alone does not prove a design works. '
             'Inspect real failures, repair them, then recheck the changed behavior. Keep checks proportional to the request. '
+            'Verify in the project\'s own language with its own toolchain and scripts (npm/pnpm/bun test for a Node project, '
+            'go test, cargo test, dotnet test, mvn or gradle, pytest, Rscript), not by rewriting the check in another language. '
             'Finish with what changed, what actually ran and any remaining blocker. Do not claim visual inspection, interaction coverage or perfection without evidence. '
             f'Capabilities this run: shell={shell is not None}{f" ({shell_note})" if shell is not None and shell_note else ""}; local preview={"preview_app" in extra_names}; host verifier={verify is not None}.')
     if not read_only and not conversation and "environment_check" in extra_names and 'Setting up this computer:' not in messages[0]['content']:
@@ -1452,6 +1455,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
         # WP13: when parallel_reads is on, read-only tool calls in this batch start
         # executing their I/O concurrently; their results are collected in order.
         for call in calls:
+            if call.name == "run_python" and python is not None and isinstance(call.arguments, dict):
+                call.name, call.arguments = "run_code", {"language": "python", **call.arguments}
             call.arguments = _lenient(call, tools, workspace.root if workspace is not None else None)
         READ_ONLY = {"list_files", "read_file", "search_text"}
         batch_edits: set[str] = set()
@@ -1845,7 +1850,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         pending_image_note = ("The browser screenshot from " + call.name + " above. Compare it with what the "
                                               "page should show; use browser_snapshot or browser_inspect for exact values.")
                     failed = "error" in result or result.get("is_error") is True
-                elif call.name == "run_command" or call.name == "run_python" and python is not None:
+                elif call.name == "run_command" or call.name == "run_code" and python is not None:
                     preview_revision = None
                     # Commands can change dependencies or other external state even
                     # when no candidate text changes (for example npm install).
@@ -1860,7 +1865,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         if stop:
                             return stop
                         try:
-                            if call.name == "run_python":
+                            if call.name == "run_code":
                                 ran = python(dict(candidate), dict(args))
                             else:
                                 options = {key: args[key] for key in ("workdir", "background") if key in args}
@@ -1907,7 +1912,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                         result = {"status": ran.get("status"), "exit_code": ran.get("exit_code"),
                                   "output": head_tail(str(ran.get("output", "")), 12000),
                                   "changed_files": sorted(accepted), "rejected_changes": rejected,
-                                  **{key: ran[key] for key in ("workdir", "background_id", "tool_calls", "refused_tool_calls", "notices")
+                                  **{key: ran[key] for key in ("workdir", "background_id", "language", "phase", "tool_calls", "refused_tool_calls", "notices")
                                      if ran.get(key) not in (None, [], "")},
                                   **({"error": ran["error"]} if ran.get("error") else {}),
                                   **({"stop_turn": True} if ran.get("stop_turn") else {}),
@@ -2129,7 +2134,7 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
             if not failed:
                 failures.clear()  # A successful different action provides new information/state.
                 # A command that changed nothing and printed the same output again is a re-read too.
-                if call.name in READS or call.name in {"run_command", "run_python"} and not result.get("changed_files"):
+                if call.name in READS or call.name in {"run_command", "run_code"} and not result.get("changed_files"):
                     same_read = {key: value for key, value in call.arguments.items() if key not in {"max_chars", "max_results"}}
                     read_key = hashlib.sha256(_json([call.name, same_read, result]).encode()).hexdigest()
                     count = seen_reads.pop(read_key, 0) + 1
