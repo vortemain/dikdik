@@ -75,8 +75,8 @@ class WebhookTests(unittest.TestCase):
         catch = HTTPServer(("127.0.0.1", 0), CatchHandler)
         port = catch.server_port
         threading.Thread(target=catch.serve_forever, daemon=True).start()
-        self.addCleanup(catch.shutdown)
         self.addCleanup(catch.server_close)
+        self.addCleanup(catch.shutdown)  # cleanups run last-first: stop serving, then close
 
         self.call("POST", "/api/webhooks", {"url": f"http://127.0.0.1:{port}/hook"})
 
@@ -114,8 +114,8 @@ class WebhookTests(unittest.TestCase):
         catch = HTTPServer(("127.0.0.1", 0), CatchHandler2)
         port = catch.server_port
         threading.Thread(target=catch.serve_forever, daemon=True).start()
-        self.addCleanup(catch.shutdown)
         self.addCleanup(catch.server_close)
+        self.addCleanup(catch.shutdown)  # cleanups run last-first: stop serving, then close
 
         status, body = self.call("POST", "/api/webhooks", {"url": f"http://127.0.0.1:{port}/hook"})
         wid = json.loads(body)["id"]
