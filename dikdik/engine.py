@@ -2454,6 +2454,7 @@ class Engine:
             "model": {k: model[k] for k in ("model", "profile", "provider_name") if k in model},
             "model_id": model_id or "",
             **({"release_gate": outcome.release_gate} if outcome.release_gate else {}),
+            **({"security": outcome.security} if outcome.security and outcome.security["findings"] else {}),
             "limitations": "Candidate only. Syntax checked only; no tests were run. Provider usage may be unavailable; costs are shown only when the provider reports them.",
         }
         if local:
@@ -3013,6 +3014,7 @@ class Engine:
             "model_id": model_id or "",
             "chat_files": [item for item in files if not item["attachment"]][:50],
             "created_files": list(dict.fromkeys(created)),
+            **({"security": outcome.security} if outcome.security and outcome.security["findings"] else {}),
             "limitations": "Chat conversation: research, analysis and documents in this conversation's own folder"
                            + (", with commands you approved." if local else " (no shell commands)."),
         }

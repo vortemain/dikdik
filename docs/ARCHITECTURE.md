@@ -78,6 +78,49 @@ file outside the project). The gate also covers:
   (latency, reset, early close, partition, down); a `resilience` gate.
 - Visual regression (`dikdik/visual.py`): `preview_app` compares each capture with the owner-accepted baseline
   (`visual_baselines` table; `GET /api/visual-baselines`, `/image`, `POST /accept`); a `visual` gate.
+
+### Secure by default in what the agent writes
+
+`dikdik/secure_output.py` applies the scanner's rules to everything a run writes, in agent mode and
+in chat, without a tool call from the model:
+
+- **Credentials are never written.** `edit_file`, `create_file` and `create_document` refuse content
+  that adds a live-looking credential (the critical and high secret rules: AWS, GitHub, Anthropic,
+  OpenAI, Stripe live, Slack, Google keys and PEM private keys with a key body). Placeholders,
+  repetitive values and sample JWTs pass. A value the user typed in the objective or earlier user
+  messages may be written where they asked; it is masked from the release gate and reported as a
+  security note in the answer and in `result.security.provided_credentials`.
+- **Introduced findings are reflected.** After each batch of tool calls, files written by edits or
+  commands (compared with the turn's baseline) and text deliverables from `create_document` are
+  scanned. Critical and high security findings go back to the model as a user message, at most two
+  rounds per run (`secure_output.ROUNDS`), like lint reflection. A `run_python` script is scanned
+  before it runs; while rounds remain, a risky script is not run and the findings are returned
+  instead. After the rounds, it runs and its findings are kept for the report.
+- **Leftovers are reported.** On completion, unresolved findings, newly added `dikdik-scan: ignore`
+  comments and user-provided credentials are appended to the final answer, returned as
+  `result.security` (`findings`, `reflections`, `suppressed`, `provided_credentials`) and emitted as
+  an event.
+- **Redaction.** Every agent event payload, and the assistant and tool messages of the checkpoint
+  transcript, pass through `secure_output.scrub`, the same masking the operational logs use
+  (`logs.redact`: the secret rules, registered session and provider values, `Bearer` tokens). User
+  messages stay as typed so a resumed run still recognises a credential the user provided.
+
+Events: `agent_security_findings` with `stage` (`edit`, `document`, `script` or `final`), `action`
+(`reflect`, `report`), `reflection` (round number, when reflecting), `paths` and `findings` (rule, title,
+severity, file, line, CWE, redacted evidence, remediation). The scanner rules this adds are PY011
+(world-writable `chmod`/`umask`), PY005 for `check_hostname = False`, JS004 (`rejectUnauthorized:
+false`, `NODE_TLS_REJECT_UNAUTHORIZED=0`), JS005 (world-writable `fs.chmod`), SH001 to SH003 for shell
+and PowerShell scripts (remote script piped to a shell, world-writable `chmod`, `curl -k`, `wget
+--no-check-certificate`, `-SkipCertificateCheck`) and CFG001 for configuration that turns TLS
+verification off (`verify_ssl: false`, `strict-ssl=false`, `sslVerify = false`, `insecure_skip_verify:
+true`). The command risk assessment (`control.assess`) rates downloaded scripts piped into a shell,
+secrets or environment sent over the network, recursive deletes (including PowerShell and `rmdir /s`)
+and world-writable permissions as high risk, so they always ask in the guarded modes.
+
+Limits: pattern and AST rules only, no data flow. Files written by shell commands are scanned and
+reported but not refused; a credential a command writes is caught as a critical finding, which the
+release gate blocks. `create_document` text formats get code rules by extension; Word and Excel
+deliverables get the credential check only.
 - `parallel_edit` (`dikdik/parallel.py`): 2-4 writer agents with disjoint file ownership run concurrently on
   copies of the candidate; the coordinator merges by ownership and verifies once.
 - Traces: `dikdik/tracing.py` turns agent events into OTLP spans when `DIKDIK_OTEL_ENDPOINT` is set.

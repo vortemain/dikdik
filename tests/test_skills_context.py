@@ -66,6 +66,15 @@ class SkillContextTests(unittest.TestCase):
         text, names = self.skills.context("What is 2 + 2?", "agent")
         self.assertIn("planning", names)  # always-on fallback for code mode
 
+    def test_secure_coding_guidance_loads_for_code_writing(self):
+        for objective in ("Write a script that uploads files to the API", "Add a SQL query for the orders endpoint",
+                          "Implement login with a password reset", "Read the token from an environment variable"):
+            text, names = self.skills.context(objective, "agent")
+            self.assertIn("security-review", names, objective)
+            self.assertIn("Parameterized queries", text, objective)
+        self.assertNotIn("security-review", self.skills.context("Write a README for the project", "agent")[1])
+        self.assertNotIn("security-review", self.skills.context("What is the capital of Kenya?", "chat")[1])
+
     def test_context_is_bounded(self):
         for index in range(8):
             (self.root / ".dikdik" / "skills" / f"big{index}.md").write_text("x" * 20000)

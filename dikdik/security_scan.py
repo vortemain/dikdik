@@ -76,6 +76,13 @@ REMEDIATION = {
     "JS001": "Do not evaluate dynamic text; parse it or dispatch through a table.",
     "JS002": "Assign textContent, or sanitize HTML with a vetted sanitizer before inserting it.",
     "JS003": "Pass an argument array to execFile/spawn instead of building a shell command string.",
+    "PY011": "Grant only the owner (and group, if needed) write access, for example 0o755 or 0o600; keep the umask at 0o022 or stricter.",
+    "JS004": "Keep certificate verification on; trust a specific CA (the ca option) instead of disabling checks.",
+    "JS005": "Grant only the owner (and group, if needed) write access, for example 0o755 or 0o600.",
+    "SH001": "Download to a file, verify its checksum or signature, then run it.",
+    "SH002": "Grant only the owner (and group, if needed) write access, for example chmod 755 or chmod 600.",
+    "SH003": "Keep certificate verification on; point the tool at the right CA bundle instead of skipping checks.",
+    "CFG001": "Keep TLS verification on; configure the CA bundle the service needs instead.",
     # reliability (constitution Part 13)
     "REL001": "Pass timeout= so a stalled server cannot hang the caller forever.",
     "REL002": "Catch the specific exception you expect, or log it; a silent pass hides real failures.",
@@ -108,7 +115,8 @@ CWE = {"PY001": "CWE-78", "PY002": "CWE-95", "PY003": "CWE-502", "PY004": "CWE-5
        "I18N001": "CWE-1339", "I18N002": "CWE-838", "I18N003": "CWE-1339", "I18N102": "CWE-1339",
        "PRIV001": "CWE-532", "PRIV002": "CWE-359", "PRIV101": "CWE-532", "INF001": "CWE-1104", "INF002": "CWE-250",
        "INF003": "CWE-798", "INF004": "CWE-494", "INF005": "CWE-494", "INF006": "CWE-829", "INF007": "CWE-250", "INF008": "CWE-829",
-       "INF009": "CWE-250", "INF010": "CWE-250"}
+       "INF009": "CWE-250", "INF010": "CWE-250", "PY011": "CWE-732", "JS004": "CWE-295", "JS005": "CWE-732",
+       "SH001": "CWE-494", "SH002": "CWE-732", "SH003": "CWE-295", "CFG001": "CWE-295"}
 CATEGORIES = {"REL": "reliability", "I18N": "i18n", "PRIV": "privacy", "INF": "infrastructure"}
 SECURITY_RULES = {"INF003", "INF004", "INF007", "INF008", "INF009"}  # infrastructure rules that are security findings
 
@@ -131,6 +139,9 @@ JS_RULES = [
     ("JS001", "Dynamic code evaluation", "high", re.compile(r"(?<![\w.$])(?:eval\s*\(|new\s+Function\s*\()")),
     ("JS002", "HTML injection sink", "medium", re.compile(r"\.(?:innerHTML|outerHTML)\s*=(?!=)|\binsertAdjacentHTML\s*\(|\bdocument\.write\s*\(|dangerouslySetInnerHTML")),
     ("JS003", "Shell command built from strings", "high", re.compile(r"\bexec(?:Sync)?\s*\(\s*(?:`[^`]*\$\{|[^,)]*\+)")),
+    ("JS004", "TLS certificate verification disabled", "high",
+     re.compile(r"\brejectUnauthorized\s*:\s*false\b|\bNODE_TLS_REJECT_UNAUTHORIZED\b\s*=\s*['\"]?0\b")),
+    ("JS005", "File made world-writable", "high", re.compile(r"\b(?:l|f)?chmod(?:Sync)?\s*\([^,()]+,\s*['\"]?0?o?[0-7]?[0-7][0-7][2367]\b")),
     ("REL101", "fetch without a timeout signal", "low", re.compile(r"(?<![\w.$])fetch\s*\((?![^)]*\bsignal\b)[^)]*\)")),
     ("I18N102", "Money parsed as binary floating point", "medium", re.compile(r"\bparse(?:Float)\s*\(\s*[\w.]*(?:price|amount|total|balance|cost|fee)", re.I)),
     ("PRIV101", "Credential or personal data logged to the console", "medium",
@@ -233,10 +244,15 @@ def python_findings(text: str) -> list[tuple[str, str, str, int]]:
         debug = _keyword(node, "debug")
         if tail == "run" and isinstance(debug, ast.Constant) and debug.value is True:
             out.append(("PY010", "Application started with debug=True", "medium", node.lineno))
+        if _world_writable(node, name, tail):
+            out.append(("PY011", "File permissions grant everyone write access", "high", node.lineno))
         out.extend(_quality_findings(node, name, tail, aware))
     for node in ast.walk(tree):  # CERT_NONE assignments
         if isinstance(node, ast.Attribute) and node.attr == "CERT_NONE":
             out.append(("PY005", "TLS certificate verification disabled", "high", node.lineno))
+        elif (isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and node.value.value is False
+              and any(isinstance(t, ast.Attribute) and t.attr == "check_hostname" for t in node.targets)):
+            out.append(("PY005", "TLS hostname verification disabled", "high", node.lineno))
     out.extend(("PY008", "SQL built by string formatting", "high", line) for line in _sql_variable_calls(tree))
     lines = text.splitlines()
     for node in ast.walk(tree):  # silently swallowed errors; a comment saying why makes it a decision
@@ -246,6 +262,18 @@ def python_findings(text: str) -> list[tuple[str, str, str, int]]:
             if not explained:
                 out.append(("REL002", "Exception silently ignored", "low", node.lineno))
     return out
+
+
+def _world_writable(node: ast.Call, name: str, tail: str) -> bool:
+    """chmod granting others write access, or a umask that stops masking it. Only literal modes."""
+    if name == "os.umask":
+        mode = node.args[0] if node.args else None
+        return isinstance(mode, ast.Constant) and type(mode.value) is int and not mode.value & 0o002
+    if tail not in {"chmod", "lchmod", "fchmod"} or not isinstance(node.func, ast.Attribute):
+        return False
+    mode = _keyword(node, "mode") or (node.args[1] if name.startswith("os.") and len(node.args) > 1
+                                      else node.args[0] if not name.startswith("os.") and node.args else None)
+    return isinstance(mode, ast.Constant) and type(mode.value) is int and bool(mode.value & 0o002)
 
 
 def _mentioned(node) -> set[str]:
@@ -413,6 +441,48 @@ def infra_findings(path: str, text: str) -> list[tuple]:
     return {"dockerfile": _dockerfile, "workflow": _workflow, "compose": _compose}[kind](text) if kind else []
 
 
+# --- scripts and configuration ----------------------------------------------------------------
+SCRIPT_SUFFIXES = {".sh", ".bash", ".zsh", ".ksh", ".ps1", ".psm1"}
+PS_PIPE_TO_SHELL = re.compile(r"(?i)\b(iwr|irm|curl|wget|Invoke-WebRequest|Invoke-RestMethod)\b[^|;\n]*\|\s*(iex|Invoke-Expression)\b")
+WORLD_CHMOD = re.compile(r"\bchmod\s+(?:-\S+\s+)*(?:0?[0-7]?[0-7][0-7][2367]\b|[ugoa]*[oa][ugoa]*[+=][rwxXst]*w)")
+INSECURE_TLS = re.compile(r"\bcurl\b[^|;&\n]*\s(?:-[a-zA-Z]*k[a-zA-Z]*|--insecure)\b|\bwget\b[^|;&\n]*--no-check-certificate\b"
+                          r"|(?i:-SkipCertificateCheck\b)")
+CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".conf", ".env", ".properties"}
+CONFIG_NAMES = {".npmrc", ".yarnrc", ".gitconfig", ".curlrc", ".wgetrc", "pip.conf", "pip.ini"}
+TLS_OFF = re.compile(r"""(?ix)["']?\b(?:verify_?ssl|ssl_?verify|verify_?tls|tls_?verify|strict[-_]?ssl|ssl[-_]?verify|check_?certificate|node_tls_reject_unauthorized|pythonhttpsverify)\b["']?
+                         \s*[:=]\s*["']?(?:false|no|off|0)\b""")
+TLS_SKIP = re.compile(r"""(?ix)["']?\b(?:insecure_?skip_?verify|insecure|tls_?insecure|skip_?tls_?verify|git_ssl_no_verify)\b["']?\s*[:=]\s*["']?(?:true|yes|on|1)\b""")
+
+
+def script_kind(path: str, text: str) -> bool:
+    return PurePosixPath(path).suffix.lower() in SCRIPT_SUFFIXES or (
+        PurePosixPath(path).suffix == "" and re.match(r"#!\S*(?:/|\s)(?:ba|z|k|da)?sh\b", text) is not None)
+
+
+def script_findings(text: str) -> list[tuple]:
+    out = []
+    for number, line in enumerate(text.splitlines(), 1):
+        code = line.strip()
+        if not code or code.startswith("#") or len(code) > 4000:
+            continue
+        if PIPE_TO_SHELL.search(code) or PS_PIPE_TO_SHELL.search(code):
+            out.append(("SH001", "Remote script piped straight into a shell", "high", number, code[:160]))
+        if WORLD_CHMOD.search(code):
+            out.append(("SH002", "File permissions grant everyone write access", "high", number, code[:160]))
+        if INSECURE_TLS.search(code):
+            out.append(("SH003", "TLS certificate verification disabled", "high", number, code[:160]))
+    return out
+
+
+def config_findings(path: str, text: str) -> list[tuple]:
+    name = PurePosixPath(path).name.lower()
+    if PurePosixPath(path).suffix.lower() not in CONFIG_SUFFIXES and name not in CONFIG_NAMES and not name.startswith(".env"):
+        return []
+    return [("CFG001", "TLS verification disabled in configuration", "high", number, line.strip()[:160])
+            for number, line in enumerate(text.splitlines(), 1)
+            if len(line) <= 4000 and not line.lstrip().startswith(("#", ";", "//")) and (TLS_OFF.search(line) or TLS_SKIP.search(line))]
+
+
 # --- scanning ---------------------------------------------------------------------------------
 def _finding(rule, title, severity, path, line, message, evidence="", remediation="", cwe=""):
     fingerprint = hashlib.sha256(f"{rule}|{path}|{line}|{evidence}".encode()).hexdigest()[:16]
@@ -467,7 +537,8 @@ def scan_files(files: dict[str, str]) -> dict:
                 if not PLACEHOLDER.search(value) and _entropy(value) >= 3.5 and not any(p.search(value) for _, _, _, p in SECRET_RULES):
                     keep(_finding("SEC010", "Hard-coded credential", "medium", path, number, f"`{match.group(1)}` is assigned a literal secret-like value",
                                   _redact(value), "Load the value from the environment or a secret store.", "CWE-798"))
-        for rule, title, severity, line, evidence in infra_findings(path, text):
+        rows = infra_findings(path, text) + config_findings(path, text) + (script_findings(text) if script_kind(path, text) else [])
+        for rule, title, severity, line, evidence in rows:
             keep(_finding(rule, title, severity, path, line, title, str(evidence)[:160], REMEDIATION[rule], CWE[rule]))
         suffix = PurePosixPath(path).suffix.lower()
         if suffix in {".py", ".pyw"}:

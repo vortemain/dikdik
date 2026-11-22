@@ -21,17 +21,29 @@ from .providers import chat_completion
 from . import migrations
 
 # --- risk -----------------------------------------------------------------------
+SECRET_SOURCE = r"(?:\.ssh/|\bid_(?:rsa|ecdsa|ed25519)\b|\.env\b|\.aws/credentials|\.netrc\b|\.git-credentials|\.npmrc\b|\.pypirc\b|/etc/shadow|\b(?:env|printenv)\b|\$env:|Get-ChildItem\s+env:)"
+NETWORK_TOOL = r"\b(?:curl|wget|nc|ncat|socat|ssh|scp|sftp|ftp|telnet|rsync|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b"
 HIGH = [
+    (re.compile(r"(?i)\b(curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^|;&\n]*\|\s*(sudo\s+)?((ba|z|da|k)?sh|python3?|node|iex|Invoke-Expression|pwsh|powershell)\b"),
+     "runs a downloaded script without checking it"),
+    (re.compile(r"(?i)" + SECRET_SOURCE + r"[^|;&\n]*\|[^;&\n]*" + NETWORK_TOOL
+                + r"|" + NETWORK_TOOL + r"[^|;&\n]*(?:@|-InFile\s+|--upload-file\s+|-T\s+)\S*" + SECRET_SOURCE),
+     "sends secrets or environment variables over the network"),
     (re.compile(r"\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\b"), "deletes files recursively"),
-    (re.compile(r"\b(curl|wget|nc|ncat|ssh|scp)\b"), "tries to reach the network"),
+    (re.compile(r"(?<!git )\brm\b(?=[^|;&\n]*\s(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?:\s|$))"), "deletes files recursively"),
+    (re.compile(r"(?i)\b(Remove-Item|ri|del|erase)\b[^|;\n]*\s-r(ecurse)?\b|\b(rmdir|rd)\s+/s\b"), "deletes files recursively"),
+    (re.compile(r"(?i)" + NETWORK_TOOL), "tries to reach the network"),
     (re.compile(r"\b(pip|npm|bun|cargo|apt|apt-get|yarn|pnpm)\s+(install|add|i)\b"), "installs packages"),
     (re.compile(r"\b(winget|choco|scoop|brew|dnf|pacman|zypper|snap|rustup|xcode-select)\s+(install|-S|--install|default|toolchain)\b|\bsudo\b", re.I),
      "installs software on this computer"),
     (re.compile(r"\bchmod\s+(-R\s+)?777\b"), "makes files world-writable"),
+    (re.compile(r"\bchmod\s+(?:-\S+\s+)*(?:0?[0-7]?[0-7][0-7][2367]\b|[ugoa]*[oa][ugoa]*[+=][rwxXst]*w)|(?i:\bicacls\b.*\b(?:Everyone|\*S-1-1-0):(?:\([A-Z]{1,2}\))*\(?[FMW]\b)"),
+     "makes files world-writable"),
     (re.compile(r"\b(mkfs|dd)\b|>\s*/dev/"), "writes to devices"),
     (re.compile(r"\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f)\b"), "rewrites or publishes history"),
 ]
 PYTHON_HIGH = [
+    (re.compile(r"\bchmod\([^)]*\b0o?[0-7]?[0-7][0-7][2367]\b|\bumask\(\s*0o?0*\s*\)"), "makes files world-writable"),
     (re.compile(r"\b(subprocess|os\.system|os\.popen|os\.exec\w*|os\.spawn\w*|pty)\b"), "runs other programs"),
     (re.compile(r"\b(shutil\.rmtree|os\.remove|os\.unlink|os\.rmdir|\.unlink\(|\.rmdir\()"), "deletes files"),
     (re.compile(r"\b(urllib\.request|urllib3|requests|httpx|aiohttp|http\.client|socket|ftplib|smtplib)\b|\bfrom\s+urllib\s+import\s+request\b"),
