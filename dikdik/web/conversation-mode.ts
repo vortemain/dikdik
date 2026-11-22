@@ -101,7 +101,6 @@ export function createConversationMode(deps: ConversationModeDeps): Conversation
     deps.select("mode").hidden = chat;
     deps.select("verification").hidden = chat;
     hide("options-toggle", chat);
-    hide("chat-commands-field", !chat);
     const approvals = deps.el("approvals");
     if (chat) {
       deps.input("external").checked = true;   // a chat always talks to the model

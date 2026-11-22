@@ -43,6 +43,13 @@ const GREETINGS = [
   "À votre service. Que puis-je faire ?",
 ];
 
+/** A greeting for the time of day, shown above the welcome title. */
+export function timeGreeting(hour: number): string {
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
 /** Start the greeting rotation. Returns a cancel function. */
 export function startGreeting(element: HTMLElement): () => void {
   let index = 0;
@@ -186,20 +193,15 @@ export function chatSuggestions(): Suggestion[] {
   ];
 }
 
-/** Render suggestions into a container. Each is a pill with an icon + label + hint. */
+/** Render suggestions into a container as chips: an icon and a label, with the hint as a tooltip. */
 export function renderSuggestions(container: HTMLElement, suggestions: Suggestion[], onPick: (prompt: string) => void): void {
   container.replaceChildren();
   for (const tip of suggestions) {
     const button = make("button", "suggestion");
     button.type = "button";
     button.dataset.prompt = tip.prompt;
-    button.append(icon(tip.iconId));
-    const label = make("span", "suggestion-label", tip.label);
-    button.append(label);
-    if (tip.hint) {
-      const hint = make("span", "suggestion-hint", tip.hint);
-      button.append(hint);
-    }
+    if (tip.hint) button.title = `${tip.label} · ${tip.hint}`;
+    button.append(icon(tip.iconId), make("span", "suggestion-label", tip.label));
     button.addEventListener("click", () => onPick(tip.prompt));
     container.append(button);
   }

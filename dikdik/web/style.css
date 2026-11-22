@@ -286,54 +286,44 @@ div.conv-item:hover .conv-more, div.conv-item:focus-within .conv-more, div.conv-
 .thread { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable both-edges; padding: 0 24px; }
 .column { max-width: var(--column); margin: 0 auto; }
 
-/* welcome: the empty conversation. Left-aligned like a document, with real things to do. */
-.welcome { max-width: 720px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; justify-content: center; padding: 40px 4px 28px; }
-.welcome-inner { display: grid; gap: 0; }
-.welcome-project { display: flex; align-items: center; gap: 7px; min-width: 0; margin-bottom: 10px; font-size: 13px; font-weight: 500; color: var(--muted); }
-.welcome-project svg.i { width: 15px; height: 15px; color: var(--faint); }
+/* welcome: the empty conversation. A greeting, the message box in the middle of the page,
+   starters as chips beneath it and the latest conversations; the box moves to the bottom
+   as soon as a conversation opens. */
+.welcome { display: none; }
+.main.landing .welcome { display: flex; flex-direction: column; justify-content: center; width: 100%; max-width: var(--column); min-height: 100%; margin: 0 auto; padding: 40px 0 28px; }
+.welcome-inner { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; justify-items: center; width: 100%; min-width: 0; }
+.welcome-project { display: flex; align-items: center; justify-content: center; gap: 7px; max-width: 100%; min-width: 0; margin: 0 0 18px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+.welcome-project svg.i { width: 14px; height: 14px; color: var(--faint); flex: 0 0 auto; }
 .welcome-project #welcome-project { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .welcome-meta { color: var(--faint); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .welcome-meta:not(:empty)::before { content: "·"; margin-right: 7px; }
-.welcome h1 { font-size: 28px; line-height: 1.2; font-weight: 600; letter-spacing: -.03em; margin: 0 0 28px; }
-.welcome-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
-.welcome-grid:has(#welcome-recent-section:not([hidden])) { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
-.welcome-col { display: grid; align-content: start; gap: 2px; min-width: 0; }
-.welcome-col h2 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--faint); letter-spacing: .01em; }
-.suggestion { display: flex; align-items: center; justify-content: flex-start; gap: 12px; width: 100%; padding: 8px 10px 8px 8px; border: 1px solid transparent; border-radius: 10px; background: transparent; text-align: left; white-space: normal; font-weight: 400; color: var(--ink); }
-.suggestion:hover:not(:disabled), .suggestion:focus-visible { background: var(--surface); border-color: var(--line); }
-.suggestion-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); }
-.suggestion:hover .suggestion-icon { color: var(--accent); border-color: var(--line-strong); }
-.suggestion-text { display: grid; gap: 1px; min-width: 0; }
-.suggestion-text strong { font-size: 13.5px; font-weight: 550; }
-.suggestion-text small { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.welcome-hero { display: flex; align-items: center; justify-content: center; gap: 14px; max-width: 100%; margin-bottom: 26px; }
+.welcome-mark { width: 44px; height: 44px; flex: 0 0 44px; border-radius: 12px; box-shadow: var(--shadow-sm); }
+.welcome-words { display: grid; gap: 2px; min-width: 0; text-align: left; }
+.welcome-hello { margin: 0; font-size: 14px; font-weight: 500; color: var(--muted); }
+.welcome h1 { margin: 0; font-size: 30px; line-height: 1.18; font-weight: 600; letter-spacing: -.025em; color: var(--ink); }
+.welcome-composer { width: 100%; min-width: 0; }
+.welcome-composer .composer { padding: 0; }
+.welcome-composer .composer-inner { max-width: none; }
+.welcome-composer #objective { min-height: 76px; }
+.suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; margin-top: 16px; }
+.suggestion { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px 7px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink-2, var(--ink)); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: border-color .15s ease, background .15s ease, color .15s ease; }
+.suggestion:hover:not(:disabled) { border-color: var(--line-strong); background: var(--hover); color: var(--ink); }
+.suggestion:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.suggestion svg.i { width: 15px; height: 15px; flex: 0 0 auto; color: var(--accent); }
+.welcome-recent-section { width: 100%; margin-top: 34px; text-align: left; }
+.welcome-recent-section h2 { margin: 0 0 6px 10px; font-size: 12px; font-weight: 600; color: var(--faint); letter-spacing: .01em; }
 .welcome-recent { display: grid; gap: 1px; }
-.welcome-col > .suggestion, .welcome-recent > .recent-row { min-width: 0; max-width: 100%; }  /* buttons as grid items otherwise size to their text */
-.recent-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; text-align: left; font-weight: 400; font-size: 13.5px; color: var(--ink-2); }
+.welcome-recent > .recent-row { min-width: 0; max-width: 100%; }
+.recent-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; text-align: left; font-weight: 400; font-size: 13.5px; color: var(--ink-2); }
 .recent-row:hover:not(:disabled), .recent-row:focus-visible { background: var(--hover); color: var(--ink); }
 .recent-row .conv-mark { margin-left: -4px; }
 .recent-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent-age { flex: 0 0 auto; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
-.welcome-keys { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 30px 0 0; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--faint); }
+.welcome-keys { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin: 28px 0 0; font-size: 12px; color: var(--faint); }
 .welcome-keys span { display: inline-flex; align-items: center; gap: 3px; }
 .welcome-keys kbd { min-width: 20px; text-align: center; margin-right: 1px; }
 .welcome-keys span kbd:last-of-type { margin-right: 6px; }
-/* welcome */
-.welcome { max-width: var(--column); margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 48px 0 32px; }
-.welcome-mark { width: 52px; height: 52px; border-radius: 14px; margin-bottom: 22px; box-shadow: var(--shadow); }
-.welcome h1 { font-size: 30px; line-height: 1.2; font-weight: 600; letter-spacing: -.025em; margin-bottom: 10px; transition: opacity .3s ease, transform .3s ease; }
-.welcome h1.greeting-out { opacity: 0; transform: translateY(-8px); }
-.welcome h1.greeting-in { opacity: 0; transform: translateY(8px); animation: greeting-in .6s ease forwards; }
-@keyframes greeting-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@media (prefers-reduced-motion: reduce) { .welcome h1 { transition: none; animation: none; } .welcome h1.greeting-out, .welcome h1.greeting-in { opacity: 1; transform: none; } }
-.welcome > p { color: var(--muted); font-size: 15px; line-height: 1.6; max-width: 540px; }
-.suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; max-width: 680px; margin-top: 24px; }
-.suggestion { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--ink-2, var(--ink)); font-size: 13px; white-space: nowrap; transition: transform .15s ease, border-color .15s ease, background .15s ease; cursor: pointer; }
-.suggestion:hover:not(:disabled) { background: var(--surface); border-color: var(--line-strong); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
-.suggestion:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.suggestion svg.i { width: 16px; height: 16px; flex: 0 0 auto; color: var(--accent); }
-.suggestion-label { font-weight: 500; }
-.suggestion-hint { font-size: 11px; color: var(--faint); font-weight: 400; }
-.thread:has(.msg) .welcome { display: none; }
 
 /* messages */
 .message-stream { list-style: none; margin: 0 auto; padding: 24px 0 8px; max-width: var(--column); }
@@ -848,17 +838,6 @@ pre.numbered .ln:hover::before { color: var(--ink-2, var(--ink)); }
 .toggle input { width: 14px; height: 14px; }
 .toggle:hover { color: var(--ink); background: var(--hover); }
 .toggle:has(input:checked) { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
-.chat-commands-switch { flex: 0 0 auto; }
-.chat-commands-switch svg.i { display: none; width: 14px; height: 14px; }
-@media (max-width: 760px) {
-  .chat-commands-switch { gap: 5px; padding: 4px 8px 4px 7px; }
-  .chat-commands-switch svg.i { display: inline-block; }
-  .chat-commands-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-}
-.chat-commands-note { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 2px 10px 4px 14px; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
-.chat-commands-note[hidden] { display: none; }
-.chat-commands-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 7px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-.chat-commands-badge svg.i { width: 13px; height: 13px; }
 .options-panel { margin: 0 8px; padding: 12px 10px 4px; border-top: 1px solid var(--line); }
 .options-panel label:first-child { margin-top: 0; }
 #edits { font: 12.5px/1.6 var(--mono); }
@@ -1145,15 +1124,15 @@ dialog::backdrop { background: rgb(0 0 0 / .35); backdrop-filter: blur(2px); }
   .approvals-label { display: none; }
   .model-pill { max-width: 110px; padding: 5px 8px; }
   .approvals { padding-left: 12px; }
-  .welcome { padding-top: 24px; }
-  .welcome h1 { font-size: 23px; margin-bottom: 20px; }
-  .welcome-grid:has(#welcome-recent-section:not([hidden])) { grid-template-columns: minmax(0, 1fr); }
-  .suggestion:nth-of-type(n+3) { display: none; }
+  .main.landing .welcome { padding: 20px 0 16px; }
+  .welcome-hero { gap: 10px; margin-bottom: 18px; }
+  .welcome-mark { width: 36px; height: 36px; flex-basis: 36px; border-radius: 10px; }
+  .welcome h1 { font-size: 22px; }
   .welcome-keys { display: none; }
-  .welcome h1 { font-size: 24px; }
-  .suggestions { gap: 6px; }
-  .suggestion:nth-child(n+4) { display: none; }
-  .suggestion-hint { display: none; }
+  .suggestions { flex-wrap: nowrap; justify-content: flex-start; gap: 6px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; }
+  .suggestions::-webkit-scrollbar { display: none; }
+  .suggestion { flex: 0 0 auto; }
+  .welcome-recent-section { margin-top: 22px; }
   .msg-assistant { grid-template-columns: minmax(0, 1fr); }
   .msg-assistant .avatar, .msg-assistant .avatar-gap { display: none; }
   .msg-tool, .msg-system:not(.msg-result), .msg-result, .msg-turn-note, .working { margin-left: 0; padding-left: 0; }

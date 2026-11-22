@@ -38,7 +38,7 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   };
   const nodes = new Map<string, Node>();
-  for (const id of ["token", "external", "execution", "chat-commands", "browser-approval", "browser-consent", "browser-enabled", "browser-url", "attach-input", "condenser", "palette-input", "meta-folder", "meta-tags", "sounds", "notification-previews", "git-name", "git-email", "secrets-approval", "agent-critic", "agent-memory", "agent-secrets", "terminal-cwd", "terminal-command"]) nodes.set(id, new Input());
+  for (const id of ["token", "external", "execution", "browser-approval", "browser-consent", "browser-enabled", "browser-url", "attach-input", "condenser", "palette-input", "meta-folder", "meta-tags", "sounds", "notification-previews", "git-name", "git-email", "secrets-approval", "agent-critic", "agent-memory", "agent-secrets", "terminal-cwd", "terminal-command"]) nodes.set(id, new Input());
   for (const id of ["cancel", "refresh", "start", "browser-open", "browser-stop", "browser-back", "browser-forward", "browser-reload", "browser-external-empty", "browser-live-stop", "planner-create", "planner-submit", "planner-cancel", "pause", "git-save", "terminal-new", "terminal-copy", "terminal-clear", "terminal-stop", "terminal-run", "browser-text-toggle", "browser-example", "notification-test"]) nodes.set(id, new Button());
   for (const id of ["run-mode", "mode", "verification", "confirmation-policy", "task-sort", "task-since", "task-scope", "title-model", "image-model", "browser-history", "browser-zoom", "notification-mode"]) nodes.set(id, new Select());
   for (const id of ["edits", "objective", "planner-objective"]) nodes.set(id, new Textarea());
@@ -100,7 +100,7 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     node("token").value = "local-test";
     await node("connect-form").listeners.get("submit")!({ preventDefault() {} });
     // The list opens with a date section heading; the first row is the conversation.
-    node("history").children.find(child => child.className === "conv-item")!.onclick!();
+    node("history").children.find(child => child.className.split(" ").includes("conv-item"))!.onclick!();
     await tick();
     expect(requests).toBe(1);
     expect(node("review-controls").hidden).toBe(false);
