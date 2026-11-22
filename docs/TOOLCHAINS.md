@@ -96,24 +96,80 @@ user approved; both go through the same approval gate as every command.
 Files a background command writes after it moved to the background are not tracked
 as the agent's edits; the result tells the agent to read them again before editing.
 
-### `run_python`
+### `run_code` (formerly `run_python`)
 
-A Python 3 script runs in the working folder (or its `workdir`) as an approved
-command: the same time limit, resource limits, cancellation and process-tree stop.
-It uses the project's `.venv` when there is one, else the user's Python on PATH,
-else Dikdik's own. Only what the script prints comes back, capped head and tail.
+A program in any language installed on this computer runs in the working folder (or
+its `workdir`) as an approved command: the same time limit, resource limits,
+cancellation and process-tree stop. Arguments: `language`, `code`, optional `files`
+(more source files next to the main one, name to text, at most 20), `workdir` and
+`timeout_seconds`. `run_python` calls from earlier conversations still run, as
+`run_code` in Python, and permission rules written for `run_python` still apply to
+Python programs.
 
-Before anything runs the code must parse, and string literals naming an existing
-absolute path outside the working folder are refused. The script can call Dikdik's
-read-only tools from `dikdik_tools` (`read_document`, `statistics`, `web_fetch`, and
-`web_search` and `literature_search` when the conversation has them). Calls travel
-over a loopback socket open only for that run, with a random token, an allow-list
-and a cap of 200 calls; each passes the same permission rules, approvals and hooks
-as the model's own call, and reads the same folder.
+| Language | Runs with (first one found) | How |
+| --- | --- | --- |
+| python | the project's `.venv`, the user's Python, Dikdik's own | interpreted |
+| javascript | node, bun, deno | interpreted |
+| typescript | bun, deno, node 22.6 or later (`--experimental-strip-types`) | interpreted |
+| bash | bash (Git Bash on Windows, never WSL's `bash.exe`) | interpreted |
+| powershell | pwsh, Windows PowerShell | `-File`, `-NoProfile -NonInteractive` |
+| ruby, php, perl, lua, r (Rscript), julia | that interpreter | interpreted |
+| java | java 11 or later | single-file source launch |
+| go | go | `go build` with its own `go.mod`, `GOTOOLCHAIN=local` |
+| rust | rustc | `rustc -O` |
+| c, cpp | gcc/clang, g++/clang++ | `-O2` |
+| csharp | dotnet | a throwaway console project, `dotnet build` |
 
-Risk: a script is medium risk, and high when it starts programs (`subprocess`,
-`os.system`), deletes files or opens network connections itself; `web_fetch` from
-`dikdik_tools` is the bounded alternative.
+Toolchains are found once per session (per search path) and again after an install;
+the tool description lists only the languages found, so the model never offers one
+that is missing. Aliases such as `js`, `ts`, `sh`, `pwsh`, `c#` and `golang` are
+accepted.
+
+The source, the helpers below and any build output live in a temporary
+`.dikdik-run-*` folder inside the folder the program runs in, removed afterwards.
+Inside the project means Node resolves the project's `node_modules`. A compiled
+language is built there first (the build gets no tool token and counts against the
+same time limit); a build error returns with `phase: "build"`. Only what the program
+prints comes back, capped head and tail, with the temporary folder's path removed.
+
+Before anything runs: Python must parse; quoted string literals in any language that
+name an existing absolute path outside the working folder are refused; Bash and
+PowerShell programs also get `run_command`'s checks for `cd` outside the folder and
+whole-drive searches; extra file names must be relative, without `..`.
+
+**Tool bridge.** For each run Dikdik opens a loopback HTTP endpoint on 127.0.0.1 with
+a random port and a random 48-character token. A program calls a tool with
+`POST $DIKDIK_TOOLS_URL`, header `X-Dikdik-Token: $DIKDIK_TOOLS_TOKEN`, body
+`{"tool": "...", "arguments": {...}}`; the reply is `{"result": ...}` or
+`{"refused": true, "error": "..."}`. Only read-only tools the conversation already
+offers are allowed (`read_document`, `statistics`, `web_fetch`, `web_search`,
+`literature_search`), at most 200 calls a run, handled one at a time. Each call passes
+the same permission rules, approvals and hooks as the model's own call, and reads the
+same folder. Requests with a wrong token, an `Origin` header or a Host other than the
+loopback address and port are refused (a web page cannot reach it), and the endpoint
+closes when the run ends. Helpers sit next to the program:
+
+| Language | Helper |
+| --- | --- |
+| Python | `from dikdik_tools import call, read_document` (raises `ToolError` on refusal) |
+| JavaScript/TypeScript | `const { call } = require('./dikdik_tools.cjs')` or `import { call } from './dikdik_tools.mjs'`; `await call(name, {...})` |
+| PowerShell | `. "$PSScriptRoot/dikdik_tools.ps1"`; `Invoke-DikdikTool name @{...}` |
+| Bash | `source "$DIKDIK_TOOLS_HELPERS/dikdik_tools.sh"`; `dikdik_call name '{json}'` (needs curl) |
+
+The helpers bypass HTTP proxies, and the Bash helper passes the token to curl on
+standard input rather than on its command line.
+
+Risk: a program is medium risk. Python is high when it starts programs, deletes files
+or opens network connections itself. Other languages are high for the same reasons
+(`child_process`, `os/exec`, `Process.Start`, `Remove-Item`, `fs.rm`, `fetch`,
+`Invoke-WebRequest`, `HttpClient` and similar), and Bash and PowerShell also get
+`run_command`'s checks (recursive deletes, installs, `git push`). The `web_fetch`
+tool through the bridge is the bounded alternative to direct network access.
+
+Choosing a language: the model is told to use the project's own language and
+toolchain for the project's code and checks (Node for a JavaScript project, `go test`,
+`cargo test`, `dotnet test`), R for statistics when Rscript is installed, and Python
+otherwise.
 
 ### Permission rules and remembered commands
 

@@ -19,7 +19,7 @@ _COMMON = (
     "that should keep running; only those accept input through command_process. Each result reports the exit "
     "code and the working directory. Read files with read_file/search_text/list_files and write them with "
     "edit_file/create_file, not with cat, sed or heredocs: those are faster, exact and need no approval. For "
-    "loops, parsing and calculations use run_python. Never scan filesystem or drive roots."
+    "loops, parsing and calculations use run_code. Never scan filesystem or drive roots."
 )
 
 _FAMILIES = {

@@ -155,7 +155,9 @@ Python") and `docs/AGENT_SKILLS_AND_HOOKS.md` ("Recipes and narrow tools", "Rese
 - `run_python` runs scripts through the approval gate and local execution, calling allow-listed
   read-only tools (`read_document`, `statistics`, `web_fetch`, `web_search`, `literature_search`)
   over a per-run loopback bridge; printed output returns, capped head and tail. It is offered
-  wherever commands are approved; per-model enablement is not implemented.
+  wherever commands are approved; per-model enablement is not implemented. It is now `run_code`
+  (any installed language, a loopback HTTP bridge with helpers for Python, JavaScript, PowerShell
+  and Bash); `run_python` remains an alias.
 - `run_command` describes the real shell family, takes `workdir` and `background`, reports exit
   code and working directory, and moves a timed-out command to the background with a completion
   notice. `command_process` reads output, sends input and stops background commands.

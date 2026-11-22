@@ -1,4 +1,4 @@
-"""Phase 4: run_python, the adaptive shell, recipe skills and the research subagent."""
+"""Phase 4: run_python (now an alias of run_code), the adaptive shell, recipe skills and the research subagent."""
 
 import base64
 import json
@@ -170,13 +170,16 @@ class RunPythonTests(unittest.TestCase):
         tool.assert_not_called()
 
     def test_the_bridge_needs_its_token(self):
-        import socket
+        import urllib.error
+        import urllib.request
         tool = Mock(return_value={})
         with python_tool.ToolBridge(tool, {"read_document"}) as bridge:
-            host, port, _token = bridge.address.rsplit(":", 2)
-            with socket.create_connection((host, int(port)), timeout=5) as conn:
-                conn.sendall(json.dumps({"token": "guess", "tool": "read_document", "arguments": {}}).encode() + b"\n")
-                reply = json.loads(conn.makefile().readline())
+            request = urllib.request.Request(bridge.url, method="POST", headers={"X-Dikdik-Token": "guess"},
+                                             data=json.dumps({"tool": "read_document", "arguments": {}}).encode())
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=5)
+            reply = json.loads(caught.exception.read())
+        self.assertEqual(caught.exception.code, 403)
         self.assertIn("error", reply)
         tool.assert_not_called()
 
@@ -302,7 +305,7 @@ class EngineToolsetTests(unittest.TestCase):
         self.assertEqual(result["workdir"], "pkg")
         self.assertIn("pkg", result["output"])
         tools = script.tools[0]
-        self.assertIn("run_python", tools)
+        self.assertIn("run_code", tools)
         self.assertIn("command_process", tools)
 
     def test_a_timed_out_command_keeps_running_and_its_output_can_be_read(self):
@@ -333,7 +336,7 @@ class EngineToolsetTests(unittest.TestCase):
         script = Script([call(1, "run_python", code=code), ModelResponse("Done.", [])])
         task, state = self.run_script(script, {**LOCAL, "confirmation": "ask"}, decide=False)
         asked = [e["data"] for e in state["events"] if e["kind"] == "confirmation_requested"]
-        self.assertEqual(asked[0]["tool"], "run_python")
+        self.assertEqual(asked[0]["tool"], "run_code")  # run_python is an alias
         self.assertFalse(marker.exists())
         script = Script([call(1, "run_python", code=code), ModelResponse("Done.", [])])
         task, state = self.run_script(script, {**LOCAL, "confirmation": "ask"}, decide=True)
@@ -354,7 +357,7 @@ class EngineToolsetTests(unittest.TestCase):
         self.assertEqual(first["status"], "passed", first)
         self.assertIn("n = 384", first["output"])
         self.assertIn("error", second)  # the project folder is outside the chat's folder
-        self.assertIn("run_python", script.tools[0])
+        self.assertIn("run_code", script.tools[0])
         self.assertIn("delegate", script.tools[0])  # the research subagent
 
     def test_chat_research_subagent_reads_in_a_fresh_context(self):
@@ -372,7 +375,7 @@ class EngineToolsetTests(unittest.TestCase):
         self.assertEqual(state["state"], "completed", state["result"])
         self.assertIn("read_document", child.tools[0])
         self.assertNotIn("run_command", child.tools[0])
-        self.assertNotIn("run_python", child.tools[0])
+        self.assertNotIn("run_code", child.tools[0])
         report = tool_results(parent)[-1]
         self.assertIn("42", report["findings"])
         self.assertNotIn("filler\nfiller\nfiller", json.dumps(parent.seen[-1]))  # long reading stayed in the child
@@ -397,7 +400,7 @@ class RecipeSkillTests(unittest.TestCase):
         loaded = self.index.load("scholarly-apis")
         self.assertIn("api.openalex.org", json.dumps(loaded))
         for recipe in ("doi-verification", "statistics-in-python"):
-            self.assertIn("run_python", json.dumps(self.index.load(recipe)))
+            self.assertIn("run_code", json.dumps(self.index.load(recipe)))
 
 
 if __name__ == "__main__":

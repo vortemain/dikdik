@@ -1,6 +1,6 @@
 ---
 name: scholarly-apis
-description: Query OpenAlex, Crossref and PubMed directly with web_fetch or run_python when literature_search cannot express the search (many pages, exact filters, citation counts, bulk screening).
+description: Query OpenAlex, Crossref and PubMed directly with web_fetch or run_code when literature_search cannot express the search (many pages, exact filters, citation counts, bulk screening).
 category: research
 version: "1.0"
 type: recipe
@@ -57,9 +57,13 @@ lists every reference; the filtered query keeps it small. `message.items[0]` has
 No items means Crossref has no such DOI (some
 DataCite DOIs, for datasets and theses, live elsewhere: see `doi-verification`).
 
-## Bulk work in run_python
+## Bulk work in run_code
 
-Loop, filter and count in a script instead of reading pages yourself:
+Loop, filter and count in a program instead of reading pages yourself. Python is
+always available; any other language `run_code` lists can call the same tools
+through its helper (JavaScript: `require('./dikdik_tools.cjs').call('web_fetch', {url})`).
+Fetch through `web_fetch`, not the language's own HTTP client: it is bounded and
+needs no extra approval.
 
 ```python
 from dikdik_tools import web_fetch

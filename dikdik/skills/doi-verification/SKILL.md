@@ -1,6 +1,6 @@
 ---
 name: doi-verification
-description: Check that a DOI exists and matches the cited paper (title, authors, year, journal) before citing it, one at a time or a whole reference list in run_python.
+description: Check that a DOI exists and matches the cited paper (title, authors, year, journal) before citing it, one at a time or a whole reference list in run_code.
 category: research
 version: "1.0"
 type: recipe
@@ -27,7 +27,7 @@ Fabricated or mistyped DOIs often resolve to a different paper.
 
 ## A whole reference list
 
-Use `run_python` so the checking is real code, not reading:
+Use `run_code` (Python) so the checking is real code, not reading:
 
 ```python
 from dikdik_tools import web_fetch
