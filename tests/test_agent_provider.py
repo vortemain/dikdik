@@ -72,6 +72,20 @@ class AgentProviderTests(unittest.TestCase):
         self.assertIn("append", hint)
         self.assertIn("source", hint)
 
+    def test_repeated_stream_drops_ask_for_the_work_in_smaller_pieces(self):
+        from dikdik.model_errors import ProviderError
+        model = configured_model()
+        with patch("dikdik.agent_provider.chat_completion",
+                   side_effect=[ProviderError("stream_interrupted"), ProviderError("stream_interrupted"), reply([tool()])]) as transport:
+            for _ in range(2):
+                with self.assertRaises(ProviderError) as caught:
+                    model.respond([{"role": "user", "content": "Write chapters"}], [])
+                self.assertTrue(caught.exception.retryable)
+            model.respond([{"role": "user", "content": "Write chapters"}], [])
+        first, second, third = (call.args[0] for call in transport.call_args_list)
+        self.assertEqual(len(first), len(second))  # one drop is retried as it was
+        self.assertIn("source", third[-1]["content"])  # a second drop asks for smaller pieces
+
     def test_cannot_smuggle_provider_metadata_into_usage(self):
         data = reply([tool()])
         data["usage"] = {"total_tokens": -1, "private": "credential"}

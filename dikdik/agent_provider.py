@@ -14,8 +14,8 @@ from .model_limits import MAX_MODEL_TEXT_BYTES, MAX_TOOL_ARGUMENT_BYTES
 DEFAULT_AGENT_OUTPUT_TOKENS = 8192
 ADAPTIVE_OUTPUT_CEILING = 65536
 OVERSIZED_HINT = (
-    "Runtime response validation: your previous reply was larger than the safe response size and was discarded; "
-    "no tools ran. Do the same work in smaller pieces. For a long document, write it section by section into a "
+    "Runtime response validation: your previous reply was too large, or was cut off before it finished, and was "
+    "discarded; no tools ran. Do the same work in smaller pieces. For a long document, write it section by section into a "
     ".md draft with create_document and append: true, then create the .docx with source set to that draft "
     "instead of repeating its text. Keep earlier findings; do not restart the investigation.")
 MAX_CALL_EXTRA_BYTES = 65536  # provider continuation data per tool call (signatures grow with the thinking)
@@ -51,6 +51,7 @@ class CompatibleAgentModel:
         self._output_tokens = None
         self._repair_hint = ""
         self._plain_response = False
+        self._dropped = 0
 
     def respond(self, messages: list[dict], tools: list[dict]) -> ModelResponse:
         # Resolved once per task, on first use, so the key is decrypted only when needed.
@@ -97,6 +98,11 @@ class CompatibleAgentModel:
                 # A discarded oversized reply ran no tools; ask once for the same work in smaller pieces.
                 self._repair_hint = OVERSIZED_HINT
                 raise ProviderError("response_limit", retryable=True, usage=exc.usage) from None
+            if exc.kind in {"stream_interrupted", "timeout"}:
+                # Providers that keep dropping a long reply rarely finish it on a plain retry.
+                self._dropped += 1
+                if self._dropped >= 2:
+                    self._repair_hint = OVERSIZED_HINT
             if exc.kind == "protocol":
                 # A rejected transport response has executed no tools. Regenerate
                 # without SSE; the agent's existing three-attempt budget applies.
@@ -172,6 +178,7 @@ class CompatibleAgentModel:
         thinking = message.get("reasoning_content") or message.get("reasoning") or ""
         self._repair_hint = ""
         self._plain_response = False
+        self._dropped = 0
         return ModelResponse(content=content, tool_calls=calls, usage_tokens=reported,
                              reasoning=thinking[:16000] if isinstance(thinking, str) else "", usage=usage,
                              reasoning_context=continuation)
