@@ -281,9 +281,9 @@ class SkillIndex:
             if (path.name != "SKILL.md" or not isinstance(resource, str) or "\\" in resource
                     or Path(resource).is_absolute() or ":" in resource or ".." in resource.split("/")):
                 raise ValueError("Skill resource must stay inside its skill folder")
-            base = path.parent.resolve()
-            target = (base / resource).resolve()
-            if base not in target.parents or not target.is_file() or target.stat().st_size > 65536:
+            from .paths import contained
+            target = contained(path.parent, resource)
+            if not target.is_file() or target.stat().st_size > 65536:
                 raise ValueError("Skill resource is unavailable or too large")
             try:
                 text = target.read_text(encoding="utf-8")

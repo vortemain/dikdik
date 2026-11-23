@@ -348,7 +348,7 @@ class Table:
         if target in lowered:
             return lowered.index(target)
         if re.fullmatch(r"\d+", ref):  # questionnaire item number: "9" matches "9. ..." / "Q9 ..."
-            pattern = re.compile(rf"^(?:q(?:uestion)?\s*)?{ref}(?:[.):\s]|$)")
+            pattern = re.compile(rf"^(?:q(?:uestion)?\s*)?{re.escape(ref)}(?:[.):\s]|$)")
             hits = [i for i, h in enumerate(lowered) if pattern.match(h)]
             if len(hits) == 1:
                 return hits[0]

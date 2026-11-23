@@ -2238,8 +2238,13 @@ class Engine:
                     root = self.root
                     wanted = arguments.get("path")
                     kept = self.data / "chats" / task
-                    if isinstance(wanted, str) and wanted.startswith("attachments/") and not (self.root / wanted).exists() and (kept / wanted).is_file():
-                        root = kept  # a file the user attached to this conversation, not a project file
+                    if isinstance(wanted, str) and wanted.startswith("attachments/") and ".." not in wanted.replace("\\", "/").split("/"):
+                        from .paths import contained
+                        try:
+                            if not contained(self.root, wanted).exists() and contained(kept, wanted).is_file():
+                                root = kept  # a file the user attached to this conversation, not a project file
+                        except ValueError:
+                            pass  # the file tool below refuses the path with its own message
                     if name == "read_image":
                         return self.read_image_tool(root, arguments)
                     return documents.read(root, arguments, document_cache) if name == "read_document" else stats.run(root, arguments)
