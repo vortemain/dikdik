@@ -21,6 +21,26 @@ permissions; only the tag publication job has write access. Tags must match the
 Python/package/Rust versions and have a matching release-notes file. A failed
 check prevents automatic publication. No PyPI or npm upload occurs.
 
+## Windows code signing
+
+Windows names the publisher of a downloaded program only when it carries an
+Authenticode signature; unsigned builds show "Unknown publisher" in SmartScreen
+and the install prompt. Release and main builds sign `Dikdik.exe`, the setup
+program and its uninstaller as **Vorte by Lijohtech Developers** when two
+repository secrets are set (Settings → Secrets and variables → Actions):
+
+- `WINDOWS_CERT_PFX`: the code-signing certificate and private key as a `.pfx`
+  file, base64-encoded (PowerShell:
+  `[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))`).
+- `WINDOWS_CERT_PASSWORD`: the `.pfx` password.
+
+The certificate's subject must be the publisher name above. Signatures are
+timestamped, so they stay valid after the certificate expires. Pull-request
+builds never receive the certificate, and the job deletes it when it ends.
+Without the secrets, builds stay unsigned and the workflow prints a warning.
+SmartScreen also weighs download reputation, so a new certificate can still
+show a warning for its first downloads.
+
 ## Prepare the next release
 
 1. Update `pyproject.toml`, `dikdik/__init__.py` and

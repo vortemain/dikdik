@@ -2,6 +2,11 @@ name: Desktop installers
 on:
   workflow_dispatch:
   workflow_call:
+    secrets:
+      WINDOWS_CERT_PFX:
+        required: false
+      WINDOWS_CERT_PASSWORD:
+        required: false
 permissions:
   contents: read
 jobs:
@@ -31,6 +36,36 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1 libpulse0 apparmor xvfb
           python -m playwright install-deps chromium
       - run: python scripts/build_desktop.py
+      - name: Prepare Windows code signing
+        id: signing
+        # Never on pull requests: their code must not run next to the certificate.
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if (-not $env:CERT_PFX -or -not $env:CERT_PASSWORD) {
+            Write-Output "::warning::WINDOWS_CERT_PFX/WINDOWS_CERT_PASSWORD are not set: Windows builds are unsigned and show 'Unknown publisher'."
+            "enabled=false" >> $env:GITHUB_OUTPUT; exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "dikdik-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_PFX))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe was not found on this runner" }
+          "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+          "SIGNING_PFX=$pfx" >> $env:GITHUB_ENV
+          "enabled=true" >> $env:GITHUB_OUTPUT
+      - name: Sign Dikdik.exe
+        if: runner.os == 'Windows' && steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          & $env:SIGNTOOL sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $env:SIGNING_PFX /p $env:CERT_PASSWORD /d Dikdik "dist/desktop/Dikdik/Dikdik.exe"
+          if ($LASTEXITCODE) { throw "signing Dikdik.exe failed" }
+          & $env:SIGNTOOL verify /pa "dist/desktop/Dikdik/Dikdik.exe"
+          if ($LASTEXITCODE) { throw "Dikdik.exe signature did not verify" }
       - name: Smoke-test frozen desktop
         if: runner.os != 'Linux'
         run: python scripts/smoke_desktop.py
@@ -42,9 +77,31 @@ jobs:
           printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile dikdik-ci-browser "%s" flags=(unconfined) {\n  userns,\n}\n' "$browser" > build/dikdik-ci-browser
           sudo apparmor_parser -r build/dikdik-ci-browser
           xvfb-run -a python scripts/smoke_desktop.py
-      - if: runner.os == 'Windows'
+      - name: Build the Windows installer
+        if: runner.os == 'Windows'
         shell: pwsh
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:DIKDIK_VERSION" scripts/desktop-installer.iss'
+        env:
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          $arguments = @("/DAppVersion=$env:DIKDIK_VERSION")
+          if ("${{ steps.signing.outputs.enabled }}" -eq "true") {
+            # Inno Setup signs the setup and the uninstaller it embeds; $f is the file to sign.
+            $arguments += "/DSign=1"
+            $arguments += "/Sdikdiksign=`"$env:SIGNTOOL`" sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f `"$env:SIGNING_PFX`" /p $env:CERT_PASSWORD /d Dikdik `$f"
+          }
+          & $iscc @arguments scripts/desktop-installer.iss
+          if ($LASTEXITCODE) { throw "ISCC failed" }
+          if ("${{ steps.signing.outputs.enabled }}" -eq "true") {
+            Get-ChildItem dist/installers/*.exe | ForEach-Object {
+              & $env:SIGNTOOL verify /pa $_.FullName
+              if ($LASTEXITCODE) { throw "$($_.Name) signature did not verify" }
+            }
+          }
+      - name: Remove the signing certificate
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: if ($env:SIGNING_PFX) { Remove-Item -Force -ErrorAction SilentlyContinue $env:SIGNING_PFX }
       - if: runner.os == 'macOS'
         run: |
           mkdir -p dist/installers build/dmg

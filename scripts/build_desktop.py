@@ -6,6 +6,20 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+PUBLISHER = "Vorte by Lijohtech Developers"  # must match the code-signing certificate's subject
+
+
+def windows_version_file(version: str) -> str:
+    """A PyInstaller version resource, so Windows shows the publisher and version on Dikdik.exe."""
+    numbers = tuple(int(part) for part in (version.split("-")[0].split(".") + ["0", "0", "0"])[:4])
+    fields = {"CompanyName": PUBLISHER, "FileDescription": "Dikdik", "FileVersion": version,
+              "InternalName": "Dikdik", "LegalCopyright": f"(c) {PUBLISHER}", "OriginalFilename": "Dikdik.exe",
+              "ProductName": "Dikdik", "ProductVersion": version}
+    strings = ",\n            ".join(f"StringStruct({key!r}, {value!r})" for key, value in fields.items())
+    return (f"VSVersionInfo(\n  ffi=FixedFileInfo(filevers={numbers}, prodvers={numbers}, mask=0x3f, flags=0x0, OS=0x40004,\n"
+            f"    fileType=0x1, subtype=0x0, date=(0, 0)),\n  kids=[\n    StringFileInfo([StringTable('040904B0', [\n"
+            f"            {strings}])]),\n    VarFileInfo([VarStruct('Translation', [1033, 1200])])\n  ]\n)\n")
+
 
 def main():
     # Ship the matching browser with each OS build; end users do not install it.
@@ -23,7 +37,12 @@ def main():
         os.environ["QT_API"] = "pyside6"
         command += ["--collect-all", "PySide6", "--exclude-module", "PyQt5", "--exclude-module", "PyQt6", "--exclude-module", "PySide2"]
     elif sys.platform == "win32":
-        command += ["--collect-all", "winrt"]
+        sys.path.insert(0, str(ROOT))
+        from dikdik import __version__
+        version_file = ROOT / "build" / "windows-version.txt"
+        version_file.parent.mkdir(parents=True, exist_ok=True)
+        version_file.write_text(windows_version_file(__version__), encoding="utf-8")
+        command += ["--collect-all", "winrt", "--version-file", str(version_file)]
     elif sys.platform == "darwin":
         command += ["--osx-bundle-identifier", "org.dikdik.desktop"]
     command += [str(ROOT / "Dikdik.pyw")]
