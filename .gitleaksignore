@@ -1,0 +1,4 @@
+# Fake credentials in tests that check secret refusal (tests/test_learning.py). They are
+# split in the current file; these fingerprints cover the commit where they were whole.
+fbc11f2c6050436d534660f97c0b90bd1f91ad60:tests/test_learning.py:generic-api-key:81
+fbc11f2c6050436d534660f97c0b90bd1f91ad60:tests/test_learning.py:generic-api-key:245

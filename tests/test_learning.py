@@ -78,7 +78,7 @@ class MemoryTests(Base):
         logs.register_secret("hunter2-provider-value")
         for text in ("my key is sk-ant-" + "api03-abcdefghijklmnopqrstuvwxyz",
                      "password: CorrectHorse99",
-                     "API_KEY=abcd1234efgh5678",
+                     "API_KEY=" + "abcd1234efgh5678",  # split so secret scanners see a fixture, not a key
                      "github token ghp_" + "a" * 36,
                      "Authorization: Bearer abcdefghijklmnop",
                      "remember hunter2-provider-value",
@@ -242,7 +242,7 @@ class ReviewTests(Base):
 
     def test_review_applies_memory_and_stores_a_skill_proposal_only(self):
         reply = json.dumps({"memory": [{"action": "add", "target": "project", "content": "Survey age column is `age`, not age_yrs."},
-                                       {"action": "add", "target": "user", "content": "token=abcd1234efgh5678ijkl"}],
+                                       {"action": "add", "target": "user", "content": "token=" + "abcd1234efgh5678ijkl"}],
                             "skill": {"name": "survey-cleaning", "description": "Check column names first",
                                       "content": "List the columns before computing statistics."}})
         model = Scripted("Here you go:\n```json\n" + reply + "\n```")
