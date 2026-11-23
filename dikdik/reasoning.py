@@ -18,6 +18,10 @@ WORK = re.compile(r"\b(?:analy[sz]\w*|write|draft|create|make|build|implement|fi
                   r"research|plan|design|report|chapter|essay|thesis|dissertation|summari[sz]e|evaluate|assess|calculate|"
                   r"compute|solve|prove|derive|generate|test|deploy|install|update|change|edit|add|remove|rewrite|"
                   r"step[- ]by[- ]step|in detail|thorough\w*|comprehensive|explain)\b", re.I)
+# Social small talk; other short instructions ("list its objectives") may need tools, so they stay deep.
+SOCIAL = re.compile(r"(?:hi|hello|hey|hiya|thanks|thank you(?: so much| very much)?|thanks a lot|ok(?:ay)?(?: great)?|great|"
+                    r"cool|nice|good (?:morning|afternoon|evening|night)|bye|goodbye|see you|yes|no|sure)"
+                    r"(?:[\s,!.]+\w+)?[\s!.]*", re.I)
 # Model families known to accept reasoning_effort; others may reject an unknown field.
 REASONING_MODELS = re.compile(r"(?:^|[/:])(?:o[134](?:-|$)|gpt-5|gemini-(?:2\.5|[3-9])|grok-[3-9]-mini)", re.I)
 
@@ -30,7 +34,7 @@ def classify_effort(objective: str, attachments: bool = False) -> str:
         return DEEP
     if QUESTION.match(text) or text.endswith("?"):
         return SIMPLE
-    return SIMPLE if len(text) <= 40 and "\n" not in text else DEEP
+    return SIMPLE if SOCIAL.fullmatch(text) else DEEP
 
 
 def resolve_effort(objective: str, requested: str | None, attachments: bool = False) -> tuple[str, str]:
