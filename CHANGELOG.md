@@ -22,6 +22,12 @@ A sharper, leaner agent that finishes long tasks:
   proposals; a memory screen in Settings.
 - New chat space: thinking blocks, tool cards, plan checklist, citations, cost meter,
   mid-run steering, commands in every chat (each approved), centred welcome.
+- One-click updates: the sidebar button downloads, verifies, installs and reopens
+  Dikdik in the new version, with progress and a confirmation when tasks are running;
+  the Settings update section is removed. A failed Windows install reports the
+  installer's exit code after the restart.
+- Windows builds carry the publisher "Vorte by Lijohtech Developers" and are signed
+  with Authenticode when the release has the code-signing certificate.
 - Fixed: an empty Anthropic balance reported as a settings problem; reused tool-call
   IDs, unnumbered reasoning fragments and dropped long replies ending a task; chats
   that verify by running code blocked by the project test gate.
