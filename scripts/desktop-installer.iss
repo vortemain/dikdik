@@ -1,10 +1,24 @@
 #ifndef AppVersion
   #define AppVersion "0.2.0"
 #endif
+#define Publisher "Vorte by Lijohtech Developers"
 [Setup]
 AppId=Dikdik.Desktop
 AppName=Dikdik
 AppVersion={#AppVersion}
+AppPublisher={#Publisher}
+AppPublisherURL=https://github.com/vortemain/dikdik
+AppSupportURL=https://github.com/vortemain/dikdik/issues
+AppUpdatesURL=https://github.com/vortemain/dikdik/releases
+VersionInfoCompany={#Publisher}
+VersionInfoProductName=Dikdik
+VersionInfoVersion={#AppVersion}
+VersionInfoCopyright=(c) {#Publisher}
+; Release builds pass /DSign=1 and /Sdikdiksign=... so the setup and its uninstaller are signed too.
+#ifdef Sign
+SignTool=dikdiksign
+SignedUninstaller=yes
+#endif
 DefaultDirName={localappdata}\Programs\Dikdik
 DefaultGroupName=Dikdik
 PrivilegesRequired=lowest

@@ -241,7 +241,7 @@ class BrowserServiceTests(unittest.TestCase):
                 model = Model()
                 with patch('dikdik.engine.CompatibleAgentModel', return_value=model), patch('dikdik.host_browser.capture', side_effect=captured):
                     task = self.engine.submit({'objective': 'Browse', 'mode': 'agent', 'verification': 'syntax', 'approve_external': True, 'approve_execution': consent, 'approve_browser': consent, 'agent_profile': profile['id']})
-                    for _ in range(600):
+                    for _ in range(3000):  # 30 s: a loaded machine can be slow; the task itself takes about 1 s
                         if not self.engine.busy(task):
                             break
                         time.sleep(.01)

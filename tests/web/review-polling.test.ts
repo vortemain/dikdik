@@ -100,7 +100,7 @@ test("actual polling retains file selection and control nodes, with safe fallbac
     node("token").value = "local-test";
     await node("connect-form").listeners.get("submit")!({ preventDefault() {} });
     // The list opens with a date section heading; the first row is the conversation.
-    node("history").children.find(child => child.className === "conv-item")!.onclick!();
+    node("history").children.find(child => child.className.split(" ").includes("conv-item"))!.onclick!();
     await tick();
     expect(requests).toBe(1);
     expect(node("review-controls").hidden).toBe(false);

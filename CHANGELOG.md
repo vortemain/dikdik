@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.8.0 — 2026-11-23
+
+A sharper, leaner agent that finishes long tasks:
+- Fixed: chat and planning ran on a quarter of the working budget, and condensing
+  context forgot document, statistics and web findings, so long analyses re-read the
+  same files and stopped without output. Chats get the full budget; working notes and
+  a typed rolling checkpoint (with an identifier audit) survive condensation;
+  re-reads, repeated actions and alternating loops are detected.
+- Native Anthropic Messages transport with prompt caching, adaptive thinking and
+  effort; cache-stable prompts; large tool output spilled to files; simple questions
+  answered in one reply; chat skills listed by id.
+- Adaptive effort, final-answer checks (deliverables, sources, numbers) and lint
+  reflection for code.
+- `run_code` in any installed language with a token-checked loopback tool bridge;
+  adaptive PowerShell/POSIX shell with workdir and background hand-off; recipe skills;
+  a researcher subagent.
+- Secure by default: written and executed content is scanned and risky code reflected
+  before it runs; credentials are never written and are sealed when provided.
+- Durable memory, session search and background review with approval-gated skill
+  proposals; a memory screen in Settings.
+- New chat space: thinking blocks, tool cards, plan checklist, citations, cost meter,
+  mid-run steering, commands in every chat (each approved), centred welcome.
+- One-click updates: the sidebar button downloads, verifies, installs and reopens
+  Dikdik in the new version, with progress and a confirmation when tasks are running;
+  the Settings update section is removed. A failed Windows install reports the
+  installer's exit code after the restart.
+- Windows builds carry the publisher "Vorte by Lijohtech Developers" and are signed
+  with Authenticode when the release has the code-signing certificate.
+- Fixed: an empty Anthropic balance reported as a settings problem; reused tool-call
+  IDs, unnumbered reasoning fragments and dropped long replies ending a task; chats
+  that verify by running code blocked by the project test gate.
+
 ## 0.7.3 — 2026-11-19
 
 Gemini works with documents and data; every drawing reads clearly:

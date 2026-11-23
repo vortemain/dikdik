@@ -16,24 +16,56 @@ import uuid
 from pathlib import Path
 
 from .agent import ToolCall, _tool
+from .code_tool import SHELLS, language_name
 from .docextract import attachment_text
 from .providers import chat_completion
 from . import migrations
 
 # --- risk -----------------------------------------------------------------------
+SECRET_SOURCE = r"(?:\.ssh/|\bid_(?:rsa|ecdsa|ed25519)\b|\.env\b|\.aws/credentials|\.netrc\b|\.git-credentials|\.npmrc\b|\.pypirc\b|/etc/shadow|\b(?:env|printenv)\b|\$env:|Get-ChildItem\s+env:)"
+NETWORK_TOOL = r"\b(?:curl|wget|nc|ncat|socat|ssh|scp|sftp|ftp|telnet|rsync|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b"
 HIGH = [
+    (re.compile(r"(?i)\b(curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^|;&\n]*\|\s*(sudo\s+)?((ba|z|da|k)?sh|python3?|node|iex|Invoke-Expression|pwsh|powershell)\b"),
+     "runs a downloaded script without checking it"),
+    (re.compile(r"(?i)" + SECRET_SOURCE + r"[^|;&\n]*\|[^;&\n]*" + NETWORK_TOOL
+                + r"|" + NETWORK_TOOL + r"[^|;&\n]*(?:@|-InFile\s+|--upload-file\s+|-T\s+)\S*" + SECRET_SOURCE),
+     "sends secrets or environment variables over the network"),
     (re.compile(r"\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\b"), "deletes files recursively"),
-    (re.compile(r"\b(curl|wget|nc|ncat|ssh|scp)\b"), "tries to reach the network"),
+    (re.compile(r"(?<!git )\brm\b(?=[^|;&\n]*\s(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?:\s|$))"), "deletes files recursively"),
+    (re.compile(r"(?i)\b(Remove-Item|ri|del|erase)\b[^|;\n]*\s-r(ecurse)?\b|\b(rmdir|rd)\s+/s\b"), "deletes files recursively"),
+    (re.compile(r"(?i)" + NETWORK_TOOL), "tries to reach the network"),
     (re.compile(r"\b(pip|npm|bun|cargo|apt|apt-get|yarn|pnpm)\s+(install|add|i)\b"), "installs packages"),
     (re.compile(r"\b(winget|choco|scoop|brew|dnf|pacman|zypper|snap|rustup|xcode-select)\s+(install|-S|--install|default|toolchain)\b|\bsudo\b", re.I),
      "installs software on this computer"),
     (re.compile(r"\bchmod\s+(-R\s+)?777\b"), "makes files world-writable"),
+    (re.compile(r"\bchmod\s+(?:-\S+\s+)*(?:0?[0-7]?[0-7][0-7][2367]\b|[ugoa]*[oa][ugoa]*[+=][rwxXst]*w)|(?i:\bicacls\b.*\b(?:Everyone|\*S-1-1-0):(?:\([A-Z]{1,2}\))*\(?[FMW]\b)"),
+     "makes files world-writable"),
     (re.compile(r"\b(mkfs|dd)\b|>\s*/dev/"), "writes to devices"),
     (re.compile(r"\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f)\b"), "rewrites or publishes history"),
 ]
+PYTHON_HIGH = [
+    (re.compile(r"\bchmod\([^)]*\b0o?[0-7]?[0-7][0-7][2367]\b|\bumask\(\s*0o?0*\s*\)"), "makes files world-writable"),
+    (re.compile(r"\b(subprocess|os\.system|os\.popen|os\.exec\w*|os\.spawn\w*|pty)\b"), "runs other programs"),
+    (re.compile(r"\b(shutil\.rmtree|os\.remove|os\.unlink|os\.rmdir|\.unlink\(|\.rmdir\()"), "deletes files"),
+    (re.compile(r"\b(urllib\.request|urllib3|requests|httpx|aiohttp|http\.client|socket|ftplib|smtplib)\b|\bfrom\s+urllib\s+import\s+request\b"),
+     "reaches the network directly (dikdik_tools.web_fetch does not)"),
+]
+# Other languages: what makes a program high risk, beyond the shell command checks for bash and PowerShell.
+CODE_HIGH = [
+    (re.compile(r"child_process|\bexecSync\b|\bspawnSync\b|Deno\.Command|Bun\.spawn|Start-Process|Invoke-Expression|\biex\b|"
+                r"os/exec|exec\.Command|std::process::Command|Process\.Start|Runtime\.getRuntime|ProcessBuilder|"
+                r"\b(?:system|shell_exec|passthru|proc_open|popen)\s*\(|%x\{|\bIO\.popen|\brun\(`"), "runs other programs"),
+    (re.compile(r"\brm\s+-[a-zA-Z]*[rf]|Remove-Item|\bfs\.(?:rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)\b|\bunlink\s*\(|"
+                r"File\.Delete|Directory\.Delete|os\.Remove(?:All)?\b|remove_dir_all|remove_file|Files\.delete|"
+                r"FileUtils\.rm|\bfile\.remove\b|\brmdir\b"), "deletes files"),
+    (re.compile(r"\bfetch\s*\(|\bhttps?\.(?:request|get)\b|XMLHttpRequest|WebSocket|\bnet\.(?:connect|createConnection)\b|"
+                r"Invoke-WebRequest|Invoke-RestMethod|\biwr\b|\birm\b|\b(?:curl|wget|nc|ssh|scp)\b|net/http|\breqwest\b|"
+                r"HttpClient|WebClient|Net::HTTP|open-uri|\bsocket\b|fsockopen|download\.file|\bhttr\b|HTTP\.jl|Downloads\.download|"
+                r"java\.net|LWP::|IO::Socket", re.I), "reaches the network directly (the Dikdik tool helpers do not)"),
+]
 READ_TOOLS = {"list_files", "read_file", "search_text", "read_skill", "read_plan", "task_tracker", "write_plan", "finish", "delegate",
               "architecture_map", "impacted_tests", "security_scan", "quality_check", "release_gate", "record_requirements",
-              "request_secret", "ask_question", "environment_check"}  # both are themselves questions to the user
+              "request_secret", "ask_question", "environment_check", "session_search"}  # both are themselves questions to the user
 
 ENV_EXCLUDED = {".env.example", ".env.sample", ".env.template", ".env.defaults"}
 
@@ -60,6 +92,23 @@ def assess(call: ToolCall) -> tuple[str, str]:
         return "high", "reads a secrets file such as .env"
     if call.name in READ_TOOLS:
         return "low", "reads or reports only"
+    if call.name in ("run_python", "run_code"):
+        files = call.arguments.get("files")
+        code = "\n".join([str(call.arguments.get("code", "")), *(map(str, files.values()) if isinstance(files, dict) else ())])
+        language = language_name(call.arguments.get("language")) if call.name == "run_code" else "python"
+        if language == "python":
+            checks, what = PYTHON_HIGH, "script"
+        else:
+            checks, what = CODE_HIGH + (HIGH if language in SHELLS else []), "program"
+        for pattern, reason in checks:
+            if pattern.search(code):
+                return "high", f"the {what} {reason}"
+        return "medium", "runs a Python script" if language == "python" else f"runs a {language} program"
+    if call.name == "command_process":
+        action = call.arguments.get("action")
+        if action == "input":
+            return "high", "sends input to a running command"
+        return ("medium", "stops a running command") if action == "stop" else ("low", "reads a running command's output")
     if call.name in {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}:
         command = str(call.arguments.get("command", "")) + "\n" + str(call.arguments.get("dependency_command", ""))
         for pattern, reason in HIGH:
@@ -88,7 +137,7 @@ def assess(call: ToolCall) -> tuple[str, str]:
     return "medium", "uses a tool"
 
 
-ACTION_TOOLS = {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"} | BROWSER_WRITE_TOOLS
+ACTION_TOOLS = {"run_command", "run_python", "run_code", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"} | BROWSER_WRITE_TOOLS
 
 
 # --- structured permission rules -------------------------------------------------------
@@ -97,9 +146,9 @@ ACTION_TOOLS = {"run_command", "preview_app", "measure_performance", "repeat_com
 # can never add one). An unmatched call falls through to the normal policy.
 RULE_ACTIONS = {"*", "read", "edit", "create", "command", "browse"}
 RULE_GROUPS = {"read": READ_TOOLS, "edit": {"edit_file"}, "create": {"create_file", "record_decision"},
-               "command": {"run_command", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}, "browse": {"preview_app", "browse_url", "web_fetch", "web_search"} | BROWSER_WRITE_TOOLS | BROWSER_READ_TOOLS}
+               "command": {"run_command", "run_python", "run_code", "command_process", "preview_app", "measure_performance", "repeat_command", "load_test", "dast_scan", "fault_test"}, "browse": {"preview_app", "browse_url", "web_fetch", "web_search"} | BROWSER_WRITE_TOOLS | BROWSER_READ_TOOLS}
 RULE_SUBJECT = {"list_files": "path", "read_file": "path", "search_text": "path", "edit_file": "path",
-                "create_file": "path", "run_command": "command", "preview_app": "command", "measure_performance": "command", "repeat_command": "command", "load_test": "command", "dast_scan": "command", "fault_test": "command", "browse_url": "url", "web_search": "query"}
+                "create_file": "path", "run_command": "command", "run_python": "code", "run_code": "code", "preview_app": "command", "measure_performance": "command", "repeat_command": "command", "load_test": "command", "dast_scan": "command", "fault_test": "command", "browse_url": "url", "web_search": "query"}
 RULE_NAME = re.compile(r"[a-z0-9_.-]{1,60}")
 
 
@@ -121,18 +170,58 @@ def _rule_matches(rule, call: ToolCall) -> bool:
     action = rule.get("action")
     if not isinstance(action, str):
         return False
-    if action != "*" and action != call.name and call.name not in RULE_GROUPS.get(action, ()):
+    legacy = action == "run_python" and call.name == "run_code" and \
+        str(call.arguments.get("language", "")).strip().lower() in ("python", "py", "python3")
+    if action != "*" and action != call.name and call.name not in RULE_GROUPS.get(action, ()) and not legacy:
         return False
     pattern = rule.get("resource", "*")
     if not isinstance(pattern, str) or pattern == "*" or pattern == "":
         return True
     subject = str(call.arguments.get(RULE_SUBJECT.get(call.name, ""), ""))
+    if RULE_SUBJECT.get(call.name) == "command" and call.name != "fault_test":
+        # An allow rule names one command: "npm test*" must not approve "npm test && curl ... | sh".
+        # Deny and ask rules match any command in a chain.
+        if rule.get("effect") == "allow":
+            return not composed(subject) and fnmatch.fnmatch(subject.casefold(), pattern.casefold())
+        return any(fnmatch.fnmatch(part.casefold(), pattern.casefold()) for part in [subject, *command_segments(subject)])
     if call.name == "fault_test":
         # Two commands run: deny and ask rules match either one; an allow rule must cover both.
         both = [subject, str(call.arguments.get("dependency_command", ""))]
         matched = [fnmatch.fnmatch(s.casefold(), pattern.casefold()) for s in both]
         return all(matched) if rule.get("effect") == "allow" else any(matched)
     return fnmatch.fnmatch(subject.casefold(), pattern.casefold())
+
+
+COMPOSITION = re.compile(r"&&|\|\||[;|&`\n\r<>]|\$\(")
+
+
+def command_segments(command: str) -> list[str]:
+    """The commands in a chain (;, &&, ||, |, &, newlines), ignoring separators inside quotes."""
+    unquoted = re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", lambda m: "_" * len(m.group(0)), command)
+    parts, start = [], 0
+    for match in re.finditer(r"&&|\|\||[;|&\n\r]", unquoted):
+        parts.append(command[start:match.start()].strip())
+        start = match.end()
+    parts.append(command[start:].strip())
+    return [part for part in parts if part]
+
+
+def composed(command: str) -> bool:
+    """Whether a command chains, pipes, redirects or substitutes others (outside quotes)."""
+    unquoted = re.sub(r"'[^']*'|\"(?:\\.|[^\"\\$`])*\"", "''", command)
+    return COMPOSITION.search(unquoted) is not None
+
+
+def command_allowed(command: str, allowed) -> bool:
+    """A remembered command: exactly, or by prefix for an entry ending in * (never a chained command)."""
+    for entry in allowed or ():
+        if not isinstance(entry, str):
+            continue
+        if entry == command:
+            return True
+        if entry.endswith("*") and len(entry) > 1 and command.startswith(entry[:-1]) and not composed(command):
+            return True
+    return False
 
 
 def parse_rules(value) -> list:
@@ -166,7 +255,7 @@ def needs_approval(policy: str, risk: str, tool: str | None = None) -> bool:
     data-sending browser action and MCP call (read-only fetches and observations do not ask);
     always: every action that is not read-only."""
     if policy == "ask":
-        return tool is not None and (tool in ACTION_TOOLS or tool.startswith("mcp__"))
+        return tool is not None and (tool in ACTION_TOOLS or tool.startswith("mcp__") or (risk == "high" and tool not in READ_TOOLS))
     if policy == "always":
         return tool not in READ_TOOLS if tool is not None else risk != "low"
     return policy == "risky" and risk == "high"
@@ -183,10 +272,16 @@ REQUEST_SECRET = _tool(
 
 ASK_QUESTION = _tool(
     "ask_question",
-    "Ask the user a clarifying question and wait for their answer. Use when you need a decision or preference "
-    "that only the user can provide. The answer comes back as plain text; an empty answer means the user skipped it.",
+    "Ask the user a clarifying question and wait for their answer. Use it when the request is ambiguous in a way that "
+    "changes the result (audience, scope, format, which data or file) or you need a decision only the user can make; "
+    "do not ask for what you can find or reasonably infer. Offer choices when there are clear options. The answer comes "
+    "back as plain text; an empty answer means the user skipped it. When you need a password, token or key, set "
+    "sensitive to true and give name: the answer is sealed in the secret store, never shown to you, and you get "
+    "$NAME (commands receive it as that environment variable). Credentials pasted into any answer are sealed the same way.",
     {"question": {"type": "string", "description": "The question to ask the user"},
-     "choices": {"type": "array", "items": {"type": "string"}, "description": "Optional list of choices for the user to pick from"}},
+     "choices": {"type": "array", "items": {"type": "string"}, "description": "Optional list of choices for the user to pick from"},
+     "sensitive": {"type": "boolean", "description": "True when the answer is a password, token or key"},
+     "name": {"type": "string", "description": "Environment variable name for a sensitive answer, e.g. DB_PASSWORD"}},
     ["question"])
 
 
@@ -197,8 +292,9 @@ class QuestionRequests:
         self.lock = threading.Lock()
         self.pending: dict[tuple[str, str], dict] = {}
 
-    def wait(self, task: str, request_id: str, cancel, timeout: float = 1800) -> str | None:
-        slot = {"event": threading.Event(), "answer": None}
+    def wait(self, task: str, request_id: str, cancel, timeout: float = 1800) -> tuple[str, bool] | None:
+        """(answer, marked secret by the user), or None when skipped by cancelling or timing out."""
+        slot = {"event": threading.Event(), "answer": None, "secret": False}
         with self.lock:
             self.pending[(task, request_id)] = slot
         try:
@@ -206,17 +302,18 @@ class QuestionRequests:
             while not slot["event"].wait(0.2):
                 if cancel.is_set() or time.monotonic() > deadline:
                     return None
-            return slot["answer"]
+            return slot["answer"], slot["secret"]
         finally:
             with self.lock:
                 self.pending.pop((task, request_id), None)
 
-    def answer(self, task: str, request_id: str, value) -> None:
+    def answer(self, task: str, request_id: str, value, secret: bool = False) -> None:
         with self.lock:
             slot = self.pending.get((task, request_id))
         if slot is None:
             raise KeyError(request_id)
         slot["answer"] = str(value) if value is not None else ""
+        slot["secret"] = secret is True
         slot["event"].set()
 
 
@@ -334,6 +431,15 @@ def blocked_by(rules: list[dict], call: ToolCall) -> str | None:
 
 
 # --- subagents ------------------------------------------------------------------------
+RESEARCHER = {"name": "researcher", "description": "Reads long documents, papers and web pages in its own fresh context and "
+              "returns a short report with exact figures and sources, so long reading never fills this conversation.",
+              "instructions": "Read what the task needs with the tools you have, in a targeted way (find, outline, "
+                              "sections), and answer the question. Reply with a short report, at most about 400 words: "
+                              "the findings with exact numbers and short quotes, each with its source (file and section, "
+                              "or URL or DOI), then what you could not find. Do not invent sources.",
+              "source": "built-in", "tools": "research"}
+RESEARCH_TOOLS = {"read_skill", "read_document", "statistics", "read_image", "web_fetch", "web_search", "literature_search",
+                  "analyze_data"}
 EXPLORER = {"name": "explorer", "description": "Finds where things are and how they work; reads and searches only.",
             "instructions": "Investigate the repository to answer the question. Be specific: name files, functions and line numbers. Do not propose edits.", "source": "built-in"}
 

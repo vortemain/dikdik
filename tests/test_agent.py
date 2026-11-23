@@ -205,19 +205,16 @@ class AgentTests(unittest.TestCase):
         ends = [d for k, d in self.events if k == "tool" and d.get("phase") == "end"]
         self.assertFalse(ends[0]["failed"], ends[0])
 
-    def test_duplicate_ids_and_batch_limit(self):
-        for batch in ([ToolCall("same", "run_tests", {}), ToolCall("same", "finish", {})],
-                      [self.call("run_tests") for _ in range(9)]):
-            with self.subTest(batch=len(batch)):
-                result, _ = self.run_script([batch])
-                self.assertEqual(result.state, "failed")
-                self.assertEqual(result.tool_calls, 0)
+    def test_batch_limit(self):
+        result, _ = self.run_script([[self.call("run_tests") for _ in range(9)]])
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.tool_calls, 0)
 
-    def test_id_reuse_across_responses(self):
+    def test_reused_ids_get_unique_suffixes_instead_of_failing(self):
         call = self.call("list_files")
-        result, _ = self.run_script([[call], [call]])
-        self.assertIn("duplicate", result.error)
-        self.assertEqual(result.tool_calls, 1)
+        result, _ = self.run_script([[ToolCall(call.id, "list_files", {}), ToolCall(call.id, "list_files", {})], [call]])
+        self.assertNotIn("duplicate", result.error or "")
+        self.assertEqual(result.tool_calls, 3)
 
     def test_budgets_and_partial_files(self):
         for budget, expected in [

@@ -33,7 +33,7 @@ MAX_FILE_BYTES = 1_000_000
 MAX_FILES = 20_000
 TEXT_SUFFIXES = {".py", ".pyw", ".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".json", ".toml", ".yaml", ".yml", ".ini", ".cfg",
                  ".conf", ".env", ".sh", ".bash", ".ps1", ".rb", ".go", ".rs", ".java", ".kt", ".cs", ".php", ".html", ".xml",
-                 ".properties", ".tf", ".md", ".txt", ".sql", ".lock", ""}
+                 ".properties", ".tf", ".md", ".txt", ".sql", ".lock", ".csv", ".tsv", ""}
 IGNORE = re.compile(r"dikdik-scan:\s*ignore(?:\[([A-Z0-9_, -]+)\])?")
 
 # --- secrets ----------------------------------------------------------------------------------
@@ -76,6 +76,20 @@ REMEDIATION = {
     "JS001": "Do not evaluate dynamic text; parse it or dispatch through a table.",
     "JS002": "Assign textContent, or sanitize HTML with a vetted sanitizer before inserting it.",
     "JS003": "Pass an argument array to execFile/spawn instead of building a shell command string.",
+    "PY012": "Keep untrusted input as data: argument lists without a shell, parameter placeholders in SQL, parsing instead of eval; validate against an allowlist first.",
+    "PY013": "Reduce the name to os.path.basename (or secure_filename), join it to a fixed folder and check the resolved path stays inside it.",
+    "PY014": "Allow only known hosts (an allowlist), refuse private and loopback addresses, and never forward a user-supplied URL as is.",
+    "JS006": "Keep request data as data: execFile/spawn with an argument array, query placeholders with a values array, no eval.",
+    "JS007": "Use path.basename on request data, join it to a fixed folder and check the resolved path stays inside it.",
+    "JS008": "Allow only known hosts (an allowlist) and refuse private and loopback addresses before fetching a user-supplied URL.",
+    "XLS001": "Do not write cells that start with =, +, - or @ and call other programs; prefix untrusted text with an apostrophe.",
+    "PY011": "Grant only the owner (and group, if needed) write access, for example 0o755 or 0o600; keep the umask at 0o022 or stricter.",
+    "JS004": "Keep certificate verification on; trust a specific CA (the ca option) instead of disabling checks.",
+    "JS005": "Grant only the owner (and group, if needed) write access, for example 0o755 or 0o600.",
+    "SH001": "Download to a file, verify its checksum or signature, then run it.",
+    "SH002": "Grant only the owner (and group, if needed) write access, for example chmod 755 or chmod 600.",
+    "SH003": "Keep certificate verification on; point the tool at the right CA bundle instead of skipping checks.",
+    "CFG001": "Keep TLS verification on; configure the CA bundle the service needs instead.",
     # reliability (constitution Part 13)
     "REL001": "Pass timeout= so a stalled server cannot hang the caller forever.",
     "REL002": "Catch the specific exception you expect, or log it; a silent pass hides real failures.",
@@ -108,7 +122,9 @@ CWE = {"PY001": "CWE-78", "PY002": "CWE-95", "PY003": "CWE-502", "PY004": "CWE-5
        "I18N001": "CWE-1339", "I18N002": "CWE-838", "I18N003": "CWE-1339", "I18N102": "CWE-1339",
        "PRIV001": "CWE-532", "PRIV002": "CWE-359", "PRIV101": "CWE-532", "INF001": "CWE-1104", "INF002": "CWE-250",
        "INF003": "CWE-798", "INF004": "CWE-494", "INF005": "CWE-494", "INF006": "CWE-829", "INF007": "CWE-250", "INF008": "CWE-829",
-       "INF009": "CWE-250", "INF010": "CWE-250"}
+       "INF009": "CWE-250", "INF010": "CWE-250", "PY011": "CWE-732", "JS004": "CWE-295", "JS005": "CWE-732",
+       "SH001": "CWE-494", "SH002": "CWE-732", "SH003": "CWE-295", "CFG001": "CWE-295", "PY012": "CWE-74", "PY013": "CWE-22",
+       "PY014": "CWE-918", "JS006": "CWE-74", "JS007": "CWE-22", "JS008": "CWE-918", "XLS001": "CWE-1236"}
 CATEGORIES = {"REL": "reliability", "I18N": "i18n", "PRIV": "privacy", "INF": "infrastructure"}
 SECURITY_RULES = {"INF003", "INF004", "INF007", "INF008", "INF009"}  # infrastructure rules that are security findings
 
@@ -131,11 +147,69 @@ JS_RULES = [
     ("JS001", "Dynamic code evaluation", "high", re.compile(r"(?<![\w.$])(?:eval\s*\(|new\s+Function\s*\()")),
     ("JS002", "HTML injection sink", "medium", re.compile(r"\.(?:innerHTML|outerHTML)\s*=(?!=)|\binsertAdjacentHTML\s*\(|\bdocument\.write\s*\(|dangerouslySetInnerHTML")),
     ("JS003", "Shell command built from strings", "high", re.compile(r"\bexec(?:Sync)?\s*\(\s*(?:`[^`]*\$\{|[^,)]*\+)")),
+    ("JS004", "TLS certificate verification disabled", "high",
+     re.compile(r"\brejectUnauthorized\s*:\s*false\b|\bNODE_TLS_REJECT_UNAUTHORIZED\b\s*=\s*['\"]?0\b")),
+    ("JS005", "File made world-writable", "high", re.compile(r"\b(?:l|f)?chmod(?:Sync)?\s*\([^,()]+,\s*['\"]?0?o?[0-7]?[0-7][0-7][2367]\b")),
     ("REL101", "fetch without a timeout signal", "low", re.compile(r"(?<![\w.$])fetch\s*\((?![^)]*\bsignal\b)[^)]*\)")),
     ("I18N102", "Money parsed as binary floating point", "medium", re.compile(r"\bparse(?:Float)\s*\(\s*[\w.]*(?:price|amount|total|balance|cost|fee)", re.I)),
     ("PRIV101", "Credential or personal data logged to the console", "medium",
      re.compile(r"\bconsole\.(?:log|info|debug|warn|error)\s*\([^)]*\b(?:password|passwd|secret|token|apiKey|api_key|ssn|cardNumber)\b", re.I)),
 ]
+
+
+JS_REQUEST = r"\breq(?:uest)?\.(?:query|body|params|headers|cookies)\b"
+JS_ASSIGN = re.compile(r"\b(?:const|let|var)\s+(\{[^}]*\}|[A-Za-z_$][\w$]*)\s*=\s*(.+)")
+JS_SANITIZED = re.compile(r"^\s*(?:Number|parseInt|parseFloat|Boolean|Math\.\w+|path\.basename|encodeURIComponent)\s*\(")
+JS_FLOW_SINKS = [
+    ("JS006", "Untrusted request data reaches a command, eval or SQL", re.compile(r"\b(?:exec|execSync|eval|Function|query|raw|execute)\s*\(")),
+    ("JS007", "Untrusted request data chooses a file path",
+     re.compile(r"\b(?:sendFile|download|readFile|readFileSync|createReadStream|writeFile|writeFileSync|unlink|unlinkSync|rm|rmSync|join|resolve)\s*\(")),
+    ("JS008", "Untrusted request data chooses the URL of an outbound request",
+     re.compile(r"(?<![\w.$])(?:fetch|axios(?:\.(?:get|post|put|request))?|got|https?\.(?:get|request))\s*\(")),
+]
+
+
+def js_flow_findings(lines: list[str]) -> list[tuple[str, str, int]]:
+    """(rule, title, line) for request data that reaches a sink, followed through const/let/var in source order."""
+    tainted: set[str] = set()
+    out = []
+    for number, line in enumerate(lines, 1):
+        code = line.strip()
+        if code.startswith(("//", "*", "/*")) or len(code) > 4000:
+            continue
+        names = "|".join(re.escape(n) for n in sorted(tainted))
+        untrusted = JS_REQUEST + (rf"|(?<![\w$.])(?:{names})\b" if names else "")
+        for rule, title, sink in JS_FLOW_SINKS:
+            match = sink.search(code)
+            if not match:
+                continue
+            args = code[match.end():]
+            if rule == "JS006" and match.group(0).startswith(("query", "raw", "execute")):
+                hit = re.search(r"\$\{\s*(?:" + untrusted + r")|(?:" + untrusted + r")[\w.$\[\]'\"]*\s*\+|\+\s*(?:" + untrusted + ")", args)
+            elif rule == "JS006":
+                hit = re.search(untrusted, args) and re.search(r"\+|\$\{", args) or re.match(r"\s*(?:" + untrusted + ")", args)
+            else:
+                hit = re.search(untrusted, args)
+            if hit:
+                out.append((rule, title, number))
+                break
+        assigned = JS_ASSIGN.search(code)
+        if assigned:
+            targets = re.findall(r"[A-Za-z_$][\w$]*", assigned.group(1))
+            value = assigned.group(2)
+            dirty = re.search(untrusted, value) is not None and not JS_SANITIZED.match(value)
+            for target in targets:
+                (tainted.add if dirty else tainted.discard)(target)
+    return out
+
+
+SPREADSHEET_DANGER = re.compile(r"""(?ix)(?:^|[,;\t])\s*["']?[=+\-@][^,;\t\n]*(?:\b(?:cmd|powershell|pwsh|mshta|msexcel|rundll32|regsvr32|certutil)\b[^|]*\||
+                                \bDDE(?:AUTO)?\b|\bWEBSERVICE\s*\(|\bCALL\s*\(|\bREGISTER(?:\.ID)?\s*\()""")
+
+
+def spreadsheet_findings(text: str) -> list[tuple]:
+    return [("XLS001", "Spreadsheet formula that runs a program or fetches data", "high", number, line.strip()[:160])
+            for number, line in enumerate(text.splitlines(), 1) if len(line) <= 4000 and SPREADSHEET_DANGER.search(line)]
 
 
 def _name(node) -> str:
@@ -233,11 +307,19 @@ def python_findings(text: str) -> list[tuple[str, str, str, int]]:
         debug = _keyword(node, "debug")
         if tail == "run" and isinstance(debug, ast.Constant) and debug.value is True:
             out.append(("PY010", "Application started with debug=True", "medium", node.lineno))
+        if _world_writable(node, name, tail):
+            out.append(("PY011", "File permissions grant everyone write access", "high", node.lineno))
         out.extend(_quality_findings(node, name, tail, aware))
     for node in ast.walk(tree):  # CERT_NONE assignments
         if isinstance(node, ast.Attribute) and node.attr == "CERT_NONE":
             out.append(("PY005", "TLS certificate verification disabled", "high", node.lineno))
+        elif (isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and node.value.value is False
+              and any(isinstance(t, ast.Attribute) and t.attr == "check_hostname" for t in node.targets)):
+            out.append(("PY005", "TLS hostname verification disabled", "high", node.lineno))
     out.extend(("PY008", "SQL built by string formatting", "high", line) for line in _sql_variable_calls(tree))
+    flows = flow_findings(tree)
+    proven = {row[3] for row in flows if row[0] == "PY012"}  # a proven flow replaces the pattern finding on its line
+    out = [row for row in out if not (row[0] in {"PY001", "PY002", "PY007", "PY008"} and row[3] in proven)] + flows
     lines = text.splitlines()
     for node in ast.walk(tree):  # silently swallowed errors; a comment saying why makes it a decision
         if (isinstance(node, ast.ExceptHandler) and len(node.body) == 1 and isinstance(node.body[0], ast.Pass)
@@ -246,6 +328,155 @@ def python_findings(text: str) -> list[tuple[str, str, str, int]]:
             if not explained:
                 out.append(("REL002", "Exception silently ignored", "low", node.lineno))
     return out
+
+
+# --- data flow --------------------------------------------------------------------------------
+# A small, intra-procedural taint pass: values from requests, input() and argv, followed in source
+# order through assignments to the sinks below. Sanitizers end the flow. Branches are not modelled,
+# so an allowlist check in an `if` still reports; that is why these are high, not critical.
+REQUEST_ROOTS = {"request", "req", "self.request"}
+REQUEST_ATTRS = {"args", "form", "values", "json", "files", "cookies", "headers", "data", "query_params", "path_params",
+                 "GET", "POST", "COOKIES", "META", "FILES", "body", "query", "params", "get_json", "get_data"}
+SOURCE_CALLS = {"input", "raw_input", "sys.stdin.read", "sys.stdin.readline"}
+SANITIZERS = {"int", "float", "bool", "len", "abs", "round", "hash", "shlex.quote", "quote", "pipes.quote", "os.path.basename",
+              "basename", "secure_filename", "werkzeug.utils.secure_filename", "html.escape", "escape", "markupsafe.escape",
+              "uuid.UUID", "UUID", "ipaddress.ip_address", "datetime.fromisoformat", "date.fromisoformat"}
+ROUTE_DECORATORS = {"route", "get", "post", "put", "patch", "delete", "api_route", "websocket", "api_view"}
+SAFE_ANNOTATIONS = {"int", "float", "bool", "UUID", "uuid.UUID", "date", "datetime"}
+SHELL_CALLS = {"subprocess.run", "subprocess.call", "subprocess.check_call", "subprocess.check_output", "subprocess.Popen"}
+PATH_SINKS = {"open", "io.open", "os.open", "send_file", "flask.send_file", "FileResponse", "os.remove", "os.unlink",
+              "shutil.rmtree", "pathlib.Path", "Path"}
+URL_SINKS = HTTP_CALLS | {"urllib.request.urlopen", "request.urlopen", "urlopen", "httpx.get", "httpx.post", "httpx.request",
+                          "aiohttp.request", "session.get", "session.post"}
+
+
+def _source(node) -> bool:
+    if isinstance(node, ast.Call):
+        name = _name(node.func)
+        if name in SOURCE_CALLS:
+            return True
+        node = node.func
+    if isinstance(node, ast.Attribute):
+        return node.attr in REQUEST_ATTRS and _name(node.value) in REQUEST_ROOTS or _name(node) == "sys.argv"
+    return False
+
+
+def _tainted(node, state: dict[str, int]) -> int | None:
+    """The line an untrusted value in `node` came from, or None."""
+    if node is None:
+        return None
+    if _source(node):
+        return node.lineno
+    if isinstance(node, ast.Name):
+        return state.get(node.id)
+    if isinstance(node, ast.Call):
+        if _name(node.func) in SANITIZERS or _name(node.func).rsplit(".", 1)[-1] in {"quote", "basename", "secure_filename", "escape"}:
+            return None
+        parts = [node.func.value] if isinstance(node.func, ast.Attribute) else []
+        parts += [*node.args, *(k.value for k in node.keywords)]
+        return next((line for line in (_tainted(p, state) for p in parts) if line), None)
+    if isinstance(node, (ast.Attribute, ast.Subscript, ast.Starred, ast.FormattedValue)):
+        return _tainted(node.value, state)
+    if isinstance(node, ast.JoinedStr):
+        children = node.values
+    elif isinstance(node, ast.BinOp):
+        children = [node.left, node.right]
+    elif isinstance(node, ast.BoolOp):
+        children = node.values
+    elif isinstance(node, ast.IfExp):
+        children = [node.body, node.orelse]
+    elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        children = node.elts
+    else:
+        return None
+    return next((line for line in (_tainted(c, state) for c in children) if line), None)
+
+
+def _route_parameters(scope) -> dict[str, int]:
+    routed = any(isinstance(d, ast.Call) and _name(d.func).rsplit(".", 1)[-1] in ROUTE_DECORATORS for d in scope.decorator_list)
+    if not routed:
+        return {}
+    params = [*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs]
+    return {a.arg: scope.lineno for a in params if a.arg not in {"self", "cls", "request", "req", "db", "session"}
+            and not (a.annotation is not None and _name(a.annotation) in SAFE_ANNOTATIONS)}
+
+
+def _sink(call: ast.Call, state: dict[str, int]) -> tuple[str, str, int] | None:
+    name, first = _name(call.func), call.args[0] if call.args else None
+    tail = name.rsplit(".", 1)[-1]
+    shell = _keyword(call, "shell")
+    if (name in SHELL_CALLS and isinstance(shell, ast.Constant) and shell.value is True or name in {"os.system", "os.popen"}) and (line := _tainted(first, state)):
+        return "PY012", "Untrusted input reaches a shell command", line
+    if name in {"eval", "exec"} and (line := _tainted(first, state)):
+        return "PY012", f"Untrusted input reaches {name}()", line
+    if tail in {"execute", "executemany", "executescript"} and (line := _tainted(first, state)):
+        return "PY012", "Untrusted input is built into SQL", line
+    if name in PATH_SINKS and (line := _tainted(first, state)):
+        return "PY013", "Untrusted input chooses a file path", line
+    if (name in URL_SINKS or tail in {"urlopen"}) and (line := _tainted(first if first is not None else _keyword(call, "url"), state)):
+        return "PY014", "Untrusted input chooses the URL of an outbound request", line
+    return None
+
+
+def flow_findings(tree) -> list[tuple[str, str, str, int, int]]:
+    """(rule, title, severity, line, source line) for untrusted values that reach a dangerous sink."""
+    out = []
+    scopes = [tree, *(n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))]
+    for scope in scopes:
+        state = _route_parameters(scope) if scope is not tree else {}
+        events = []
+        for node in _own_nodes(scope):
+            if isinstance(node, ast.Call):
+                events.append((node.lineno, 0, node))
+            elif isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.For, ast.withitem, ast.NamedExpr)):
+                events.append((getattr(node, "lineno", getattr(getattr(node, "context_expr", None), "lineno", 0)), 1, node))
+        for _, _, node in sorted(events, key=lambda e: (e[0], e[1])):
+            if isinstance(node, ast.Call):
+                found = _sink(node, state)
+                if found:
+                    out.append((found[0], found[1], "high", node.lineno, found[2]))
+                continue
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.For):
+                targets, value = [node.target], node.iter
+            elif isinstance(node, ast.withitem):
+                targets, value = [node.optional_vars] if node.optional_vars else [], node.context_expr
+            else:
+                targets, value = [node.target], node.value
+            line = _tainted(value, state)
+            if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+                line = line or state.get(node.target.id)
+            for target in targets:
+                for name in (e.id for e in ast.walk(target) if isinstance(e, ast.Name)):
+                    if line:
+                        state[name] = line
+                    else:
+                        state.pop(name, None)
+    return out
+
+
+def _own_nodes(scope):
+    """Nodes of a scope, not descending into nested functions or classes (they are their own scopes)."""
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        yield node
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _world_writable(node: ast.Call, name: str, tail: str) -> bool:
+    """chmod granting others write access, or a umask that stops masking it. Only literal modes."""
+    if name == "os.umask":
+        mode = node.args[0] if node.args else None
+        return isinstance(mode, ast.Constant) and type(mode.value) is int and not mode.value & 0o002
+    if tail not in {"chmod", "lchmod", "fchmod"} or not isinstance(node.func, ast.Attribute):
+        return False
+    mode = _keyword(node, "mode") or (node.args[1] if name.startswith("os.") and len(node.args) > 1
+                                      else node.args[0] if not name.startswith("os.") and node.args else None)
+    return isinstance(mode, ast.Constant) and type(mode.value) is int and bool(mode.value & 0o002)
 
 
 def _mentioned(node) -> set[str]:
@@ -413,6 +644,48 @@ def infra_findings(path: str, text: str) -> list[tuple]:
     return {"dockerfile": _dockerfile, "workflow": _workflow, "compose": _compose}[kind](text) if kind else []
 
 
+# --- scripts and configuration ----------------------------------------------------------------
+SCRIPT_SUFFIXES = {".sh", ".bash", ".zsh", ".ksh", ".ps1", ".psm1"}
+PS_PIPE_TO_SHELL = re.compile(r"(?i)\b(iwr|irm|curl|wget|Invoke-WebRequest|Invoke-RestMethod)\b[^|;\n]*\|\s*(iex|Invoke-Expression)\b")
+WORLD_CHMOD = re.compile(r"\bchmod\s+(?:-\S+\s+)*(?:0?[0-7]?[0-7][0-7][2367]\b|[ugoa]*[oa][ugoa]*[+=][rwxXst]*w)")
+INSECURE_TLS = re.compile(r"\bcurl\b[^|;&\n]*\s(?:-[a-zA-Z]*k[a-zA-Z]*|--insecure)\b|\bwget\b[^|;&\n]*--no-check-certificate\b"
+                          r"|(?i:-SkipCertificateCheck\b)")
+CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".conf", ".env", ".properties"}
+CONFIG_NAMES = {".npmrc", ".yarnrc", ".gitconfig", ".curlrc", ".wgetrc", "pip.conf", "pip.ini"}
+TLS_OFF = re.compile(r"""(?ix)["']?\b(?:verify_?ssl|ssl_?verify|verify_?tls|tls_?verify|strict[-_]?ssl|ssl[-_]?verify|check_?certificate|node_tls_reject_unauthorized|pythonhttpsverify)\b["']?
+                         \s*[:=]\s*["']?(?:false|no|off|0)\b""")
+TLS_SKIP = re.compile(r"""(?ix)["']?\b(?:insecure_?skip_?verify|insecure|tls_?insecure|skip_?tls_?verify|git_ssl_no_verify)\b["']?\s*[:=]\s*["']?(?:true|yes|on|1)\b""")
+
+
+def script_kind(path: str, text: str) -> bool:
+    return PurePosixPath(path).suffix.lower() in SCRIPT_SUFFIXES or (
+        PurePosixPath(path).suffix == "" and re.match(r"#!\S*(?:/|\s)(?:ba|z|k|da)?sh\b", text) is not None)
+
+
+def script_findings(text: str) -> list[tuple]:
+    out = []
+    for number, line in enumerate(text.splitlines(), 1):
+        code = line.strip()
+        if not code or code.startswith("#") or len(code) > 4000:
+            continue
+        if PIPE_TO_SHELL.search(code) or PS_PIPE_TO_SHELL.search(code):
+            out.append(("SH001", "Remote script piped straight into a shell", "high", number, code[:160]))
+        if WORLD_CHMOD.search(code):
+            out.append(("SH002", "File permissions grant everyone write access", "high", number, code[:160]))
+        if INSECURE_TLS.search(code):
+            out.append(("SH003", "TLS certificate verification disabled", "high", number, code[:160]))
+    return out
+
+
+def config_findings(path: str, text: str) -> list[tuple]:
+    name = PurePosixPath(path).name.lower()
+    if PurePosixPath(path).suffix.lower() not in CONFIG_SUFFIXES and name not in CONFIG_NAMES and not name.startswith(".env"):
+        return []
+    return [("CFG001", "TLS verification disabled in configuration", "high", number, line.strip()[:160])
+            for number, line in enumerate(text.splitlines(), 1)
+            if len(line) <= 4000 and not line.lstrip().startswith(("#", ";", "//")) and (TLS_OFF.search(line) or TLS_SKIP.search(line))]
+
+
 # --- scanning ---------------------------------------------------------------------------------
 def _finding(rule, title, severity, path, line, message, evidence="", remediation="", cwe=""):
     fingerprint = hashlib.sha256(f"{rule}|{path}|{line}|{evidence}".encode()).hexdigest()[:16]
@@ -467,13 +740,17 @@ def scan_files(files: dict[str, str]) -> dict:
                 if not PLACEHOLDER.search(value) and _entropy(value) >= 3.5 and not any(p.search(value) for _, _, _, p in SECRET_RULES):
                     keep(_finding("SEC010", "Hard-coded credential", "medium", path, number, f"`{match.group(1)}` is assigned a literal secret-like value",
                                   _redact(value), "Load the value from the environment or a secret store.", "CWE-798"))
-        for rule, title, severity, line, evidence in infra_findings(path, text):
+        rows = infra_findings(path, text) + config_findings(path, text) + (script_findings(text) if script_kind(path, text) else [])
+        if PurePosixPath(path).suffix.lower() in {".csv", ".tsv"}:
+            rows += spreadsheet_findings(text)
+        for rule, title, severity, line, evidence in rows:
             keep(_finding(rule, title, severity, path, line, title, str(evidence)[:160], REMEDIATION[rule], CWE[rule]))
         suffix = PurePosixPath(path).suffix.lower()
         if suffix in {".py", ".pyw"}:
-            for rule, title, severity, line in python_findings(text):
+            for rule, title, severity, line, *origin in python_findings(text):
                 if category(rule) == "security" or not testing:  # quality rules target production code
-                    keep(_finding(rule, title, severity, path, line, title, at(line).strip()[:160], REMEDIATION[rule], CWE[rule]))
+                    message = f"{title} (untrusted input from line {origin[0]})" if origin else title
+                    keep(_finding(rule, title, severity, path, line, message, at(line).strip()[:160], REMEDIATION[rule], CWE[rule]))
         elif suffix in {".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx"}:
             if _generated(path, text):
                 skipped.append({"file": path, "reason": "generated or minified code"})
@@ -487,6 +764,8 @@ def scan_files(files: dict[str, str]) -> dict:
                     if match and not (rule == "JS002" and CONSTANT_HTML.match(line[match.end():])):
                         if category(rule) == "security" or not testing:
                             keep(_finding(rule, title, severity, path, number, title, stripped[:160], REMEDIATION[rule], CWE[rule]))
+            for rule, title, number in js_flow_findings(lines):
+                keep(_finding(rule, title, "high", path, number, title, at(number).strip()[:160], REMEDIATION[rule], CWE[rule]))
     findings.sort(key=lambda f: (RANK[f["severity"]], f["file"], f["line"]))
     return {"findings": findings, "scanned_files": len(files) - len(skipped), "skipped": skipped, "suppressed": suppressed}
 

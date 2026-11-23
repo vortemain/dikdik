@@ -100,6 +100,30 @@ class ContextContinuityTests(unittest.TestCase):
         self.assertIn(original, messages)
         assert_protocol(self, messages)
 
+    def test_document_statistics_web_findings_and_notes_survive_repeated_compaction(self):
+        objective = {"role": "user", "content": "Analyse my survey against my objectives"}
+        notes = "Objectives: 1) policies 2) staff skills. N=91 in workbook (draft says 101). DV = items 28-31."
+        messages = [{"role": "system", "content": "Policy"}, objective,
+                    *group("doc", "read_document", {"path": "attachments/proposal.docx", "find": "Specific Objectives"},
+                           {"path": "attachments/proposal.docx", "text": "1.4.2 Specific Objectives: To assess hospital policies"}),
+                    *group("stat", "statistics", {"path": "attachments/survey.xlsx", "analysis": "reliability", "columns": ["#11", "#12"]},
+                           {"n": 91, "cronbach_alpha": 0.812}),
+                    *group("web", "web_fetch", {"url": "https://who.int/blood"}, {"content": "WHO: 118.5 million donations"}),
+                    *group("note", "save_notes", {"notes": notes}, {"saved": True})]
+        for i in range(12):
+            messages += group(f"r{i}", "read_document", {"path": "attachments/proposal.docx", "offset": i * 9000},
+                              {"text": f"chunk-{i}:" + "z" * 9000})
+        self.assertTrue(_compact_context(messages, objective, {}))
+        remembered = json.dumps(memory(messages))
+        for fact in ("Specific Objectives", "cronbach_alpha", "118.5 million"):
+            self.assertIn(fact, remembered)
+        self.assertEqual(memory(messages)["working_notes"], notes)
+        messages += group("huge", "read_document", {"path": "attachments/proposal.docx", "offset": 99000}, {"text": "y" * 60000})
+        self.assertTrue(_compact_context(messages, objective, {}))
+        self.assertEqual(memory(messages)["working_notes"], notes)
+        self.assertIn("cronbach_alpha", json.dumps(memory(messages)))
+        assert_protocol(self, messages)
+
     def test_trimmed_observations_are_explicit_and_signed_assistant_data_is_unchanged(self):
         objective = {"role": "user", "content": "Work"}
         reasoning = [{"type": "reasoning.encrypted", "data": "opaque", "signature": "unchanged"}]
@@ -190,6 +214,81 @@ class ContextContinuityTests(unittest.TestCase):
         for messages in model.seen:
             assert_protocol(self, messages)
         self.assertTrue(any(k == "recovery" and d.get("action") == "continue_pending_work" for k, d in events))
+
+    def test_rereading_document_sections_with_varied_sizes_gets_notes_guidance(self):
+        document = "abcdefghij" * 10000
+        reads = [{"path": "attachments/p.docx", "offset": 0, "max_chars": 40000},
+                 {"path": "attachments/p.docx", "offset": 40000, "max_chars": 40000},
+                 {"path": "attachments/p.docx", "offset": 5000, "max_chars": 20000},
+                 {"path": "attachments/p.docx", "offset": 41000, "max_chars": 30000},
+                 {"path": "attachments/p.docx", "find": "Objectives", "max_chars": 6000},
+                 {"path": "attachments/p.docx", "find": "Objectives", "max_chars": 8000}]
+
+        class Model:
+            def __init__(self):
+                self.count, self.seen = 0, []
+
+            def respond(self, messages, tools):
+                self.seen.append(messages)
+                self.count += 1
+                if self.count > len(reads):
+                    return ModelResponse("Done", [])
+                return ModelResponse("", [ToolCall(f"r{self.count}", "read_document", reads[self.count - 1])])
+
+        def call(name, args):
+            if "find" in args:
+                return {"path": args["path"], "text": "1.4.2 Specific Objectives"}
+            end = min(len(document), args["offset"] + args["max_chars"])
+            return {"path": args["path"], "offset": args["offset"], "next_offset": end, "text": document[args["offset"]:end]}
+        model, events = Model(), []
+        result = run_agent({}, "Analyse", model, None, lambda k, d: events.append((k, d)), threading.Event(),
+                           extra_tools=[{"type": "function", "function": {"name": "read_document", "parameters": {"type": "object"}}}],
+                           extra_call=call, read_only=True, conversation=True)
+        self.assertEqual(result.state, "completed")
+        hints = [m["content"] for messages in model.seen for m in messages
+                 if m.get("role") == "user" and isinstance(m.get("content"), str) and "save_notes" in m["content"]]
+        self.assertTrue(hints)
+        reasons = [d.get("reason") for k, d in events if k == "recovery"]
+        self.assertIn("Re-reading parts of a document already read", reasons)
+
+    def test_providers_that_reuse_call_ids_across_turns_still_complete(self):
+        class Model:
+            def __init__(self):
+                self.count, self.seen = 0, []
+
+            def respond(self, messages, tools):
+                self.seen.append(messages)
+                self.count += 1
+                if self.count == 3:
+                    return ModelResponse("Done", [])
+                return ModelResponse("", [ToolCall("read_file:0", "read_file", {"path": f"f{self.count}.txt"})])
+        model = Model()
+        result = run_agent({"f1.txt": "one", "f2.txt": "two"}, "Inspect", model, None, lambda *_: None, threading.Event())
+        self.assertEqual(result.state, "completed", result.error)
+        ids = [call["id"] for m in model.seen[-1] if m.get("role") == "assistant" for call in m.get("tool_calls", [])]
+        self.assertEqual(len(ids), len(set(ids)))
+        for messages in model.seen:
+            assert_protocol(self, messages)
+
+    def test_a_chat_that_verifies_by_running_code_is_not_blocked_by_project_verification(self):
+        class Model:
+            def __init__(self):
+                self.count, self.seen = 0, []
+
+            def respond(self, messages, tools):
+                self.seen.append(messages)
+                self.count += 1
+                if self.count == 1:
+                    return ModelResponse("", [ToolCall("c1", "run_command", {"command": "node primes.js"})])
+                return ModelResponse("Both programs agree: the sum is 639.", [])
+
+        def shell(files, command, timeout, *_args, **_kwargs):
+            return {"status": "passed", "exit_code": 0, "output": "Sum: 639", "changed": {}}
+        model = Model()
+        result = run_agent({}, "Write and run a program for the first 20 primes, then verify the sum another way", model,
+                           None, lambda *_: None, threading.Event(), shell=shell, conversation=True)
+        self.assertEqual(result.state, "completed", result.error)
+        self.assertNotIn("run_tests", json.dumps(model.seen[-1][-2:]))
 
     def test_full_page_replacement_above_old_32k_limit_is_accepted(self):
         before, after = "old\n" * 6000, "new\n" * 8000

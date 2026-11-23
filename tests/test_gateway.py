@@ -81,6 +81,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(data["usage"]["total_tokens"], 15)
         tasks = json.loads(self.call("GET", "/api/tasks")[1])
         self.assertEqual(len(tasks), 1)
+        self.assertIs(self.engine.store.get(tasks[0]["id"])["request"]["questions"], False)  # an API caller cannot be asked
 
     def test_consent_is_explicit_and_per_request(self):
         status, body = self.call("POST", "/v1/chat/completions",

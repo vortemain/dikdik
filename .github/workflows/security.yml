@@ -50,7 +50,7 @@ jobs:
       - name: Secret scan of full history (Gitleaks)
         run: |
           go install github.com/zricethezav/gitleaks/v8@v8.18.4
-          "$(go env GOPATH)/bin/gitleaks" detect --source . --redact --no-banner
+          "$(go env GOPATH)/bin/gitleaks" detect --source . --redact --verbose --no-banner
 
   accessibility:
     runs-on: ubuntu-24.04

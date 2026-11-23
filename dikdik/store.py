@@ -9,7 +9,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import sql
+from . import session_search, sql
 from .migrations import migrate
 
 
@@ -19,7 +19,7 @@ WORKSPACE_CLAUSES = frozenset({"1=1", "workspace=?", "t.workspace=?", "(workspac
 # Chat conversations belong to no project: they are stored under this scope and are
 # listed from every project, like conversations on claude.ai.
 CHAT_SCOPE = "chat:"
-TASK_TABLES = ("bash_events", "browser_snapshots", "task_progress", "requirements")
+TASK_TABLES = ("bash_events", "browser_snapshots", "task_progress", "requirements", "session_index")
 
 
 def _session_kind(request):
@@ -142,14 +142,20 @@ class Store:
     def create(self, request):
         task = uuid.uuid4().hex
         with self.connect() as db:
+            now = time.time()
             db.execute("INSERT INTO tasks(id,created,state,request,workspace) VALUES(?,?,?,?,?)",
-                       (task, time.time(), "queued", json.dumps(request), CHAT_SCOPE if request.get("mode") == "chat" else self.workspace))
+                       (task, now, "queued", json.dumps(request), CHAT_SCOPE if request.get("mode") == "chat" else self.workspace))
+            if isinstance(request.get("objective"), str):
+                session_search.index(db, task, "objective", request["objective"], now)
             db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, time.time(), "queued", json.dumps({"objective": request["objective"]})))
         return task
 
     def event(self, task, kind, data):
         with self.connect() as db:
-            db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, time.time(), kind, json.dumps(data)))
+            now = time.time()
+            db.execute("INSERT INTO events(task_id,time,kind,data) VALUES(?,?,?,?)", (task, now, kind, json.dumps(data)))
+            if found := session_search.entry(kind, data):
+                session_search.index(db, task, found[0], found[1], now)
             if kind == "requirements" and isinstance(data.get("requirements"), list):
                 # The agent replaces its whole list; keep a revision so later readers can tell lists apart.
                 revision = db.execute("SELECT COALESCE(MAX(revision), 0) + 1 FROM requirements WHERE task_id=?", (task,)).fetchone()[0]
@@ -257,6 +263,9 @@ class Store:
                 "DELETE FROM events WHERE time < ? AND task_id IN "
                 "(SELECT id FROM tasks WHERE state IN ('completed','failed','blocked','cancelled','interrupted','archived'))",
                 (cutoff,))
+            db.execute("DELETE FROM session_index WHERE kind != 'objective' AND time < ? AND task_id IN "
+                       "(SELECT id FROM tasks WHERE state IN ('completed','failed','blocked','cancelled','interrupted','archived'))",
+                       (cutoff,))
             return cursor.rowcount
 
     def update_meta(self, task, changes: dict):

@@ -55,10 +55,30 @@ def _v2_requirements(db: sqlite3.Connection) -> None:
         updated REAL NOT NULL, PRIMARY KEY (task_id, id))""")
 
 
+def _v3_learning(db: sqlite3.Connection) -> None:
+    # Durable memory and skill proposals (dikdik/memory.py, dikdik/review.py) and a full-text
+    # index over past conversations (dikdik/session_search.py), backfilled from history.
+    db.execute("""CREATE TABLE IF NOT EXISTS memory_entries (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        target TEXT NOT NULL, workspace TEXT NOT NULL DEFAULT '', content TEXT NOT NULL,
+        source TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL)""")
+    db.execute("CREATE INDEX IF NOT EXISTS memory_scope ON memory_entries(target, workspace, id)")
+    db.execute("""CREATE TABLE IF NOT EXISTS skill_proposals (id TEXT PRIMARY KEY, created REAL NOT NULL,
+        task_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, content TEXT NOT NULL,
+        status TEXT NOT NULL, decided REAL)""")
+    try:
+        db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS session_index USING fts5("
+                   "text, task_id UNINDEXED, kind UNINDEXED, time UNINDEXED, tokenize='unicode61 remove_diacritics 2')")
+    except sqlite3.OperationalError:  # a Python built without FTS5: plain rows, searched with LIKE
+        db.execute("CREATE TABLE IF NOT EXISTS session_index (text TEXT NOT NULL, task_id TEXT NOT NULL, kind TEXT NOT NULL, time REAL NOT NULL)")
+    from .session_search import backfill
+    backfill(db)
+
+
 Migration = tuple[int, str, Callable[[sqlite3.Connection], None]]
 MIGRATIONS: list[Migration] = [
     (1, "core tasks, events and settings", _v1_core),
     (2, "requirements traceability", _v2_requirements),
+    (3, "durable memory and session search", _v3_learning),
 ]
 LATEST = MIGRATIONS[-1][0]
 

@@ -17,10 +17,11 @@ test("sidebar task layout has spiral loading for active tasks and removes dot fo
   // Old dot colors on conv-state are removed
   expect(css).not.toMatch(/\.conv-state\.state-completed\s*\{\s*background:\s*var\(--ok\);?\s*\}/);
 
-  // app.ts checks isTaskActive and appends spiral loader for active tasks only
+  // app.ts checks isTaskActive and gives active tasks the chat's ring spinner only
   expect(appTs).toContain("function isTaskActive(task: TaskSummary): boolean");
   expect(appTs).toContain("conv-spiral-loader");
-  expect(appTs).toContain('icon("spiral")');
+  expect(appTs).toContain('make("span", "conv-ring")');
+  expect(appTs).toContain('setClass(item, "conv-running", true)');
 });
 
 test("structured UI replaces raw JSON code blocks for tool, staff, and checklist updates", () => {

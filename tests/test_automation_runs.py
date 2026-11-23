@@ -28,7 +28,8 @@ class AutomationRunTests(unittest.TestCase):
         self.h.clock.advance(61)
         self.sched.tick()
         self.assertEqual(self.h.submitted[0][1], {"objective": "Tidy up", "mode": "agent", "verification": "syntax",
-                                                   "approve_external": True, "approve_execution": False, "agent_profile": "p1"})
+                                                   "approve_external": True, "approve_execution": False, "agent_profile": "p1",
+                                                   "questions": False})  # nobody is there to answer a question
         row = self.sched.list_automations()[1][0]
         self.assertEqual((row["run"]["mode"], row["last_task_id"]), ("agent", self.h.submitted[0][0]))
 

@@ -63,7 +63,7 @@ def _dispatch(engine: Engine, method: str, params: dict) -> dict:
                 "serverInfo": {"name": "dikdik", "version": "2.0"}}
     if method == "task/new":
         request = {"objective": params.get("prompt", ""), "mode": "agent", "verification": "syntax",
-                   "approve_external": True}
+                   "approve_external": True, "questions": False}
         task = engine.submit(request)
         return {"taskId": task, "status": _wait(engine, task)}
     if method == "task/send":
@@ -72,7 +72,7 @@ def _dispatch(engine: Engine, method: str, params: dict) -> dict:
             raise ValueError("taskId is required")
         message = params.get("message", {})
         engine.send(task, {"objective": message.get("content", ""), "mode": "agent", "verification": "syntax",
-                           "approve_external": True})
+                           "approve_external": True, "questions": False})
         return {"taskId": task, "status": _wait(engine, task)}
     if method == "task/get":
         task = params.get("taskId")

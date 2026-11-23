@@ -1,5 +1,6 @@
 """One bounded proposal, using explicit edits or an opt-in compatible provider."""
 
+import hashlib
 import http.client
 import json
 import socket
@@ -7,7 +8,9 @@ import threading
 import urllib.error
 import urllib.request
 from typing import Callable
+from urllib.parse import urlsplit
 
+from . import anthropic_messages
 from .agent import context_size
 from .model_config import ModelConfig, from_environment
 from .model_errors import ProviderError
@@ -20,6 +23,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 RESPONSE_LIMIT = 256000
 STREAM_WIRE_LIMIT = 16 * 1024 * 1024  # SSE envelopes are much larger than their generated text
+
+
+def out_of_credit(message) -> bool:
+    return isinstance(message, str) and any(phrase in message.lower() for phrase in ("credit balance is too low", "insufficient credit"))
 
 
 def response_failure(data: dict, status: int | None = None) -> ProviderError | None:
@@ -43,6 +50,8 @@ def response_failure(data: dict, status: int | None = None) -> ProviderError | N
         "provider_overloaded": "provider", "provider_timeout": "timeout",
         "content_filter": "content_filter", "content_policy_violation": "content_filter",
     }.get(kind) if isinstance(kind, str) else None
+    if category is None and out_of_credit(error.get("message")):
+        category = "quota"  # Anthropic reports an empty balance as a 400 invalid_request_error
     if category is None:
         category = {400: "bad_request", 401: "authentication", 402: "quota", 403: "authentication",
                     404: "not_found", 408: "timeout", 422: "bad_request", 429: "rate_limit"}.get(code, "provider")
@@ -168,6 +177,11 @@ def _merge_reasoning(details: list[dict], pieces: list) -> None:
         existing = next((d for d in details if d.get("type") == kind and (
             type(index) is int and d.get("index") == index or
             index is None and identity is not None and d.get("id") == identity)), None)
+        if existing is None and index is None and identity is None and details:
+            # Some providers stream fragments with neither index nor id: each continues the last one.
+            last = details[-1]
+            if last.get("type") == kind and last.get("index") is None and last.get("id") is None:
+                existing = last
         if existing is None:
             details.append(dict(piece))
         else:
@@ -205,6 +219,19 @@ def cache_marks(config: ModelConfig, messages: list[dict]) -> list[dict]:
         elif isinstance(content, list) and content and isinstance(content[-1], dict) and content[-1].get("type") == "text":
             marked[index] = {**message, "content": [*content[:-1], {**content[-1], "cache_control": CACHE_MARK}]}
     return marked
+
+
+CACHE_KEY_HOSTS = {"api.openai.com"}  # servers known to accept prompt_cache_key; others may reject unknown fields
+
+
+def prompt_cache_key(config: ModelConfig, messages: list[dict], tools: list[dict] | None) -> str | None:
+    """Route requests that share a system prompt and tool list to the same cache. The key is a
+    digest of that prefix, so it carries no conversation text or user identity."""
+    if (urlsplit(config.url).hostname or "").lower() not in CACHE_KEY_HOSTS:
+        return None
+    system = messages[0].get("content") if messages and messages[0].get("role") == "system" else ""
+    names = [tool.get("function", {}).get("name") for tool in tools or [] if isinstance(tool, dict)]
+    return "dikdik-" + hashlib.sha256(json.dumps([config.model, system, names]).encode()).hexdigest()[:32]
 
 
 def chat_completion(messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 4096, config: ModelConfig | None = None,
@@ -300,10 +327,16 @@ def _chat_completion(messages, tools=None, max_tokens=4096, config=None, on_text
     options = config.options or {}
     if context_size(messages) > (options.get("context_limit_bytes") or 128000):  # attached images count as a fixed weight
         raise ProviderError("context_length", "Model context exceeds the configured limit; use a smaller approved workspace or increase the profile's context limit")
+    if anthropic_messages.is_native(config):
+        return anthropic_messages.complete(messages, tools, min(max_tokens, options.get("max_output_tokens") or max_tokens), config,
+                                           on_text, urllib.request.build_opener(*handlers), on_response, check)
     body = {"model": config.model, "max_tokens": min(max_tokens, options.get("max_output_tokens") or max_tokens), "messages": cache_marks(config, messages),
             **{k: options[k] for k in ("temperature", "top_p") if options.get(k) is not None}}
     if options.get("reasoning_effort"):
         body["reasoning_effort"] = options["reasoning_effort"]
+    key = prompt_cache_key(config, messages, tools)
+    if key:
+        body["prompt_cache_key"] = key
     if tools is not None:
         body["tools"] = tools
         body["tool_choice"] = "auto"

@@ -3,7 +3,7 @@ name: data-analysis
 description: Analyze datasets with reproducible transformations, data-quality checks and justified conclusions.
 category: engineering
 version: "1.0"
-triggers: "data analysis, dataset, csv, spreadsheet, statistical"
+triggers: "data analysis, dataset, csv, spreadsheet, statistical, statistics, analyze the data, analyse the data, survey, questionnaire, responses"
 ---
 
 # Data Analysis

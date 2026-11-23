@@ -29,7 +29,7 @@ from xml.sax.saxutils import escape
 
 from . import docextract, omml
 
-READ_LIMIT = 40_000
+READ_LIMIT = 24_000  # a page stays under the 30 KB inline cap for tool output (tool_output.INLINE_LIMIT)
 
 READ_DOCUMENT_TOOL = {
     "type": "function",
@@ -67,8 +67,8 @@ CREATE_DOCUMENT_TOOL = {
             "fenced ```chart block holding JSON {\"type\": \"column\"|\"bar\"|\"line\"|\"pie\", \"title\": ..., "
             "\"categories\": [...], \"series\": [{\"name\": ..., \"values\": [...]}], \"y_title\": ...} becomes a "
             "native editable Word chart. Options: title page, table of contents, academic style (Times New Roman 12, "
-            "1.5 spacing, justified) or modern. Overwrites the file if it exists; write the whole document in one call "
-            "(or use append to add sections to an existing .md draft first)."),
+            "1.5 spacing, justified) or modern. Overwrites the file if it exists. For a long document, write it "
+            "section by section into a .md draft with append, then create the .docx with source set to the draft."),
         "parameters": {
             "type": "object",
             "properties": {
@@ -83,6 +83,7 @@ CREATE_DOCUMENT_TOOL = {
                 "style": {"type": "string", "enum": ["academic", "modern"], "description": ".docx look (default academic)."},
                 "chapter_breaks": {"type": "boolean", "description": ".docx: start every level-1 heading on a new page (default true for academic)."},
                 "append": {"type": "boolean", "description": "Text formats only: append to the file instead of replacing it."},
+                "source": {"type": "string", "description": ".docx only: a Markdown file in the working folder to convert instead of content."},
             },
             "required": ["path"],
         },
@@ -111,9 +112,8 @@ def _safe_target(root: Path, path: str, must_exist: bool = True) -> Path:
         current = current / part
         if current.is_symlink():
             raise ValueError("Links are not followed")
-    target = (base / relative).resolve()
-    if base != target and base not in target.parents:
-        raise ValueError("Path must stay inside the working folder")
+    from .paths import contained
+    target = contained(base, relative)
     if must_exist and not target.is_file():
         raise ValueError(f"{path} does not exist. List the folder to find the exact file name.")
     return target
@@ -207,6 +207,11 @@ def create(root: Path, arguments: dict) -> dict:
     suffix = target.suffix.lower()
     target.parent.mkdir(parents=True, exist_ok=True)
     content = arguments.get("content")
+    if suffix == ".docx" and arguments.get("source") and not content:
+        draft = _safe_target(root, arguments["source"])
+        if draft.suffix.lower() not in {".md", ".markdown", ".txt"}:
+            raise ValueError("source must be a Markdown (.md) draft in the working folder")
+        content = draft.read_text(encoding="utf-8")
     if suffix == ".docx":
         if not isinstance(content, str) or not content.strip():
             raise ValueError("Write the document's Markdown in content")
@@ -254,8 +259,92 @@ NS = {
 }
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 EMU_PER_INCH = 914400
-_INLINE = re.compile(r"(\$\$[^$\n]+?\$\$|\\\(.+?\\\)|(?<![\\$\w])\$(?=[^\s$\d.,])(?:[^$\n\\]|\\.)+?(?<=[^\s\\])\$(?![\w$])|(?<![\\$\w])\$(?=\d)(?:[^$\n\\]|\\.)*?[\\^_{}=+*/<>|](?:[^$\n\\]|\\.)*?(?<=[^\s\\])\$(?![\w$])|\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|__[^_]+__|(?<![\w*])\*[^*\s][^*]*\*(?!\w)|(?<![\w_])_[^_\s][^_]*_(?![\w])"
-                     r"|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|\^[^^\s]+\^|~[^~\s]+~)")
+_INLINE = re.compile(r"(\$\$[^$\n]+?\$\$|\\\((?:[^\\]|\\[^()])+\\\)|(?<![\\$\w])\$(?=[^\s$\d.,])(?:[^$\n\\]|\\.)+?(?<=[^\s\\])\$(?![\w$])|(?<![\\$\w])\$(?=\d)(?:[^$\n\\]|\\.)*?[\\^_{}=+*/<>|](?:[^$\n\\]|\\.)*?(?<=[^\s\\])\$(?![\w$])|\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|__[^_]+__|(?<![\w*])\*[^*\s][^*]*\*(?!\w)|(?<![\w_])_[^_\s][^_]*_(?![\w])"
+                     r"|`[^`]+`|\[[^\[\]]+\]\([^)\s]+\)|\^[^^\s]+\^|~[^~\s]+~)")
+
+
+def _link(piece: str):
+    """[text](target) as (text, target): text without ']', target without ')' or spaces."""
+    middle = piece.find("](")
+    if middle < 2 or not piece.endswith(")"):
+        return None
+    text, target = piece[1:middle], piece[middle + 2:-1]
+    if "]" in text or not target or any(c == ")" or c.isspace() for c in target):
+        return None
+    return text, target
+
+
+def _separator(line: str) -> bool:
+    """A Markdown table separator row such as |---|:--:| (cells of dashes with optional colons)."""
+    cells = line.strip()
+    if cells.startswith("|"):
+        cells = cells[1:]
+    if cells.endswith("|"):
+        cells = cells[:-1]
+    return bool(cells) and all(re.fullmatch(r":?-{2,}:?", cell.strip()) for cell in cells.split("|"))
+
+
+class _Heading:
+    """A small stand-in for re.Match: the groups a caller reads, by number."""
+
+    def __init__(self, *groups: str):
+        self._groups = groups
+
+    def group(self, index: int) -> str:
+        return self._groups[index - 1]
+
+
+def _heading(stripped: str):
+    """# Title (with optional closing #s), as a match-like object: group(1) hashes, group(2) text."""
+    m = re.match(r"(#{1,6})[ \t]+(\S.*)", stripped)
+    if not m:
+        return None
+    text = m.group(2).rstrip().rstrip("#").rstrip()
+    return _Heading(m.group(1), text) if text else None
+
+
+def _separator_start(line: str) -> bool:
+    """The line after a table header begins like a separator: optional |, spaces, optional :, then --."""
+    rest = line.lstrip()
+    if rest.startswith("|"):
+        rest = rest[1:].lstrip(" \t")
+    if rest.startswith(":"):
+        rest = rest[1:]
+    return rest.startswith("--")
+
+
+def _list_item(line: str):
+    """A bullet or numbered list item as a match-like object: group(1) indent, group(2) marker, group(3) text."""
+    rest = line.lstrip(" \t")
+    indent = line[:len(line) - len(rest)]
+    digits = len(rest) - len(rest.lstrip("0123456789"))
+    if rest[:1] and rest[0] in "-*+•":
+        marker = rest[0]
+    elif digits and rest[digits:digits + 1] in (".", ")"):
+        marker = rest[:digits + 1]
+    elif rest[:1] and "a" <= rest[0] <= "z" and rest[1:2] in (".", ")"):
+        marker = rest[:2]
+    else:
+        return None
+    if rest[len(marker):len(marker) + 1] not in (" ", "\t"):
+        return None
+    return _Heading(indent, marker, rest[len(marker):].lstrip(" \t"))
+
+def _image(stripped: str):
+    """![alt](target "title") as a match-like object: group(1) alt, group(2) target."""
+    if not (stripped.startswith("![") and stripped.endswith(")")):
+        return None
+    middle = stripped.find("](")
+    if middle < 0 or "]" in stripped[2:middle]:
+        return None
+    inner = stripped[middle + 2:-1]
+    target, _, title = inner.partition(" ")
+    title = title.strip()
+    if not target or ")" in target or any(c.isspace() for c in target):
+        return None
+    if title and not (len(title) >= 2 and title[0] == '"' and title[-1] == '"' and '"' not in title[1:-1]):
+        return None
+    return _Heading(stripped[2:middle], target)
 
 
 def _inline_math(piece: str) -> str | None:
@@ -322,8 +411,8 @@ class _Doc:
                 props, value = base + '<w:vertAlign w:val="superscript"/>', piece[1:-1]
             elif piece.startswith("~") and piece.endswith("~") and len(piece) > 2:
                 props, value = base + '<w:vertAlign w:val="subscript"/>', piece[1:-1]
-            elif piece.startswith("[") and (m := re.fullmatch(r"\[([^\]]+)\]\(([^)\s]+)\)", piece)):
-                value, link = m.group(1), m.group(2)
+            elif piece.startswith("[") and (parts := _link(piece)):
+                value, link = parts
             if link and re.match(r"https?://|mailto:", link):
                 rid = self.rel("hyperlink", _x(link), external=True)
                 out.append(f'<w:hyperlink r:id="{rid}"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/>{props}</w:rPr>'
@@ -477,7 +566,7 @@ def _table_rows(lines: list[str]) -> tuple[list[list[str]], bool]:
         return [cell.replace("\\|", "|").strip() for cell in re.split(r"(?<!\\)\|", line)]
     rows, has_header = [], False
     for index, line in enumerate(lines):
-        if re.fullmatch(r"\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*", line):
+        if _separator(line):
             has_header = index == 1
             continue
         rows.append(cells(line))
@@ -505,7 +594,7 @@ def _render_markdown(doc: _Doc, markdown: str, chapter_breaks: bool) -> None:
     while index < len(lines):
         line = lines[index]
         stripped = line.strip()
-        fence = re.match(r"^(```|~~~)\s*([\w+-]*)\s*$", stripped)
+        fence = re.match(r"^(```|~~~)[ \t]*([\w+-]*)$", stripped)
         if fence:
             flush()
             list_state.clear()
@@ -560,7 +649,7 @@ def _render_markdown(doc: _Doc, markdown: str, chapter_breaks: bool) -> None:
             doc.page_break()
             index += 1
             continue
-        heading = re.match(r"^(#{1,6})\s+(.+?)\s*#*\s*$", stripped)
+        heading = _heading(stripped)
         if heading:
             flush()
             list_state.clear()
@@ -569,7 +658,7 @@ def _render_markdown(doc: _Doc, markdown: str, chapter_breaks: bool) -> None:
             first_heading = False
             index += 1
             continue
-        if stripped.startswith("|") and index + 1 < len(lines) and re.fullmatch(r"\s*\|?\s*:?-{2,}:?.*", lines[index + 1]):
+        if stripped.startswith("|") and index + 1 < len(lines) and _separator_start(lines[index + 1]):
             flush()
             list_state.clear()
             block = []
@@ -580,14 +669,14 @@ def _render_markdown(doc: _Doc, markdown: str, chapter_breaks: bool) -> None:
             if rows:
                 doc.table(rows, has_header)
             continue
-        image = re.fullmatch(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)", stripped)
+        image = _image(stripped)
         if image:
             flush()
             list_state.clear()
             doc.image(image.group(2), image.group(1))
             index += 1
             continue
-        item = re.match(r"^(\s*)([-*+•]|\d+[.)]|[a-z][.)])\s+(.*)$", line)
+        item = _list_item(line)
         if item and (not re.match(r"^\s*[a-z][.)]", line) or list_state):
             flush()
             indent = len(item.group(1).replace("\t", "    "))

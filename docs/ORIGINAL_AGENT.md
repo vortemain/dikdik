@@ -62,8 +62,11 @@ the `AgentModel` protocol also permits independent provider implementations.
   Schema errors identify invalid/missing fields and allowed arguments. Two
   identical failures trigger explicit recovery guidance; further identical
   execution is suppressed, and four failures without progress pause with the
-  actual tool error. Repeated successful loops get one chance to change approach
-  before pausing. Interrupted batches receive explicit unfinished-tool results
+  actual tool error. Repeated actions are watched by a stuck detector (same
+  action and result 4 times, the same failure 3 times, A/B alternation, replies
+  without action): each pattern is nudged once and pauses with a question if it
+  recurs; identical consecutive calls warn at 3 and pause at 5. Compaction keeps a
+  rolling checkpoint and sources ledger (see `docs/AGENT_ROADMAP.md`, phases 2–3). Interrupted batches receive explicit unfinished-tool results
   before resume, preserving the provider's tool-call/result protocol.
   A failed unchanged candidate cannot reach the test runner again before a repair.
 - Cancellation and deadlines are cooperative around model/verifier calls. Socket

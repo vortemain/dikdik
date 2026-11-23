@@ -66,10 +66,21 @@ class ModelReliabilityTests(unittest.TestCase):
         self.assertEqual(caught.exception.kind, "rate_limit")
 
     def test_credit_and_context_errors_are_not_transient(self):
-        for code, body, kind in ((402, {}, "quota"), (400, {"error": {"metadata": {"error_type": "context_length_exceeded"}}}, "context_length")):
+        credit = {"error": {"type": "invalid_request_error", "message": "Your credit balance is too low to access the Anthropic API. "
+                                                                          "Please go to Plans & Billing to upgrade or purchase credits."}}
+        for code, body, kind in ((402, {}, "quota"), (400, {"error": {"metadata": {"error_type": "context_length_exceeded"}}}, "context_length"),
+                                 (400, credit, "quota")):
             failure = provider_failure(urllib.error.HTTPError("u", code, "PRIVATE", {}, io.BytesIO(json.dumps(body).encode())))
             self.assertEqual(failure.kind, kind)
             self.assertFalse(failure.retryable)
+
+    def test_unindexed_reasoning_fragments_join_instead_of_hitting_the_entry_cap(self):
+        fragments = [{"choices": [{"delta": {"reasoning_details": [{"type": "reasoning.text", "text": f"step {i} "}]}}]} for i in range(300)]
+        result = _assemble(sse(*fragments, {"choices": [{"delta": {"content": "Done"}, "finish_reason": "stop"}]}), None)
+        details = result["choices"][0]["message"]["reasoning_details"]
+        self.assertEqual(len(details), 1)
+        self.assertTrue(details[0]["text"].startswith("step 0 step 1 "))
+        self.assertIn("step 299", details[0]["text"])
 
     def test_incomplete_stream_never_executes_a_complete_looking_partial_tool(self):
         with self.assertRaises(ProviderError) as caught:

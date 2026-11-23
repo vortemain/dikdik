@@ -1,6 +1,44 @@
-# Verification record — updated 2026-10-28
+# Verification record — updated 2026-11-23
 
-## Projects in view, provider catalog, Git accounts, VS Code-style files (latest)
+## Secure by default and clarifying questions (latest)
+
+- Tests: `tests/test_security_scan.py` (each new rule with its false-positive cases, data flow
+  through assignments, sanitizers and route parameters in Python and JavaScript, spreadsheet
+  formulas), `tests/test_secure_output.py` (credential refusal and user-provided values including
+  pasted private keys, command-written credentials stripped and rewritten, scripts and `run_code`
+  programs held before running, Word/Markdown code blocks and sheets, reflection limited to 2,
+  final report, task result), `tests/test_ask_question.py` (questions in chat and agent tasks,
+  `questions: false`, pasted credentials and sensitive answers sealed and never shown to the model
+  or the event log), `tests/test_control.py` (risky commands), `tests/web/questions.test.ts`.
+- Repository scan: `python -m dikdik.security_scan . --exclude 'benchmarks/tasks/*' --fail-on high`
+  exits 0 (0 critical, 0 high). The data-flow rules found nothing in Dikdik's own 484 files.
+- Frontend: `bun run typecheck:web`, `bun run test:web` (228 pass) and `bun run build:web`.
+- Real browser with the **stand-in model** (`scripts/stub_model.py`, scenario `QUESTION`; not a live
+  provider), scratch project and data folder: in Chat and in Code mode the question card showed its
+  choices, free text and a masked field for the sensitive question. A live-looking test key pasted
+  as an answer came back as "Answered · sealed ANSWER_SECRET_1"; the stand-in's reply, which echoes
+  the tool results it received, contained only `$ANSWER_SECRET_1` and `$REPORT_DB_PASSWORD`. A byte
+  search of all 85 files in the data and project folders (state database, write-ahead log, logs)
+  found none of the three test values.
+- Not checked: a live provider; `cargo test` (no Rust changes).
+
+## Agent roadmap phases 2–3: rolling checkpoint, effort, answer checks, stuck detection (latest)
+
+- Tests: `tests/test_compaction_checkpoint.py` (typed checkpoint and sources ledger,
+  in-place roll-forward, identifier audit with one retry, 10% refusal, verbatim recent
+  tail with whole batches, task-aware prompt, memory flush before each compaction, and a
+  replay of the failed thesis run's pattern: 3 or fewer compactions against the run's 33,
+  notes and `cronbach_alpha=0.812` kept, a checked final answer) and `tests/test_reasoning.py`
+  (effort heuristic and override, provider options, final-answer corrections and caveat,
+  stuck patterns and pause, lint reflection limited to 3).
+- Full Python suite: `python -m unittest discover -s tests` ran 1,310 tests, OK
+  (9 skipped), in 877 s. Running each of the 129 modules on its own gave the same result.
+  An earlier discover run stalled while other sessions were running their suites on
+  this machine at the same time; it passed when rerun.
+- Scripted models only. No live provider was called, so cost, cache and accuracy gains are
+  not measured yet.
+
+## Projects in view, provider catalog, Git accounts, VS Code-style files
 
 - Tests: `tests/test_model_catalog.py` (catalog, connect with a key, key never in
   responses, use a model as default, the request URL becomes openrouter.ai, custom

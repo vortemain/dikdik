@@ -208,6 +208,24 @@ class BackgroundUpdateTests(unittest.TestCase):
 
 
 class HandOffTests(unittest.TestCase):
+    def test_windows_records_the_installer_exit_code_before_reopening(self):
+        argv = updater.windows_helper(Path(r"C:\Temp\Setup.exe"), Path(r"C:\Apps\Dikdik.exe"), 7, Path(r"C:\Temp\installer-exit.txt"))
+        script = argv[-1]
+        self.assertIn("-PassThru", script)
+        self.assertLess(script.index("/VERYSILENT"), script.index("installer-exit.txt"))
+        self.assertLess(script.index("installer-exit.txt"), script.rindex("Start-Process -FilePath 'C:\\Apps\\Dikdik.exe'"))
+
+    def test_the_next_launch_explains_a_failed_installer(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(updater, "update_dir", return_value=Path(folder)), \
+                patch.object(updater, "__version__", "0.8.0"):
+            (Path(folder) / "pending.json").write_text(json.dumps({"from": "0.8.0", "to": "v0.8.1", "url": ""}))
+            (Path(folder) / "installer-exit.txt").write_text("5\n")
+            previous = updater.previous_result()
+            self.assertFalse(previous["ok"])
+            self.assertIn("exit code 5", previous["detail"])
+            (Path(folder) / "installer-exit.txt").write_text("0")
+            self.assertNotIn("detail", updater.previous_result())
+
     def test_windows_installs_silently_after_dikdik_exits_then_reopens_it(self):
         argv = updater.windows_helper(Path(r"C:\Temp\dikdik update\Setup's.exe"), Path(r"C:\Users\a\Programs\Dikdik\Dikdik.exe"), 4242)
         script = argv[-1]

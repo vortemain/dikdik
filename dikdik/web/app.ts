@@ -1,5 +1,6 @@
 import { browserHistory, browserView, displayUrl, buildTaskRequest, commandActivity, conversationLabel, eventsToChat, fileStatusLabel, isTerminal, modePolicy, parseMode, parsePlan, parsePlans, parseVerification, planStatus, planTitle, resultStatus, reviewDiff, taskChecklist, terminalTranscript, transcriptMarkdown } from "./contracts";
-import { attachmentList, confirmationForRunMode, contextUsage, costProjection, goalState, isResumable, openConfirmations, parseGoal, parseSlash, slashMatches, usageMetrics } from "./contracts";
+import { codeLanguage, isCodeTool } from "./contracts";
+import { attachmentList, confirmationForRunMode, contextUsage, costProjection, goalState, isResumable, openConfirmations, openQuestions, parseGoal, parseSlash, questionAnswer, slashMatches, usageMetrics } from "./contracts";
 import { buildAutomation, describeSchedule, parseAutomations, parseRunSummaries } from "./contracts";
 import type { ActiveModel, AgentProfile, AttachmentMeta, Automation, BrowserPage, ChatMessage, ChecklistItem, FileStatus, Mode, SlashCommand, TaskRequest, DiffReview, PlanSummary, PlanView, Project, Task, TaskEvent, TaskResult, TaskSummary } from "./contracts";
 import { ComposerDrafts } from './drafts';
@@ -8,6 +9,7 @@ import { modelPicker } from "./model-picker";
 import { folderPicker } from "./folder-picker";
 import { confirmDialog, inputDialog, formDialog, showSecret } from "./dialogs";
 import { skillsPane } from "./skills-pane";
+import { memoryPane } from "./memory-pane";
 import { pluginsPane } from "./plugins-pane";
 import { mcpPane } from "./mcp-pane";
 import { boundedFilePreview, detectLanguage, fileFacts, highlight, highlightLines, languageLabel, supportedLanguages, projectStack } from "./highlight";
@@ -20,6 +22,8 @@ import { ComposerSize, composerMaximum } from './composer-size';
 import { TerminalRenderer } from './terminal-render';
 import { ToolSession } from './tool-session';
 import { runningTerminalCommands } from './contracts';
+import { sidebarUpdate } from "./contracts";
+import type { UpdateInfo, UpdateStatus } from "./contracts";
 import { frameBatch } from './render-scheduler';
 import { make, icon, setClass, storageGet, storageSet, wide, clock, copyText, copyButton } from './dom';
 import { codeBlock, diffLines, tokenNodes, languageFor, looksLikeDiff, safePageLink } from './code-render';
@@ -31,7 +35,8 @@ import { copyWithTex } from './math';
 import { Typewriter } from './typewriter';
 import { createAskDrawer } from './ask-drawer';
 import { createConversationMode, isChatConversation } from './conversation-mode';
-import { startGreeting, suggestionsFor, chatSuggestions, renderSuggestions, factsFromFiles } from './welcome';
+import { citationMarkers, compactTokens, duration, groupable, groupTitle, pendingModelCall, sourceLabel, steeringStatus, thinkingDurations, thinkingLabel, thinkingSummary, toolTimings, turnCost, turnCostText } from './chat-space';
+import { startGreeting, suggestionsFor, chatSuggestions, renderSuggestions, factsFromFiles, timeGreeting } from './welcome';
 
 function element<T extends HTMLElement>(id: string, kind: { new(): T }): T {
   const found = document.getElementById(id);
@@ -63,12 +68,13 @@ let taskRequest: TaskRequest | null = null;
 const confirmCards = new Map<string, HTMLElement>();
 const confirmDecisions = new Map<string, (accept: boolean) => void>();  // open approvals, newest last
 const secretCards = new Map<string, HTMLElement>();  // open secret requests
+const questionCards = new Map<string, HTMLElement>();  // open clarifying questions
 // Organisation and files: read by functions that run at load time.
 let modelReady = true, activeTag = "", listLimit = 40, folderOptions: string[] = [], filtersOpen = false;
 let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean; title_model?: string; notifications?: 'off' | 'background' | 'all'; notification_previews?: boolean } | null = null;
 let nativeNotifications = false;
 const titled = new Set<string>();  // conversations we already asked to be titled this session
-let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsElement; summary: HTMLElement; count: number } | null = null;
+let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsElement; summary: HTMLElement; count: number; steps: { verb: string; target: string }[] } | null = null;
 let showAllMessages = false, projectFileSet = new Set<string>();
 const expandedDirs = new Set<string>();
 let openTabs: string[] = [], fileText = "", filePreview = false;
@@ -149,6 +155,11 @@ function stepRow(msg: ChatMessage): { li: HTMLLIElement; body: HTMLElement } {
   const badge = make("span", "step-icon"); badge.append(label.icon === "file" && label.arg ? fileBadge(label.arg) : icon(label.icon));
   summary.append(badge, make("span", "step-title", label.title));
   if (label.arg) summary.append(make("span", "step-arg", label.arg));
+  if (msg.kind === "agent_tool_call") {
+    li.dataset.verb = label.title; li.dataset.target = label.arg;
+    const timing = toolTimingsNow.get(messageSeq(msg) ?? -1);
+    summary.append(stepStatus(timing?.status ?? "running", timing?.seconds ?? null));
+  }
   const chevron = icon("chevron"); chevron.setAttribute("class", "i step-chevron");
   summary.append(chevron);
   const body = make("div", "step-body");
@@ -160,6 +171,38 @@ function stepRow(msg: ChatMessage): { li: HTMLLIElement; body: HTMLElement } {
   summary.addEventListener("click", event => { if (details.className.includes("step-static")) event.preventDefault(); });
   li.append(details);
   return { li, body };
+}
+/** Words first, never colour alone: "Running", "1.2s", "Failed · 0.4s". */
+function stepStatus(status: "running" | "done" | "failed", seconds: number | null): HTMLElement {
+  const node = make("span", `step-status step-${status}`);
+  if (status === "running") { node.append(make("span", "step-spinner"), make("span", "", "Running")); return node; }
+  const time = seconds === null ? "" : duration(seconds);
+  node.textContent = status === "failed" ? (time ? `Failed · ${time}` : "Failed") : time;
+  if (!node.textContent) node.hidden = true;
+  return node;
+}
+function updateStepStatus(row: HTMLElement | null | undefined, status: "running" | "done" | "failed", seconds: number | null): void {
+  const old = row?.querySelector(".step-status");
+  if (old) old.replaceWith(stepStatus(status, seconds));
+}
+/** A small inline notice: the agent changed approach, or the working context was compacted. */
+function noticeRow(msg: ChatMessage): HTMLLIElement {
+  const li = make("li", `msg msg-notice msg-${msg.kind}`); li.id = msg.id;
+  const compacted = msg.kind === "agent_context_compacted";
+  const d = (msg.details ?? {}) as Record<string, unknown>;
+  const badge = make("span", "notice-icon"); badge.append(icon(compacted ? "list" : "refresh"));
+  const text = make("span", "notice-text");
+  if (compacted) {
+    text.append(make("strong", "", "Compacted the working context"));
+    const before = Number(d.before_bytes), after = Number(d.context_bytes);
+    if (before > 0 && after >= 0) text.append(make("span", "notice-sub", ` · ${Math.round(before / 1024)} KB → ${Math.round(after / 1024)} KB`));
+    li.title = msg.body ?? "";
+  } else {
+    text.append(make("strong", "", "Adjusting approach"));
+    if (msg.body) text.append(make("span", "notice-sub", ` · ${msg.body.split("\n")[0]}`));
+  }
+  li.append(badge, text);
+  return li;
 }
 function resultCard(msg: ChatMessage): HTMLLIElement {
   const li = make("li", `msg msg-system msg-result`);
@@ -179,6 +222,8 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
     const note = make("p", "turn-note", !chatTurn ? "No files changed"
       : Array.isArray(created) && created.length ? `Created ${created.length} file${created.length === 1 ? "" : "s"} · download above` : "Answered");
     if (usageText(msg.details)) note.title = usageText(msg.details);  // the numbers are there on hover, not in the way
+    const spent = turnCostText(turnCost(liveEvents, messageSeq(msg) ?? undefined));
+    if (spent) note.append(make("span", "turn-cost", spent));
     const seq = Number(msg.id.replace("terminal-", ""));
     if (selected && Number.isInteger(seq)) {
       const branch = make("button", "ghost small turn-branch");
@@ -205,6 +250,8 @@ function resultCard(msg: ChatMessage): HTMLLIElement {
   }
   card.append(head, make("p", "result-text", resultStatus(state, result)));
   if (usageText(msg.details)) card.append(make("p", "result-usage", usageText(msg.details)));
+  const spent = turnCostText(turnCost(liveEvents, messageSeq(msg) ?? undefined));
+  if (spent) card.append(make("p", "result-usage turn-cost", spent));
   const actions = make("div", "result-actions");
   if (result && typeof result.diff === "string" && result.diff) {
     const open = make("button", "small");
@@ -285,7 +332,9 @@ function assistantMessage(msg: ChatMessage, showHeader: boolean): HTMLLIElement 
       content.append(prose);
     } else content.append(...evidenceBlocks(msg));
   } else if (msg.body) {
-    content.append(richText(msg.body));
+    const prose = richText(msg.body);
+    addCitations(prose);
+    content.append(prose);
     const tools = make("div", "msg-actions");
     tools.append(copyButton(() => msg.body ?? "", "Copy"));
     if (msg.kind === "agent_message") tools.append(branchButton(msg, "Start a new conversation that includes everything up to and including this reply"));
@@ -293,6 +342,50 @@ function assistantMessage(msg: ChatMessage, showHeader: boolean): HTMLLIElement 
   }
   li.append(content);
   return li;
+}
+/** Web sources in a reply become numbered chips: after inline links, in place of [n] markers, and in a Sources row. */
+function addCitations(root: HTMLElement): void {
+  const external = (a: HTMLAnchorElement) => /^https?:/i.test(a.getAttribute("href") ?? "") && !a.closest?.("pre, code");
+  const links = [...(root.querySelectorAll?.<HTMLAnchorElement>("a[href]") ?? [])].filter(external);
+  const lists = [...(root.querySelectorAll?.<HTMLOListElement>("ol") ?? [])].filter(list => list.children.length > 0
+    && [...list.children].every(item => [...item.querySelectorAll<HTMLAnchorElement>("a[href]")].some(external)));
+  const references = lists[lists.length - 1];
+  const sources: { href: string; label: string }[] = [];
+  const numberOf = (link: HTMLAnchorElement): number => {
+    let index = sources.findIndex(source => source.href === link.href);
+    if (index < 0) { sources.push({ href: link.href, label: (link.textContent ?? "").trim() }); index = sources.length - 1; }
+    return index + 1;
+  };
+  if (references) for (const item of references.children) { const link = [...item.querySelectorAll<HTMLAnchorElement>("a[href]")].find(external); if (link) numberOf(link); }
+  for (const link of links) if (!references?.contains(link)) link.after(citeChip(numberOf(link), sources));
+  if (sources.length && typeof document.createTreeWalker === "function") {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const texts: Text[] = [];
+    while (walker.nextNode()) { const node = walker.currentNode as Text; if (!node.parentElement?.closest("a, pre, code, .cite-chip")) texts.push(node); }
+    for (const node of texts) {
+      const markers = citationMarkers(node.data).filter(marker => marker.index <= sources.length);
+      if (!markers.length) continue;
+      const parts: (Node | string)[] = [];
+      let at = 0;
+      for (const marker of markers) { parts.push(node.data.slice(at, marker.start), citeChip(marker.index, sources)); at = marker.end; }
+      parts.push(node.data.slice(at));
+      node.replaceWith(...parts);
+    }
+  }
+  if (sources.length && !references) {
+    const row = make("div", "cite-sources");
+    row.append(make("span", "cite-sources-label", "Sources"));
+    sources.forEach((_, index) => { const chip = citeChip(index + 1, sources); chip.append(make("span", "cite-host", sourceLabel(sources[index]!.href))); row.append(chip); });
+    root.append(row);
+  }
+}
+function citeChip(index: number, sources: { href: string; label: string }[]): HTMLAnchorElement {
+  const source = sources[index - 1]!;
+  const chip = make("a", "cite-chip", String(index)) as HTMLAnchorElement;
+  chip.href = source.href; chip.target = "_blank"; chip.rel = "noopener noreferrer";
+  chip.title = source.label && source.label !== source.href ? `${source.label} · ${sourceLabel(source.href)}` : source.href;
+  chip.setAttribute("aria-label", `Source ${index}: ${chip.title}`);
+  return chip;
 }
 /** The event number a chat message came from (its id ends in "-<seq>"). */
 function messageSeq(msg: ChatMessage): number | null {
@@ -441,6 +534,61 @@ function secretCard(msg: ChatMessage): HTMLLIElement {
   else { secretCards.set(id, li); setTimeout(() => field.focus?.(), 0); }
   return li;
 }
+/** The assistant asked a clarifying question. A sensitive one (or one the user marks secret) is typed in a
+ * masked field and sealed on the server: the model, the chat and the log only ever see $NAME. */
+function questionCard(msg: ChatMessage): HTMLLIElement {
+  const id = detailField(msg.details, "id"), name = detailField(msg.details, "name");
+  const details = (msg.details ?? {}) as { choices?: string[]; sensitive?: boolean };
+  const sensitive = details.sensitive === true, choices = Array.isArray(details.choices) ? details.choices : [];
+  const li = make("li", "msg msg-system msg-confirm"); li.id = msg.id;
+  const card = make("form", "confirm-card question-card");
+  const head = make("div", "result-head");
+  const badge = make("span", "result-icon"); badge.append(icon(sensitive ? "key" : "sparkle"));
+  head.append(badge, make("span", "result-title", msg.title));
+  card.append(head);
+  if (msg.body) card.append(make("p", "result-text", msg.body));
+  const controls: (HTMLInputElement | HTMLButtonElement)[] = [];
+  const field = make("input"); field.type = sensitive ? "password" : "text"; field.autocomplete = "off";
+  const secretBox = make("input"); secretBox.type = "checkbox";
+  const answer = async (text: string, secret: boolean) => {
+    if (!selected) return;
+    for (const control of controls) control.disabled = true;
+    try { await api(`/api/tasks/${encodeURIComponent(selected)}/question`, questionAnswer(id, text, secret, sensitive)); field.value = ""; }
+    catch (error) { for (const control of controls) control.disabled = false; message(error instanceof Error ? error.message : "Could not send the answer", true); }
+  };
+  if (choices.length) {
+    const row = make("div", "result-actions question-choices");
+    for (const choice of choices) {
+      const button = make("button", "small", choice); button.type = "button";
+      button.onclick = () => { void answer(choice, false); };
+      row.append(button); controls.push(button);
+    }
+    card.append(row);
+  }
+  field.placeholder = sensitive ? `Value for ${name || "the secret"}` : choices.length ? "Or type your own answer" : "Your answer";
+  field.setAttribute("aria-label", sensitive ? `Value for ${name || "the secret"}` : "Your answer");
+  card.append(field); controls.push(field);
+  if (!sensitive) {
+    const label = make("label", "hint question-secret");
+    label.append(secretBox, document.createTextNode(" This answer is a password, token or key: seal it, never show it to the model"));
+    card.append(label); controls.push(secretBox);
+    secretBox.onchange = () => { field.type = secretBox.checked ? "password" : "text"; };
+  }
+  card.append(make("p", "hint", sensitive
+    ? `Sealed under API keys as ${name || "a new key"}. The assistant only sees $${name || "NAME"}, never the value.`
+    : "Keys and tokens pasted here are sealed automatically and replaced with a $NAME reference."));
+  const actions = make("div", "result-actions");
+  const send = make("button", "small primary", "Answer"); send.type = "submit";
+  const skip = make("button", "small", "Skip"); skip.type = "button";
+  actions.append(send, skip); controls.push(send, skip);
+  card.append(actions);
+  li.append(card);
+  card.onsubmit = event => { event.preventDefault(); if (field.value.trim()) void answer(field.value, secretBox.checked); };
+  skip.onclick = () => { void answer("", false); };
+  if (openQuestions(liveEvents).includes(id)) { questionCards.set(id, li); setTimeout(() => field.focus?.(), 0); }
+  else { for (const control of controls) control.disabled = true; field.placeholder = "Answered"; }
+  return li;
+}
 /** safePageLink is imported from ./code-render — used in confirmationCard and chat widgets. */
 function confirmationCard(msg: ChatMessage): HTMLLIElement {
   const d = (msg.details ?? {}) as { id?: string; tool?: string; risk?: string; reason?: string; arguments?: unknown };
@@ -451,12 +599,18 @@ function confirmationCard(msg: ChatMessage): HTMLLIElement {
   const head = make("div", "result-head");
   const badge = make("span", "result-icon");
   badge.append(icon(browserPage ? "globe" : "shield"));
-  const asking = d.tool === "browse_url" ? "opening a web page" : d.tool === "run_command" ? "running a command" : d.tool || "this action";
+  const asking = d.tool === "browse_url" ? "opening a web page" : d.tool === "run_command" ? "running a command"
+    : isCodeTool(d.tool ?? "") ? `running ${codeLanguage(d.tool ?? "", args).label} code` : d.tool || "this action";
   head.append(badge, make("span", "result-title", `Allow ${asking}?`), make("span", "verify-badge", d.risk === "high" ? "High risk" : d.risk === "medium" ? "Needs review" : "Low risk"));
   card.append(head);
   if (d.reason) card.append(make("p", "result-text", d.reason));
   if (browserPage) card.append(browserPage);  // a readable address, not raw JSON
   else if (typeof args.command === "string") card.append(codeBlock(args.command, "bash", { wrap: true }));
+  else if (isCodeTool(d.tool ?? "") && typeof args.code === "string") {
+    card.append(codeBlock(args.code, codeLanguage(d.tool ?? "", args).id, { wrap: true }));
+    const rest = Object.fromEntries(Object.entries(args).filter(([key]) => key !== "code" && key !== "language"));
+    if (Object.keys(rest).length) card.append(renderStructuredUI(rest, { title: "Options" }));
+  }
   else card.append(renderStructuredUI(args, { title: "Arguments" }));
   const actions = make("div", "result-actions");
   const allow = make("button", "small primary", "Allow"); allow.type = "button"; allow.title = "Allow (Y, Enter or Ctrl+Enter)";
@@ -498,13 +652,22 @@ function confirmationCard(msg: ChatMessage): HTMLLIElement {
 }
 
 let rendered = new Set<string>();
-let pendingCalls: { name: string; body: HTMLElement }[] = [];
+let pendingCalls: { name: string; body: HTMLElement; callId?: string | undefined; seq: number }[] = [];
+let toolTimingsNow = new Map<number, { status: "running" | "done" | "failed"; seconds: number | null }>();
+let thinkingNow = new Map<number, number>();
 let lastRole = "";
 const QUIET_KINDS = new Set(["inspected", "skills", "model_routed", "agent_started", "agent_finished", "sandbox_secrets", "agent_thinking"]);
 function quietStep(msg: ChatMessage): HTMLLIElement {
   const li = make("li", "msg msg-system msg-think");
   li.id = msg.id;
   li.dataset.quiet = "1";
+  if (msg.kind === "agent_thinking" && msg.body) {
+    li.className = "msg msg-system msg-think msg-thought";
+    const seconds = thinkingNow.get(messageSeq(msg) ?? -1);
+    if (seconds !== undefined) li.dataset.seconds = String(seconds);
+    li.dataset.summary = thinkingSummary(msg.body);
+    li.append(richText(msg.body));
+  }
   return li;
 }
 /** Rewind: drop this message and everything after it, so the conversation can be rewritten. */
@@ -534,6 +697,11 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
   if (msg.kind === "file_created") { lastRole = "assistant"; return createdFileCard(msg); }
   if (msg.kind === "confirmation_requested") { lastRole = "system"; return confirmationCard(msg); }
   if (msg.kind === "secret_requested") { lastRole = "system"; return secretCard(msg); }
+  if (msg.kind === "question_requested") { lastRole = "system"; return questionCard(msg); }
+  if (msg.kind === "question_answered") {
+    const card = questionCards.get(detailField(msg.details, "id"));
+    if (card) { for (const control of card.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button")) control.disabled = true; questionCards.delete(detailField(msg.details, "id")); }
+  }
   if (msg.kind === "secret_answered") {
     const card = secretCards.get(detailField(msg.details, "id"));
     if (card) { for (const control of card.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button")) control.disabled = true; secretCards.delete(detailField(msg.details, "id")); }
@@ -580,16 +748,13 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
       tools.append(branchButton(msg, "Start a new conversation from just before this message, so you can write it differently"));
       tools.append(rewindButton(msg));
     }
-    if (msg.kind === "user_message" && msg.title === "Queued") {
-      const pill = make("span", "queued-pill");
-      pill.append(icon("clock"), make("span", "", "Queued while working"));
-      bubble.append(pill);
-    }
+    if (msg.kind === "user_message" && msg.title === "Queued") bubble.append(steerPill(steeringStatus(liveEvents).get(messageSeq(msg) ?? -1) ?? "pending"));
     li.append(bubble, tools);
     lastRole = "user";
     return li;
   }
   if (msg.role === "system" && msg.state) { lastRole = "system"; return resultCard(msg); }
+  if (msg.kind === "agent_recovery" || msg.kind === "agent_context_compacted") { lastRole = "system"; return noticeRow(msg); }
   if (msg.role === "assistant" && (msg.body || msg.kind === "plan")) {
     const li = assistantMessage(msg, lastRole !== "assistant");
     lastRole = "assistant";
@@ -598,20 +763,23 @@ function renderMessage(msg: ChatMessage): HTMLLIElement | null {
   // Pair a tool result with its call so each step reads as one action plus its output.
   if (msg.kind === "agent_tool_result") {
     const name = toolName(msg);
-    const index = pendingCalls.findIndex(call => call.name === name);
+    const index = msg.callId ? pendingCalls.findIndex(call => call.callId === msg.callId) : pendingCalls.findIndex(call => call.name === name);
     const call = index >= 0 ? pendingCalls.splice(index, 1)[0] : undefined;
-    if (call && msg.body) {
-      const label = call.body.parentElement?.querySelector(".step-arg")?.textContent ?? "";
-      call.body.append(renderOutputUI(msg.body, name, label));
-      if (call.body.parentElement) {
-        setClass(call.body.parentElement, "step-static", false);
-        if (msg.state === "tool_failed") setClass(call.body.parentElement, "step-failed", true);
+    if (call) {
+      const step = call.body.parentElement;
+      const timing = toolTimingsNow.get(call.seq);
+      updateStepStatus(step, msg.state === "tool_failed" ? "failed" : "done", timing?.seconds ?? null);
+      if (msg.body) {
+        const label = step?.querySelector(".step-arg")?.textContent ?? "";
+        call.body.append(renderOutputUI(msg.body, name, label));
+        if (step) setClass(step, "step-static", false);
       }
+      if (step && msg.state === "tool_failed") setClass(step, "step-failed", true);
       return null;
     }
   }
   const { li, body } = stepRow(msg);
-  if (msg.kind === "agent_tool_call") pendingCalls.push({ name: toolName(msg), body });
+  if (msg.kind === "agent_tool_call") pendingCalls.push({ name: toolName(msg), body, callId: msg.callId, seq: messageSeq(msg) ?? -1 });
   lastRole = "tool";
   return li;
 }
@@ -623,6 +791,9 @@ const EARLIER_LIMIT = 150;
 function renderMessageStream(messages: ChatMessage[]): void {
   const stream = el("message-stream"), thread = el("thread");
   const stick = nearBottom(thread);
+  toolTimingsNow = toolTimings(liveEvents);
+  thinkingNow = thinkingDurations(liveEvents);
+  if (messages.some(msg => !rendered.has(msg.id))) document.getElementById?.("live-thinking")?.remove?.();
   if (!rendered.size && !showAllMessages && messages.length > EARLIER_LIMIT) {
     // Long conversations open on their newest messages; older ones load on request.
     const hidden = messages.slice(0, messages.length - EARLIER_LIMIT);
@@ -642,28 +813,54 @@ function renderMessageStream(messages: ChatMessage[]): void {
       else addToStream(stream, node);
     }
   }
+  for (const [seq, status] of steeringStatus(liveEvents)) {
+    const pill = document.getElementById?.(`user-${seq}`)?.querySelector?.(".queued-pill");
+    if (pill && (pill as HTMLElement).dataset.status !== status) pill.replaceWith(steerPill(status));
+  }
+  if (selectedState && isTerminal(selectedState)) {
+    for (const node of stream.querySelectorAll?.(".step-status.step-running") ?? []) node.replaceWith(make("span", "step-status step-failed", "Stopped"));
+  }
   if (stick) thread.scrollTop = thread.scrollHeight;
 }
-/** Quiet steps (thinking, routing, skills) collapse into one "Thinking" block. */
+/** What happened to a message typed while Dikdik was working, in words. */
+function steerPill(status: "pending" | "applied" | "follow-up"): HTMLElement {
+  const pill = make("span", `queued-pill steer-${status}`); pill.dataset.status = status;
+  const text = status === "applied" ? "Read during the run" : status === "follow-up" ? "Sent after the run" : "Waiting · read at the next step";
+  pill.append(icon(status === "applied" ? "check" : "clock"), make("span", "", text));
+  pill.title = status === "pending" ? "Dikdik reads this at its next step without stopping. Messages with files or a goal wait for the run to finish." : "";
+  return pill;
+}
+/** Quiet steps (thinking, routing, skills) collapse into one block: "Thought for 12s" and a one-line summary. */
 function quietToStream(stream: HTMLElement, node: HTMLLIElement): void {
   let block = stream.querySelector<HTMLDetailsElement>(".think-block:last-child");
   if (!block) {
     block = make("details", "think-block") as HTMLDetailsElement;
     const summary = make("summary", "");
-    summary.append(icon("sparkle"), make("span", "think-title", "Thinking"), make("span", "think-count", ""));
+    const chevron = icon("chevron"); chevron.setAttribute("class", "i think-chevron");
+    summary.append(icon("sparkle"), make("span", "think-title", "Getting ready"), make("span", "think-summary", ""), make("span", "think-count", ""), chevron);
     const process = make("ol", "think-process");
     block.append(summary, process);
     stream.append(block);
   }
   const process = block.querySelector(".think-process")!;
   process.append(node);
-  const count = block.querySelector(".think-count");
-  if (count) count.textContent = `${process.children.length} steps`;
+  const thoughts = [...process.querySelectorAll<HTMLElement>(".msg-thought")];
+  const seconds = thoughts.reduce((total, item) => total + (Number(item.dataset.seconds) || 0), 0);
+  const known = thoughts.some(item => item.dataset.seconds !== undefined);
+  const title = block.querySelector(".think-title"), summary = block.querySelector(".think-summary"), count = block.querySelector(".think-count");
+  if (title) title.textContent = thoughts.length ? thinkingLabel(known ? seconds : null) : "Getting ready";
+  if (summary) summary.textContent = thoughts.length ? thoughts[thoughts.length - 1]!.dataset.summary ?? "" : "";
+  const others = process.children.length - thoughts.length;
+  if (count) count.textContent = thoughts.length ? "" : `${others} step${others === 1 ? "" : "s"}`;
+  setClass(block, "has-thought", thoughts.length > 0);
+  setClass(block, "think-empty", thoughts.length === 0);
   block.open = false;
 }
 /** Consecutive steps share one block; three or more fold into "N steps" once the agent moves on. */
 function addToStream(stream: HTMLElement, node: HTMLLIElement): void {
   if (node.dataset.step !== "1") { closeStepGroup(); stream.append(node); return; }
+  const readStep = groupable(node.dataset.verb ?? "");
+  if (stepGroup && stepGroup.steps.length && stepGroup.steps.every(step => groupable(step.verb)) !== readStep) closeStepGroup();
   if (!stepGroup || stream.lastElementChild !== stepGroup.li) {
     closeStepGroup();
     const li = make("li", "msg step-group few"), details = make("details"), summary = make("summary"), list = make("ol", "step-list");
@@ -672,11 +869,14 @@ function addToStream(stream: HTMLElement, node: HTMLLIElement): void {
     details.append(summary, list);
     li.append(details);
     stream.append(li);
-    stepGroup = { li, list, details, summary, count: 0 };
+    stepGroup = { li, list, details, summary, count: 0, steps: [] };
   }
   stepGroup.list.append(node);
   stepGroup.count++;
-  stepGroup.summary.replaceChildren(icon("chevron"), make("span", "", `${stepGroup.count} steps`));
+  stepGroup.steps.push({ verb: node.dataset.verb ?? "", target: node.dataset.target ?? "" });
+  const reads = stepGroup.steps.every(step => groupable(step.verb));
+  stepGroup.summary.replaceChildren(icon("chevron"), make("span", "", reads ? groupTitle(stepGroup.steps) : `${stepGroup.count} steps`));
+  setClass(stepGroup.li, "reads", reads);
   setClass(stepGroup.li, "few", stepGroup.count < 3);
 }
 function closeStepGroup(): void {
@@ -1987,8 +2187,22 @@ function setUrl(task: string | null): void {
   if (!loc || typeof globalThis.history?.replaceState !== "function") return;
   globalThis.history.replaceState(null, "", task ? `${loc.pathname}?task=${encodeURIComponent(task)}` : loc.pathname);
 }
+/** An empty conversation shows the message box in the middle of the welcome; an open one keeps it at the bottom. */
+function placeComposer(): void {
+  const main = document.getElementById("main"), composer = document.getElementById("composer"), slot = document.getElementById("welcome-composer");
+  if (!main || !composer || !slot || typeof slot.append !== "function") return;
+  const landing = !selected;
+  setClass(main, "landing", landing);
+  const home = landing ? slot : main;
+  if (composer.parentElement === home) return;
+  const focused = typeof composer.contains === "function" && composer.contains(document.activeElement) ? document.activeElement : null;
+  home.append(composer);
+  if (focused instanceof HTMLElement) focused.focus();
+  if (landing) el("welcome-hello").textContent = timeGreeting(new Date().getHours());
+}
 function syncComposer(): void {
-  textarea('objective').placeholder = isChat() ? "Ask anything — research, analysis, code, data, explanations… Dikdik can help."
+  placeComposer();
+  textarea('objective').placeholder = isChat() ? (selected ? "Reply to Dikdik…" : "How can I help you today?")
     : select('mode').value === 'plan' ? "Let\u2019s work on a plan" : selected ? "Reply to Dikdik\u2026" : "Ask Dikdik to build, fix or change something\u2026";
   el("task-actions").hidden = !selected;
   syncSend();
@@ -1996,7 +2210,8 @@ function syncComposer(): void {
 function syncSend(): void {
   const running = !!selected && !!selectedState && !isTerminal(selectedState);
   const stopping = running && stoppingTasks.has(selected!);
-  button('start').hidden = running;
+  button('start').hidden = running && !textarea('objective').value.trim();
+  button('start').title = running ? 'Send · Dikdik reads it at its next step without stopping' : '';
   button('cancel').hidden = !running;
   button('cancel').disabled = !running || stopping;
   button('cancel').setAttribute('aria-label', stopping ? 'Stopping response' : 'Stop response');
@@ -2053,13 +2268,12 @@ function setState(state: string): void {
       const existing = row.querySelector(".conv-spiral-loader");
       const active = state === "running" || state === "queued" || (!isTerminal(state) && !!state);
       if (active && !existing) {
-        const spiral = make("span", `conv-state conv-spiral-loader state-${state}`);
-        spiral.setAttribute("aria-label", "Running");
-        spiral.append(icon("spiral"));
-        row.prepend(spiral);
+        row.querySelector(".conv-mark")?.remove();
+        row.prepend(runningMark(state));
       } else if (!active && existing) {
         existing.remove();
       }
+      setClass(row, "conv-running", active);
     }
   }
 }
@@ -2199,6 +2413,14 @@ function taskRow(task: TaskSummary): HTMLElement {
   }
   return row;
 }
+/** A running conversation's mark: the same ring spinner as a running step in the chat. */
+function runningMark(state: string): HTMLElement {
+  const mark = make("span", `conv-state conv-spiral-loader state-${state}`);
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", state === "queued" ? "Queued" : "Running");
+  mark.append(make("span", "conv-ring"));
+  return mark;
+}
 function isTaskActive(task: TaskSummary): boolean {
   if (task.state === "running" || task.state === "queued") return true;
   if (task.id === selected && selectedState && !isTerminal(selectedState)) return true;
@@ -2214,10 +2436,8 @@ function taskRowBase(task: TaskSummary): HTMLElement {
   const label = make("span", "conv-obj", name);
   item.title = `${name} — ${task.state}`;
   if (isTaskActive(task)) {
-    const spiral = make("span", `conv-state conv-spiral-loader state-${task.state}`);
-    spiral.setAttribute("aria-label", "Running");
-    spiral.append(icon("spiral"));
-    item.append(spiral);
+    item.append(runningMark(task.state));
+    setClass(item, "conv-running", true);
   } else {
     // Only what needs a look gets a mark: a run waiting for you, or one that failed.
     const kind = statusKind(task.state);
@@ -2463,6 +2683,65 @@ function stopStream(): void {
   heldEvents = []; heldEnd = false; heldReply = null;
   showLiveReply("");
 }
+let liveThought = "", thinkTimer: ReturnType<typeof setInterval> | null = null;
+/** While a model call is in flight, an open block counts the seconds and shows any thinking that streams in. */
+function renderLiveThinking(): void {
+  const pending = selected && selectedState && !isTerminal(selectedState) ? pendingModelCall(liveEvents) : null;
+  const existing = document.getElementById?.("live-thinking");
+  if (!pending || document.getElementById?.("live-reply")) {
+    existing?.remove?.();
+    if (thinkTimer) { clearInterval(thinkTimer); thinkTimer = null; }
+    if (!pending) liveThought = "";
+    return;
+  }
+  const li = existing ?? make("li", "msg msg-system msg-live-thinking");
+  if (!existing) {
+    li.id = "live-thinking";
+    const block = make("div", "think-block thinking-now");
+    const summary = make("div", "think-head");
+    summary.append(make("span", "think-pulse"), make("span", "think-title", "Thinking…"), make("span", "think-summary", ""));
+    block.append(summary, make("div", "think-live"));
+    li.append(block);
+  }
+  const seconds = Math.max(0, Date.now() / 1000 - pending.since);
+  const title = li.querySelector(".think-title"), summary = li.querySelector(".think-summary"), body = li.querySelector<HTMLElement>(".think-live");
+  if (title) title.textContent = thinkingLabel(seconds, true);
+  if (summary) summary.textContent = liveThought ? thinkingSummary(liveThought.slice(-600).split(/\n\n/).pop() ?? "") : "";
+  if (body) { body.textContent = liveThought.slice(-1500); body.hidden = !liveThought; }
+  const stream = el("message-stream");
+  if (stream.lastElementChild !== li) stream.append(li);
+  if (!thinkTimer) thinkTimer = setInterval(renderLiveThinking, 1000);
+}
+let runPlanOpen: boolean | null = null;
+/** The agent's task_tracker list, pinned above the conversation while its run is active. */
+function renderRunPlan(): void {
+  const box = el("run-plan");
+  const view = selected ? taskChecklist(liveEvents) : { used: false, tasks: [] as ChecklistItem[] };
+  const active = !!selected && !!selectedState && !isTerminal(selectedState);
+  box.hidden = !active || !view.tasks.length;
+  if (box.hidden) { box.replaceChildren(); return; }
+  if (runPlanOpen === null) runPlanOpen = !wide("(max-width: 760px)");
+  const done = view.tasks.filter(task => task.status === "done").length;
+  const current = view.tasks.find(task => task.status === "in_progress") ?? view.tasks.find(task => task.status === "todo");
+  const details = make("details", "run-plan-box") as HTMLDetailsElement;
+  details.open = runPlanOpen;
+  details.addEventListener("toggle", () => { runPlanOpen = details.open; });
+  const summary = make("summary");
+  const chevron = icon("chevron"); chevron.setAttribute("class", "i run-plan-chevron");
+  summary.append(icon("list"), make("span", "run-plan-title", "Plan"), make("span", "run-plan-count", `${done} of ${view.tasks.length} done`),
+    make("span", "run-plan-current", current && !details.open ? current.title : ""), chevron);
+  const bar = make("span", "run-plan-bar"); const fill = make("span"); fill.setAttribute("style", `width: ${Math.round(done / view.tasks.length * 100)}%`); bar.append(fill);
+  const labels = { todo: "To do", in_progress: "In progress", done: "Done" };
+  const list = make("ol", "task-checklist run-plan-list");
+  list.append(...view.tasks.map(task => {
+    const row = make("li", "checklist-step"); row.dataset.status = task.status;
+    const marker = make("span", "checklist-icon"); marker.setAttribute("aria-hidden", "true");
+    row.append(marker, make("span", "checklist-title", task.title), make("span", "sr-only", ` (${labels[task.status]})`));
+    return row;
+  }));
+  details.append(summary, bar, list);
+  box.replaceChildren(details);
+}
 function showLiveReply(text: string, onShown?: () => void): void {
   const existing = document.getElementById?.("live-reply");
   if (!text) {
@@ -2471,6 +2750,7 @@ function showLiveReply(text: string, onShown?: () => void): void {
     if (existing) el("working-label").textContent = "Working";
     return;
   }
+  document.getElementById?.("live-thinking")?.remove?.();
   const li = existing ?? make("li", "msg msg-assistant msg-live");
   if (!existing || !typer) {
     li.id = "live-reply";
@@ -2529,6 +2809,12 @@ function startStream(id: string): void {
     pendingReply = (JSON.parse((event as MessageEvent).data) as { text: string }).text;
     if (heldReply === null) replyPaint.schedule();
   });
+  source.addEventListener("thinking", event => {
+    if (id !== selected) return stopStream();
+    const text = (JSON.parse((event as MessageEvent).data) as { text?: unknown }).text;
+    liveThought = typeof text === "string" ? text : "";
+    renderLiveThinking();
+  });
   source.addEventListener("end", () => { if (heldReply !== null) heldEnd = true; else endStream(); });
   source.onerror = () => { if (source.readyState === EventSource.CLOSED || liveTask !== id) { typer?.flush(); stopStream(); watching = true; } };
 }
@@ -2549,7 +2835,8 @@ function handleStreamEvent(id: string, record: TaskEvent): void {
     if (record.kind === "browser_started" || record.kind === "browser_result") renderBrowser();
     if (record.kind === "live_preview") { livePath = ""; void refreshLive(); }
     if (record.kind === 'plan_updated') { void loadPlan(id); void loadPlans().catch(() => undefined); }
-    if (record.kind === 'task_tracker') renderChecklist();
+    if (record.kind === 'task_tracker') { renderChecklist(); renderRunPlan(); }
+    if (record.kind === "agent_model" && record.data?.phase === "start") liveThought = "";
     if ((record.kind === "agent_model" || record.kind === "running") && canvasTab === "usage" && !el("canvas").hidden) renderUsage();
     if (record.kind === "running" || isTerminal(record.kind)) {
       setState(record.kind);
@@ -2636,6 +2923,7 @@ async function connect(): Promise<void> {
         modelsPane(el("panel-profiles"), paneDeps)),
       secrets: keysPane(el("panel-secrets"), paneDeps),
       skills: skillsPane(el("panel-skills"), { ...paneDeps, useSkill }),
+      memory: memoryPane(el("panel-memory"), paneDeps),
       plugins: pluginsPane(el("panel-plugins"), { ...paneDeps, startTask: startWithPrompt }),
       mcp: mcpPane(el("panel-mcp"), paneDeps),
     });
@@ -2810,7 +3098,7 @@ themeSelect.addEventListener("change", () => {
   applyTheme(themeSelect.value);
 });
 
-const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps", git: "Git" };
+const PANE_TITLES: Record<string, string> = { general: "General", models: "Models", agents: "Agents", secrets: "API keys", skills: "Skills", memory: "Memory", plugins: "Plugins", mcp: "MCP servers", automations: "Automations", platform: "Platform", acp: "ACP agents", apps: "Apps", git: "Git" };
 
 // --- automations ----------------------------------------------------------
 let automations: Automation[] = [];
@@ -3316,13 +3604,11 @@ function composerRequest(text: string, goalMaxTurns?: number, mode?: Mode) {
   else if (openMode === "chat") mode = "chat";
   else if (isChat() && !selected) mode = "chat";
   if (mode === "chat") {
-    // Chat mode: research, analysis, files, and shell (with the same approval as code mode).
-    // The user's execution approval carries through; without it, chat is read-only research.
-    const approveExec = input("execution").checked;
+    // Chat mode: research, analysis, files, and commands in the chat's own folder.
+    // Commands are always available in a chat; each one asks the user first.
     return buildTaskRequest({
-      objective: text, mode: "chat",
-      verification: approveExec ? "local" : "syntax",
-      approveExecution: approveExec, approveExternal: true, edits: "", approveSecrets: false,
+      objective: text, mode: "chat", verification: "local",
+      approveExecution: true, approveExternal: true, edits: "", approveSecrets: false,
       approveBrowser: false,
       modelProfile: modelOverride?.id, attachments: attached.map(file => file.id),
     });
@@ -3436,7 +3722,7 @@ async function sendMessage(text: string, goalMaxTurns?: number): Promise<boolean
     const reply = await api<{ queued: boolean }>(`/api/tasks/${encodeURIComponent(task)}/messages`, composerRequest(text, goalMaxTurns));
     clearAttachments();
     if (task === selected) watching = true;
-    if (reply.queued) message("Queued. Dikdik will reply when the current step finishes.");
+    if (reply.queued) message("Sent. Dikdik reads it at its next step; with files or a goal it waits for this run to finish.");
   } catch (error) { message(error instanceof Error ? error.message : "Message failed", true); return false; }
   // Acceptance releases the composer immediately. History, the task snapshot
   // and draft persistence do not sit on the message submission path.
@@ -3635,7 +3921,7 @@ async function resumeTask(): Promise<void> {
   if (!selected || !taskRequest) return;
   const r = taskRequest, task = selected;
   const chosen = modelOverride?.id ?? r.model_profile;
-  const confirmation = confirmationForRunMode(runMode()) ?? r.confirmation;
+  const confirmation = r.mode === "chat" ? r.confirmation : confirmationForRunMode(runMode()) ?? r.confirmation;
   const body = {
     verification: r.verification, approve_external: r.approve_external === true, approve_execution: r.approve_execution === true,
     ...(r.approve_browser ? { approve_browser: true } : {}), ...(r.agent_profile ? { agent_profile: r.agent_profile } : {}),
@@ -3658,14 +3944,19 @@ function renderRunState(): void {
   if (selected && stoppingTasks.has(selected) && !isTerminal(selectedState)) el('working-label').textContent = 'Stopping…';
   const usage = selected ? contextUsage(liveEvents) : null;
   const meter = el("context-meter");
-  meter.hidden = !usage;
-  if (usage) {
-    const pct = Math.round(usage.ratio * 100);
-    el("context-label").textContent = `${pct}%`;
-    el("context-fill").style?.setProperty?.("--fill", `${pct}%`);
-    setClass(meter, "context-high", usage.ratio >= 0.8);
-    meter.title = `${pct}% of the context window at the last model call (${Math.round(usage.bytes / 1024)} of ${Math.round(usage.limit / 1024)} KB). Click to condense older turns.`;
-  }
+  const spent = selected ? turnCost(liveEvents) : null;
+  meter.hidden = !usage && !spent?.total;
+  const pct = usage ? Math.round(usage.ratio * 100) : 0;
+  el("context-label").textContent = [usage ? `${pct}%` : "", spent?.total ? `${compactTokens(spent.total)} tok` : ""].filter(Boolean).join(" · ");
+  el("context-fill").style?.setProperty?.("--fill", `${pct}%`);
+  setClass(meter, "context-high", !!usage && usage.ratio >= 0.8);
+  meter.title = [
+    usage ? `Context: ${pct}% of the window at the last model call (${Math.round(usage.bytes / 1024)} of ${Math.round(usage.limit / 1024)} KB).` : "Context: not reported yet.",
+    spent ? `This turn: ${turnCostText(spent) || "no tokens reported"}.` : "",
+    "Click to condense older turns.",
+  ].filter(Boolean).join("\n");
+  renderLiveThinking();
+  renderRunPlan();
   const goal = selected ? goalState(liveEvents) : null;
   el("goal-banner").hidden = !goal;
   if (goal) {
@@ -4864,90 +5155,39 @@ async function loadGitAccounts(): Promise<void> {
 Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps, git: loadGitAccounts });
 
 // --- desktop self-update --------------------------------------------------
-interface UpdateInfo {
-  current: string; latest: string; available: boolean; url?: string; notes?: string; install?: string;
-  can_install?: boolean; pip_command?: string; asset?: { size?: number } | null; error?: string;
-}
-interface UpdateStatus {
-  state: string; done?: number; total?: number; latest?: string; error?: string; cancelled?: boolean;
-  previous?: { ok: boolean; from: string; to: string; url: string };
-}
+// The sidebar button is the whole flow: one click downloads and verifies the release, then Dikdik
+// closes, installs it and reopens in the new version (sidebarUpdate decides what it shows).
 const UPDATE_BUSY = new Set(["downloading", "verifying", "installing", "restarting"]);
-// What happens once the download is verified, in each platform's own terms.
-const UPDATE_INSTALL_NOTE: Record<string, string> = {
-  windows: "Dikdik will close, install the update silently and reopen in a few seconds.",
-  macos: "Dikdik will close, replace itself and reopen.",
-  linux: "Enter your password in the system dialog; Dikdik then reopens.",
-};
 let updateInfo: UpdateInfo | null = null, updateState: UpdateStatus = { state: "idle" }, updateConfirm = false;
 let updatePoll: ReturnType<typeof setTimeout> | null = null, updateChecking = false;
 const updateEl = (id: string): HTMLElement | null => document.getElementById(id);
-const megabytes = (bytes = 0) => `${(bytes / 1048576).toFixed(bytes >= 104857600 ? 0 : 1)} MB`;
 function runningTaskCount(): number { return lastTasks.filter(task => task.state === "running" || task.state === "queued").length; }
 
 function renderUpdate(): void {
-  const info = updateInfo, state = updateState.state, busy = UPDATE_BUSY.has(state);
-  const action = updateEl("update-action") as HTMLButtonElement | null, detail = updateEl("update-detail");
-  const version = updateEl("update-version"); if (version) version.textContent = info?.current ?? updateState.latest ?? "";
-  const progress = updateEl("update-progress"), bar = updateEl("update-bar") as HTMLProgressElement | null;
-  const cancel = updateEl("update-cancel"), indicator = updateEl("sidebar-update") as HTMLButtonElement | null;
-  const latest = updateState.latest || info?.latest || "";
-  const percent = updateState.total ? Math.min(100, Math.round((updateState.done ?? 0) * 100 / updateState.total)) : 0;
-  if (progress) progress.hidden = state !== "downloading" && state !== "verifying";
-  if (bar) { if (state === "verifying") bar.removeAttribute?.("value"); else bar.value = percent; }
-  const text = updateEl("update-progress-text");
-  if (text) text.textContent = state === "verifying" ? "Checking the download…" : updateState.total ? `${megabytes(updateState.done)} of ${megabytes(updateState.total)} · ${percent}%` : megabytes(updateState.done);
-  if (cancel) cancel.hidden = state !== "downloading";
-  const pip = updateEl("update-pip");
-  if (pip) pip.hidden = !(info?.available && info.pip_command);
-  const pipCommand = updateEl("update-pip-command"); if (pipCommand) pipCommand.textContent = info?.pip_command ?? "";
-  const notesBox = updateEl("update-notes-box") as HTMLDetailsElement | null;
-  if (notesBox) notesBox.hidden = !(info?.available && (info.notes || info.url));
-  const notesTitle = updateEl("update-notes-title"); if (notesTitle) notesTitle.textContent = `What’s new in ${latest}`;
-  const notesBody = updateEl("update-notes-body");
-  if (notesBody && info?.notes && notesBody.dataset.version !== latest) { notesBody.dataset.version = latest; notesBody.replaceChildren(richText(info.notes)); }
-  const notesLink = updateEl("update-notes") as HTMLAnchorElement | null;
-  if (notesLink) { notesLink.hidden = !info?.url; if (info?.url) notesLink.href = info.url; }
-  if (indicator) {
-    indicator.hidden = !(info?.available || busy);
-    const label = indicator.querySelector?.("span:not(.update-dot)");
-    if (label) label.textContent = state === "downloading" ? `Updating ${percent}%` : busy ? "Updating…" : "Update";
-    indicator.title = busy ? `Installing Dikdik ${latest}` : `Dikdik ${latest} is available — click to update`;
+  const version = updateEl("update-version");
+  if (version) version.textContent = updateInfo?.current || version.textContent || "—";
+  const view = sidebarUpdate(updateInfo, updateState, runningTaskCount(), updateConfirm);
+  const button = updateEl("sidebar-update") as HTMLButtonElement | null;
+  if (button) {
+    button.hidden = view.hidden;
+    button.dataset.tone = view.tone;
+    button.disabled = view.action === "none";
+    button.title = view.title;
+    button.setAttribute?.("aria-label", view.title);
+    const label = button.querySelector?.(".update-label"); if (label) label.textContent = view.label;
+    const fill = button.querySelector?.(".update-fill") as HTMLElement | null;
+    button.classList?.toggle("has-progress", view.progress !== null || view.tone === "busy");
+    if (fill) fill.style.width = view.progress === null ? "" : `${view.progress}%`;
   }
-  if (!action || !detail) return;
-  action.hidden = state === "downloading" || state === "verifying";
-  action.disabled = busy || updateChecking;
-  if (state === "installing" || state === "restarting") {
-    action.textContent = state === "restarting" ? "Restarting…" : "Installing…";
-    detail.textContent = state === "restarting" ? `Restarting into Dikdik ${latest}…` : UPDATE_INSTALL_NOTE[info?.install ?? ""] ?? "Installing…";
-  } else if (state === "downloading" || state === "verifying") {
-    detail.textContent = `Downloading Dikdik ${latest}. You can keep working.`;
-  } else if (state === "failed") {
-    action.textContent = "Try again";
-    detail.textContent = `The update didn’t install: ${updateState.error ?? "unknown error"} You’re still on ${info?.current ?? "this version"}.`;
-  } else if (updateChecking) {
-    action.textContent = "Checking…"; detail.textContent = "Looking for a newer release…";
-  } else if (!info) {
-    action.textContent = "Check for updates";
-  } else if (info.error) {
-    action.textContent = "Check again"; detail.textContent = "Couldn’t reach GitHub to check for updates.";
-  } else if (!info.available) {
-    action.textContent = "Check for updates"; detail.textContent = "You’re on the latest release.";
-  } else if (info.pip_command) {
-    action.textContent = "Copy upgrade command"; detail.textContent = `Dikdik ${latest} is available. This copy runs from Python; upgrade it with pip, then restart Dikdik.`;
-  } else if (!info.can_install) {
-    action.textContent = "Open download page"; detail.textContent = `Dikdik ${latest} is available. Download it from the release page.`;
-  } else {
-    const running = runningTaskCount();
-    const size = info.asset?.size ? ` (${megabytes(info.asset.size)})` : "";
-    action.textContent = updateConfirm ? `Restart and pause ${running} task${running === 1 ? "" : "s"}` : `Install ${latest}`;
-    detail.textContent = updateConfirm ? `${running} running task${running === 1 ? "" : "s"} will pause and can be resumed after the restart.`
-      : `Dikdik ${latest}${size} is ready to download. ${UPDATE_INSTALL_NOTE[info.install ?? ""] ?? ""}`;
+  const pop = updateEl("update-pop");
+  if (pop) {
+    pop.hidden = !view.prompt;
+    const text = updateEl("update-pop-text"); if (text) text.textContent = view.prompt;
   }
 }
 async function loadUpdateCheck(force = false): Promise<void> {
   if (updateChecking || UPDATE_BUSY.has(updateState.state)) return;
-  updateChecking = true; renderUpdate();
+  updateChecking = true;
   try { updateInfo = await api<UpdateInfo>(`/api/desktop/update/check${force ? "?force=1" : ""}`); }
   catch { updateInfo = { current: updateInfo?.current ?? "", latest: "", available: false, error: "unreachable" }; }
   finally { updateChecking = false; }
@@ -4957,14 +5197,14 @@ async function loadUpdateCheck(force = false): Promise<void> {
 async function pollUpdate(): Promise<void> {
   if (updatePoll !== null) { clearTimeout(updatePoll); updatePoll = null; }
   try { updateState = await api<UpdateStatus>("/api/desktop/update/status"); }
-  catch { if (updateState.state === "restarting") return; }  // the old window is closing
+  catch { if (updateState.state === "restarting" || updateState.state === "installing") return; }  // the old window is closing
   renderUpdate();
   if (UPDATE_BUSY.has(updateState.state)) updatePoll = setTimeout(() => void pollUpdate(), updateState.state === "downloading" ? 400 : 1000);
 }
 async function startUpdate(): Promise<void> {
-  if (!updateInfo?.can_install) return;
-  if (runningTaskCount() && !updateConfirm) { updateConfirm = true; renderUpdate(); return; }
   updateConfirm = false;
+  updateState = { state: "downloading", latest: updateInfo?.latest ?? "", done: 0, total: updateInfo?.asset?.size ?? 0 };
+  renderUpdate();
   try {
     const reply = await api<UpdateStatus & { ok: boolean }>("/api/desktop/update/apply", {});
     if (!reply.ok) throw new Error(reply.error || "The update could not start.");
@@ -4979,19 +5219,22 @@ async function startUpdate(): Promise<void> {
 async function reportPreviousUpdate(): Promise<void> {
   const state = await api<UpdateStatus>("/api/desktop/update/status").catch(() => null);
   if (!state?.previous) return;
-  const { ok, from, to } = state.previous;
-  message(ok ? `Dikdik updated to ${to}. Open Settings → General for what’s new.` : `The update to ${to} didn’t finish; you’re still on ${from}. Try again from Settings.`, !ok);
+  const { ok, from, to, detail } = state.previous;
+  message(ok ? `Dikdik updated to ${to}.` : `The update to ${to} didn’t finish${detail ? ` (${detail})` : ""}; you’re still on ${from}. Use the Update button in the sidebar to try again.`, !ok);
   void request("/api/desktop/update/dismiss", "POST", {}).catch(() => undefined);
 }
-updateEl("update-action")?.addEventListener("click", () => {
-  if (updateState.state === "failed") { updateState = { state: "idle" }; void loadUpdateCheck(true); return; }
-  if (updateInfo?.available && updateInfo.pip_command) { void copyText(updateInfo.pip_command, updateEl("update-pip-copy") as HTMLButtonElement); return; }
-  if (updateInfo?.available && !updateInfo.can_install && updateInfo.url) { globalThis.open?.(updateInfo.url, "_blank", "noopener"); return; }
-  if (updateInfo?.can_install) void startUpdate(); else void loadUpdateCheck(true);
+updateEl("sidebar-update")?.addEventListener("click", () => {
+  const view = sidebarUpdate(updateInfo, updateState, runningTaskCount(), updateConfirm);
+  if (view.action === "start") void startUpdate();
+  else if (view.action === "confirm") { updateConfirm = true; renderUpdate(); (updateEl("update-pop-go") as HTMLButtonElement | null)?.focus?.(); }
+  else if (view.action === "copy" && updateInfo?.pip_command) { void copyText(updateInfo.pip_command, updateEl("sidebar-update") as HTMLButtonElement); message("Copied the pip upgrade command. Run it, then restart Dikdik."); }
+  else if (view.action === "open" && updateInfo?.url) globalThis.open?.(updateInfo.url, "_blank", "noopener");
+  else if (view.action === "retry") { updateState = { state: "idle" }; void loadUpdateCheck(true).then(() => { if (updateInfo?.can_install) void startUpdate(); }); }
+  else if (view.action === "cancel") void request<UpdateStatus>("/api/desktop/update/cancel", "POST", {}).then(state => { updateState = state; renderUpdate(); }).catch(() => undefined);
 });
-updateEl("update-cancel")?.addEventListener("click", () => { void request<UpdateStatus>("/api/desktop/update/cancel", "POST", {}).then(state => { updateState = state; renderUpdate(); }).catch(() => undefined); });
-updateEl("update-pip-copy")?.addEventListener("click", () => { if (updateInfo?.pip_command) void copyText(updateInfo.pip_command, updateEl("update-pip-copy") as HTMLButtonElement); });
-updateEl("sidebar-update")?.addEventListener("click", () => { openSettings("general", true); updateEl("update-row")?.scrollIntoView?.({ block: "center" }); });
+updateEl("update-pop-go")?.addEventListener("click", () => void startUpdate());
+updateEl("update-pop-later")?.addEventListener("click", () => { updateConfirm = false; renderUpdate(); });
+document.addEventListener?.("keydown", event => { if (event.key === "Escape" && updateConfirm) { updateConfirm = false; renderUpdate(); } });
 void reportPreviousUpdate();
 void pollUpdate();
 // Look again every six hours while Dikdik stays open.

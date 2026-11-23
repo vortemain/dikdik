@@ -223,10 +223,10 @@ class _Parser:
 def _lines(tex: str) -> list[str]:
     body = re.sub(r"\\begin\{(aligned|align\*?|gather\*?|equation\*?|split|multline\*?|eqnarray\*?|alignat\*?)\}(\{\d+\})?", "", tex)
     body = re.sub(r"\\end\{(aligned|align\*?|gather\*?|equation\*?|split|multline\*?|eqnarray\*?|alignat\*?)\}", "", body)
-    body = re.sub(r"\\(label|tag|nonumber|notag)(\{[^}]*\})?", "", body)
+    body = re.sub(r"\\(label|tag|nonumber|notag)(\{[^{}]*\})?", "", body)
     if re.search(r"\\begin\{[pbvBV]?matrix\}|\\begin\{cases\}|\\begin\{array\}", body):
         return [body]
-    return [line for line in re.split(r"\\\\(?:\[[^\]]*\])?", body) if line.strip()] or [body]
+    return [line for line in re.split(r"\\\\(?:\[[^\[\]]*\])?", body) if line.strip()] or [body]
 
 
 def _matrices(tex: str) -> str:
@@ -246,7 +246,29 @@ def _matrices(tex: str) -> str:
                    f"<m:e>{matrix}</m:e></m:d>")
         _SLOTS.append(wrapped)
         return f"\x00{len(_SLOTS) - 1}\x00"
-    return re.sub(r"\\begin\{(matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|cases|array)\}(?:\{[^}]*\})?(.*?)\\end\{\1\}", build, tex, flags=re.S)
+    # A scan for each \\end{...} instead of a lazy .*? across the whole equation (quadratic on crafted input).
+    out, position = [], 0
+    for opening in re.finditer(r"\\begin\{(matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|cases|array)\}(?:\{[^{}]*\})?", tex):
+        if opening.start() < position:
+            continue
+        closing = tex.find("\\end{" + opening.group(1) + "}", opening.end())
+        if closing < 0:
+            continue
+        out.append(tex[position:opening.start()])
+        out.append(build(_Span(opening.group(1), tex[opening.end():closing])))
+        position = closing + len("\\end{" + opening.group(1) + "}")
+    out.append(tex[position:])
+    return "".join(out)
+
+
+class _Span:
+    """The two groups _matrices' builder reads, like a re.Match."""
+
+    def __init__(self, kind: str, content: str):
+        self._groups = (kind, content)
+
+    def group(self, index: int) -> str:
+        return self._groups[index - 1]
 
 
 _SLOTS: list[str] = []

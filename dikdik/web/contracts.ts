@@ -81,6 +81,7 @@ export interface ChatMessage {
   details?: unknown;   // structured payload (tool result data, check status, etc.)
   state?: string;      // terminal state for system/terminal messages
   testsVerified?: boolean;
+  callId?: string;     // pairs a tool call with its result
 }
 export interface TerminalCommandView {
   id: string;
@@ -245,6 +246,8 @@ export function buildTaskRequest(input: {
   if (policy.requiresExternal && !input.approveExternal) throw new Error("Approve sending code and the objective to the external provider.");
   if (policy.requiresExecution && !input.approveExecution) throw new Error("Approve running commands on this computer before starting this task.");
   const browsing = input.mode === "agent" && input.approveBrowser === true;
+  // A chat with commands switched on runs them in its own folder, asking before each one.
+  const chatCommands = input.mode === "chat" && input.verification === "local" && input.approveExecution;
   if (browsing && !input.approveExecution) throw new Error("Approve browser tool execution to use the browser.");
   let edits: Edit[] = [];
   if (policy.showEdits) {
@@ -259,8 +262,8 @@ export function buildTaskRequest(input: {
   }
   return {
     objective: input.objective, mode: input.mode, edits,
-    verification: policy.verification,
-    approve_execution: (policy.requiresExecution || browsing) && input.approveExecution,
+    verification: chatCommands ? "local" : policy.verification,
+    approve_execution: chatCommands || ((policy.requiresExecution || browsing) && input.approveExecution),
     approve_external: policy.requiresExternal && input.approveExternal,
     ...(browsing ? { approve_browser: true } : {}),
     ...(["agent", "plan"].includes(input.mode) && input.agentProfile ? { agent_profile: input.agentProfile } : {}),
@@ -269,6 +272,7 @@ export function buildTaskRequest(input: {
     ...(input.mode === "agent" && input.approveSecrets && input.approveExecution && (policy.requiresExecution || browsing) ? { approve_secrets: true } : {}),
     ...(input.goalMaxTurns ? goalTurns(input.mode, input.goalMaxTurns) : {}),
     ...(input.confirmation && input.mode === "agent" ? { confirmation: input.confirmation } : {}),
+    ...(chatCommands ? { confirmation: "ask" as const } : {}),
   };
 }
 function goalTurns(mode: Mode, turns: number): { goal_max_turns: number } {
@@ -494,6 +498,21 @@ export function openConfirmations(events: TaskEvent[]): string[] {
   }
   return [...open];
 }
+/** Clarifying questions still waiting for an answer. */
+export function openQuestions(events: TaskEvent[]): string[] {
+  const open = new Set<string>();
+  for (const event of events) {
+    const id = textOf(event.data?.id, 200);
+    if (event.kind === "question_requested" && id) open.add(id);
+    else if (event.kind === "question_answered" && id) open.delete(id);
+    else if (isTerminal(event.kind)) open.clear();
+  }
+  return [...open];
+}
+/** The body for POST /api/tasks/{id}/question. A secret answer is sent as typed and sealed on the server. */
+export function questionAnswer(id: string, text: string, secret: boolean, sensitive: boolean): { id: string; answer: string; secret?: true } {
+  return secret || sensitive ? { id, answer: text, secret: true } : { id, answer: text.trim() };
+}
 export function attachmentList(value: unknown): AttachmentMeta[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap(item => {
@@ -548,10 +567,10 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       const name = textOf(d.name, 120) || "tool";
       if (d.phase === "start") {
         const args = d.arguments;
-        return [{ ...base, role: "tool", kind: "agent_tool_call", title: `Tool call: ${name}`, details: typeof args === "object" && args !== null ? args : undefined }];
+        return [{ ...base, role: "tool", kind: "agent_tool_call", title: `Tool call: ${name}`, details: typeof args === "object" && args !== null ? args : undefined, ...(textOf(d.id, 200) ? { callId: textOf(d.id, 200) } : {}) }];
       }
       if (d.phase === "end") {
-        return [{ ...base, role: "tool", kind: "agent_tool_result", title: `Tool result: ${name}`, body: observationText(name, d.observation), ...(name === "web_search" || name === "web_fetch" ? { details: d.observation } : {}), ...(d.failed === true ? { state: "tool_failed" } : {}) }];
+        return [{ ...base, role: "tool", kind: "agent_tool_result", title: `Tool result: ${name}`, body: observationText(name, d.observation), ...(name === "web_search" || name === "web_fetch" ? { details: d.observation } : {}), ...(d.failed === true ? { state: "tool_failed" } : {}), ...(textOf(d.id, 200) ? { callId: textOf(d.id, 200) } : {}) }];
       }
       return [];
     }
@@ -571,7 +590,7 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
     case "agent_started":
       return [{ ...base, role: "assistant", title: "Started tool-using agent", details: d }];
     case "agent_recovery":
-      return [{ ...base, role: "tool", title: "Adjusting approach", body: textOf(d.reason), details: d }];
+      return [{ ...base, role: "system", title: "Adjusting approach", body: textOf(d.reason), details: d }];
     case "agent_context_compacted":
       return [{ ...base, role: "system", title: "Working context shortened",
         body: d.compaction_version === 2
@@ -675,6 +694,17 @@ export function eventToMessages(event: TaskEvent, objective: string): ChatMessag
       return [{ ...base, role: "system", title: "Pausing after this step" }];
     case "forked":
       return [{ ...base, role: "system", title: "Forked from another conversation", details: { from_task: textOf(d.from_task, 64), from_seq: numOrUndef(d.from_seq) } }];
+    case "question_requested": {
+      const choices = Array.isArray(d.choices) ? d.choices.filter((c): c is string => typeof c === "string").map(c => c.slice(0, 200)).slice(0, 10) : [];
+      const sensitive = d.sensitive === true;
+      return [{ ...base, role: "system", title: sensitive ? "The assistant needs a secret value" : "The assistant has a question",
+        body: textOf(d.question, 2000), details: { id: textOf(d.id, 64), choices: sensitive ? [] : choices, sensitive, name: textOf(d.name, 64) } }];
+    }
+    case "question_answered": {
+      const sealed = Array.isArray(d.secrets) ? d.secrets.filter((n): n is string => typeof n === "string").map(n => n.slice(0, 64)) : [];
+      return [{ ...base, role: "system", title: sealed.length ? `Answered · sealed ${sealed.join(", ")}` : "Answered",
+        body: textOf(d.answer, 2000), details: { id: textOf(d.id, 64), secrets: sealed } }];
+    }
     case "secret_requested":
       return [{ ...base, role: "system", title: "The agent needs a secret", body: textOf(d.reason, 300), details: { id: textOf(d.id, 64), name: textOf(d.name, 64) } }];
     case "secret_answered":
@@ -921,11 +951,38 @@ export function browserView(events: TaskEvent[]): BrowserView {
   return view;
 }
 
+const CODE_LANGUAGES: Record<string, [string, string]> = {
+  python: ["python", "Python"], py: ["python", "Python"], python3: ["python", "Python"],
+  javascript: ["javascript", "JavaScript"], js: ["javascript", "JavaScript"], node: ["javascript", "JavaScript"],
+  typescript: ["typescript", "TypeScript"], ts: ["typescript", "TypeScript"],
+  bash: ["bash", "Bash"], sh: ["bash", "Bash"], shell: ["bash", "Bash"],
+  powershell: ["powershell", "PowerShell"], pwsh: ["powershell", "PowerShell"], ps1: ["powershell", "PowerShell"],
+  ruby: ["ruby", "Ruby"], rb: ["ruby", "Ruby"], php: ["php", "PHP"], perl: ["perl", "Perl"], pl: ["perl", "Perl"],
+  lua: ["lua", "Lua"], r: ["r", "R"], rscript: ["r", "R"], julia: ["julia", "Julia"], jl: ["julia", "Julia"],
+  java: ["java", "Java"], go: ["go", "Go"], golang: ["go", "Go"], rust: ["rust", "Rust"], rs: ["rust", "Rust"],
+  c: ["c", "C"], cpp: ["cpp", "C++"], "c++": ["cpp", "C++"], csharp: ["csharp", "C#"], "c#": ["csharp", "C#"],
+  cs: ["csharp", "C#"], dotnet: ["csharp", "C#"],
+};
+
+/** Tools that run a program the agent wrote: run_code, and run_python from earlier conversations. */
+export function isCodeTool(tool: string): boolean { return tool === "run_code" || tool === "run_python"; }
+
+/** A run_code call's language as a highlighter id and a readable name; run_python is Python. */
+export function codeLanguage(tool: string, args: unknown): { id: string; label: string } {
+  if (tool === "run_python") return { id: "python", label: "Python" };
+  const raw = typeof args === "object" && args !== null ? (args as Record<string, unknown>).language : undefined;
+  const key = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  const known = CODE_LANGUAGES[key];
+  if (known) return { id: known[0], label: known[1] };
+  const shown = /^[a-z0-9+#.-]{1,20}$/.test(key) ? key : "";
+  return { id: "", label: shown || "code" };
+}
+
 /** Readable text for a tool observation; falls back to JSON for unknown shapes. */
 export function observationText(tool: string, observation: unknown): string {
   if (typeof observation !== "object" || observation === null) return textOf(observation, 8000);
   const o = observation as Record<string, unknown>;
-  if (typeof o.error === "string" && tool !== "run_command") return `Error: ${textOf(o.error, 2000)}`;
+  if (typeof o.error === "string" && tool !== "run_command" && !isCodeTool(tool)) return `Error: ${textOf(o.error, 2000)}`;
   if (o.truncated === true && typeof o.preview === "string") return textOf(o.preview, 8000) + "\n…(truncated)";
   const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
   switch (tool) {
@@ -957,9 +1014,15 @@ export function observationText(tool: string, observation: unknown): string {
         return `${String(c.kind)}: ${String(c.status)}${output}`;
       }).join("\n\n") || textOf(JSON.stringify(o, null, 2), 8000);
     }
+    case "run_code":
+    case "run_python":
     case "run_command": {
       if (o.status === undefined) return `Error: ${textOf(o.error, 2000)}`;  // rejected before it ran
-      const lines = [`exit ${o.exit_code === null || o.exit_code === undefined ? "–" : String(o.exit_code)} · ${String(o.status)}`];
+      const head = [`exit ${o.exit_code === null || o.exit_code === undefined ? "–" : String(o.exit_code)}`, String(o.status)];
+      if (isCodeTool(tool)) head.push(codeLanguage(tool, o).label);
+      if (o.phase === "build") head.push("build failed");
+      if (typeof o.tool_calls === "number" && o.tool_calls > 0) head.push(`${o.tool_calls} tool call${o.tool_calls === 1 ? "" : "s"}`);
+      const lines = [head.join(" · ")];
       const changed = strings(o.changed_files), rejected = strings(o.rejected_changes);
       if (changed.length) lines.push(`Kept changes: ${changed.join(", ")}`);
       if (rejected.length) lines.push(`Rejected changes: ${rejected.join(", ")}`);
@@ -1788,4 +1851,42 @@ export function resultStatus(state: string, result?: TaskResult | null): string 
   return isTerminal(state)
     ? "Task stopped without a result. Inspect the persisted events above."
     : "Work is running. Events are persisted backend activity.";
+}
+
+// --- desktop self-update ----------------------------------------------------
+export interface UpdateInfo {
+  current: string; latest: string; available: boolean; url?: string; notes?: string; install?: string;
+  can_install?: boolean; pip_command?: string; asset?: { size?: number } | null; error?: string;
+}
+export interface UpdateStatus {
+  state: string; done?: number; total?: number; latest?: string; error?: string; cancelled?: boolean;
+  previous?: { ok: boolean; from: string; to: string; url: string; detail?: string };
+}
+export type UpdateAction = "start" | "confirm" | "copy" | "open" | "retry" | "cancel" | "none";
+export interface SidebarUpdate {
+  hidden: boolean; label: string; title: string; tone: "ready" | "busy" | "failed";
+  progress: number | null; action: UpdateAction; prompt: string;
+}
+
+/** What the sidebar's update button shows and does: one click installs, closes and reopens Dikdik. */
+export function sidebarUpdate(info: UpdateInfo | null, status: UpdateStatus, running: number, confirming: boolean): SidebarUpdate {
+  const latest = status.latest || info?.latest || "";
+  const base = { hidden: false, progress: null, prompt: "" } as const;
+  switch (status.state) {
+    case "downloading": {
+      const percent = status.total ? Math.min(100, Math.round((status.done ?? 0) * 100 / status.total)) : 0;
+      return { ...base, label: `Updating ${percent}%`, title: `Downloading Dikdik ${latest}. Click to cancel.`, tone: "busy", progress: percent, action: "cancel" };
+    }
+    case "verifying": return { ...base, label: "Verifying…", title: "Checking the download against the release checksum", tone: "busy", action: "none" };
+    case "installing": return { ...base, label: "Installing…", title: `Installing Dikdik ${latest}; it reopens by itself`, tone: "busy", action: "none" };
+    case "restarting": return { ...base, label: "Restarting…", title: `Reopening in Dikdik ${latest}`, tone: "busy", action: "none" };
+    case "failed": return { ...base, label: "Update failed · Retry", title: `The update didn’t install: ${status.error ?? "unknown error"} Click to try again.`, tone: "failed", action: "retry" };
+  }
+  if (!info?.available) return { ...base, hidden: true, label: "", title: "", tone: "ready", action: "none" };
+  const label = `Update to ${latest}`;
+  if (info.pip_command) return { ...base, label, title: "This copy runs from Python: click to copy the upgrade command", tone: "ready", action: "copy" };
+  if (!info.can_install) return { ...base, label, title: "Open the release page to download it", tone: "ready", action: "open" };
+  const prompt = running ? `${running} running task${running === 1 ? "" : "s"} will pause and can be resumed after Dikdik restarts.` : "";
+  return { ...base, label, title: `Dikdik ${latest} is ready. Click to update; Dikdik closes and reopens in the new version.`,
+           tone: "ready", action: running && !confirming ? "confirm" : "start", prompt: confirming ? prompt : "" };
 }

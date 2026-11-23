@@ -16,7 +16,7 @@ from unittest.mock import Mock, patch
 from dikdik import docextract, documents, stats
 from dikdik.agent import ModelResponse, ToolCall
 from dikdik.control import Attachments, attachment_file_name
-from dikdik.engine import Engine, TERMINAL
+from dikdik.engine import Engine, HOSTED_CONTEXT_LIMIT, TERMINAL
 from dikdik.store import CHAT_SCOPE
 
 
@@ -176,6 +176,18 @@ Figure 4.1: Gender of respondents
         with self.assertRaises(ValueError):
             documents.create(self.root, {"path": "../escape.md", "content": "x"})
 
+    def test_docx_is_built_from_a_markdown_draft_written_in_parts(self):
+        documents.create(self.root, {"path": "draft.md", "content": "# CHAPTER FOUR\n\nResults text.\n"})
+        documents.create(self.root, {"path": "draft.md", "content": "\n# CHAPTER FIVE\n\nDiscussion text.\n", "append": True})
+        saved = documents.create(self.root, {"path": "Chapters.docx", "source": "draft.md"})
+        self.assertEqual(saved["saved"], "Chapters.docx")
+        with zipfile.ZipFile(self.root / "Chapters.docx") as archive:
+            body = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("CHAPTER FIVE", body)
+        self.assertIn("Discussion text.", body)
+        with self.assertRaises(ValueError):
+            documents.create(self.root, {"path": "Bad.docx", "source": "../outside.md"})
+
 
 class AttachmentTests(unittest.TestCase):
     def setUp(self):
@@ -277,6 +289,69 @@ class ChatConversationTests(unittest.TestCase):
         self.assertEqual(result["result"]["turn_changed"], False)  # a chat never changes the project
         self.engine.delete(task)
         self.assertFalse(folder.exists())  # deleting the chat deletes its files too
+
+    def test_chat_gets_the_hosted_working_context_not_the_small_default(self):
+        model = Mock()
+        model.respond.return_value = ModelResponse("Hello!", [])
+        captured = {}
+
+        def adapter(*args, **kwargs):
+            captured.update(kwargs)
+            return model
+        with patch("dikdik.engine.CompatibleAgentModel", side_effect=adapter):
+            chat = self.wait(self.engine.submit({"objective": "Explain p-values", "mode": "chat", "verification": "syntax",
+                                                 "approve_external": True}))
+        started = next(e["data"] for e in chat["events"] if e["kind"] == "agent_model" and e["data"].get("phase") == "start")
+        self.assertEqual(started["context_limit"], HOSTED_CONTEXT_LIMIT)
+        self.assertEqual(captured.get("context_limit"), HOSTED_CONTEXT_LIMIT)
+
+    def test_chat_loads_only_matching_skills_never_coding_or_new_app_ones(self):
+        model = Mock()
+        model.respond.return_value = ModelResponse("Done.", [])
+        objectives = {"I'm attaching my survey data and my research proposal. Analyze the data against my objectives and "
+                      "write the results and discussion chapters as a Word document.": {"data-analysis"},
+                      "hi": set()}
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            for objective, expected in objectives.items():
+                chat = self.wait(self.engine.submit({"objective": objective, "mode": "chat", "verification": "syntax",
+                                                     "approve_external": True}))
+                loaded = {name for e in chat["events"] if e["kind"] == "skills" for name in e["data"]["names"]}
+                with self.subTest(objective=objective[:20]):
+                    self.assertTrue(expected <= loaded, loaded)
+                    self.assertFalse(loaded & {"new-app", "ui-ux-design", "browser-verification", "test-driven-development",
+                                               "release-management", "planning"}, loaded)
+                    self.assertLessEqual(len(loaded), 3, loaded)
+
+    def test_a_greeting_gets_a_lean_first_request_without_coding_notes(self):
+        model = Mock()
+        model.respond.return_value = ModelResponse("Hi! How can I help?", [])
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            chat = self.wait(self.engine.submit({"objective": "hi", "mode": "chat", "verification": "syntax", "approve_external": True}))
+        self.assertEqual(model.respond.call_count, 1)
+        sent = model.respond.call_args_list[0].args[0]
+        notes = json.dumps(sent[1:])
+        self.assertNotIn("run_tests", notes)
+        self.assertLess(len(notes.encode()), 2500, notes[:400])
+        effort = next(e["data"] for e in chat["events"] if e["kind"] == "agent_effort")
+        self.assertEqual(effort["level"], "simple")
+
+    def test_chat_saves_working_notes_and_rejects_oversized_ones(self):
+        turns = iter([ModelResponse("", [ToolCall("1", "save_notes", {"notes": "N=91; objectives 1-4"}),
+                                         ToolCall("2", "save_notes", {"notes": "x" * 8001})]),
+                      ModelResponse("Noted.", [])])
+        seen = []
+
+        def respond(messages, tools):
+            seen.append(messages)
+            return next(turns)
+        model = Mock()
+        model.respond.side_effect = respond
+        with patch("dikdik.engine.CompatibleAgentModel", return_value=model):
+            chat = self.wait(self.engine.submit({"objective": "Analyse", "mode": "chat", "verification": "syntax", "approve_external": True}))
+        self.assertEqual(chat["state"], "completed", chat.get("result"))
+        results = [json.loads(m["content"]) for m in seen[-1] if m.get("role") == "tool"]
+        self.assertEqual(results[0]["characters"], len("N=91; objectives 1-4"))
+        self.assertIn("8000 characters", results[1]["error"])
 
     def test_chats_belong_to_no_project_and_are_listed_from_every_project(self):
         model = Mock()
