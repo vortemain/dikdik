@@ -820,7 +820,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
     if parallel_writer is not None and not read_only:
         tools = tools + [PARALLEL_EDIT_TOOL]
     extra_names = {tool['function']['name'] for tool in extras}
-    requested_verification = not read_only and verification_request(objective)
+    # A chat verifies by running code itself; the project test gate is for workspace changes.
+    requested_verification = not read_only and not conversation and verification_request(objective)
     requested_interaction = interaction_request(objective)
     requested_preview = not read_only and "preview_app" in extra_names and (visual_request(objective) or requested_interaction)
     preview_revision = None
@@ -2007,7 +2008,8 @@ def run_agent(original: dict[str, str], objective: str, model: AgentModel,
                                              "line numbers, and no approval needed. Use them instead of shell commands for reading.")
                         if ran.get("status") == "passed":
                             recovery_checked_candidate = None
-                            result["next_step"] = "If the requested edit is done, call run_tests to record verification, then finish. Shell output alone does not verify completion."
+                            if not conversation:
+                                result["next_step"] = "If the requested edit is done, call run_tests to record verification, then finish. Shell output alone does not verify completion."
                         elif ran.get("status") == "failed":
                             # A missing program, module or toolchain: say exactly what to install on this computer.
                             try:

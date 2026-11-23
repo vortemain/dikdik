@@ -270,6 +270,26 @@ class ContextContinuityTests(unittest.TestCase):
         for messages in model.seen:
             assert_protocol(self, messages)
 
+    def test_a_chat_that_verifies_by_running_code_is_not_blocked_by_project_verification(self):
+        class Model:
+            def __init__(self):
+                self.count, self.seen = 0, []
+
+            def respond(self, messages, tools):
+                self.seen.append(messages)
+                self.count += 1
+                if self.count == 1:
+                    return ModelResponse("", [ToolCall("c1", "run_command", {"command": "node primes.js"})])
+                return ModelResponse("Both programs agree: the sum is 639.", [])
+
+        def shell(files, command, timeout, *_args, **_kwargs):
+            return {"status": "passed", "exit_code": 0, "output": "Sum: 639", "changed": {}}
+        model = Model()
+        result = run_agent({}, "Write and run a program for the first 20 primes, then verify the sum another way", model,
+                           None, lambda *_: None, threading.Event(), shell=shell, conversation=True)
+        self.assertEqual(result.state, "completed", result.error)
+        self.assertNotIn("run_tests", json.dumps(model.seen[-1][-2:]))
+
     def test_full_page_replacement_above_old_32k_limit_is_accepted(self):
         before, after = "old\n" * 6000, "new\n" * 8000
         args = {"path": "Contact.tsx", "before": before, "after": after}
