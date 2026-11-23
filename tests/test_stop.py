@@ -38,7 +38,7 @@ class StopTests(unittest.TestCase):
                     self.wfile.write(b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n')
                     self.wfile.flush()
                 entered.set()
-                self.connection.settimeout(3)
+                self.connection.settimeout(15)  # long enough that a loaded machine cannot time out before the close
                 try:
                     if not self.rfile.read(1):
                         disconnected.set()
@@ -67,9 +67,9 @@ class StopTests(unittest.TestCase):
             self.assertFalse(client.is_alive(), 'Stop waited for the provider timeout')
             self.assertLess(time.monotonic() - start, 1)
             self.assertEqual(results, ['cancelled'])
-            # Only an end-of-stream read sets this (the handler's 3 s read timeout does not), so a longer wait
+            # Only an end-of-stream read sets this (the handler's 15 s read timeout does not), so a longer wait
             # under a loaded test run cannot pass an open socket.
-            self.assertTrue(disconnected.wait(5), 'The cancelled stream socket was left open')
+            self.assertTrue(disconnected.wait(15), 'The cancelled stream socket was left open')
         finally:
             cancel.set()
             client.join(3)

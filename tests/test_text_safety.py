@@ -45,6 +45,13 @@ class MarkdownHelperTests(unittest.TestCase):
         self.assertTrue(documents._separator("| --- | :--: | ---: |"))
         self.assertTrue(documents._separator("---|---"))
         self.assertFalse(documents._separator("| a | b |"))
+        self.assertTrue(documents._separator_start("  | :--- | x"))
+        self.assertFalse(documents._separator_start("| a | b |"))
+        item = documents._list_item("    12. Twelfth point")
+        self.assertEqual((item.group(1), item.group(2), item.group(3)), ("    ", "12.", "Twelfth point"))
+        self.assertEqual(documents._list_item("- ").group(3), "")
+        self.assertIsNone(documents._list_item("-no space"))
+        self.assertIsNone(documents._list_item("plain text"))
 
 
 class SlowInputTests(unittest.TestCase):
@@ -65,6 +72,9 @@ class SlowInputTests(unittest.TestCase):
             "![" * 5000,                                   # image
             "\\(" * 8000,                                  # inline maths opener without a closer
             "[" + "[\\" * 8000,                            # link
+            "[" * 20000,                                   # many link openers
+            "*\t!" + "\t\xa0" * 20000,                     # list item (CodeQL's example)
+            "|" + "\t" * 20000,                            # separator start
         ])
         with tempfile.TemporaryDirectory() as folder:
             self.fast(lambda: documents.build_docx(markdown, root=Path(folder)), limit=5.0)

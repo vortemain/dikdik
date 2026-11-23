@@ -259,8 +259,8 @@ NS = {
 }
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 EMU_PER_INCH = 914400
-_INLINE = re.compile(r"(\$\$[^$\n]+?\$\$|\\\((?:(?!\\[()]).)+\\\)|(?<![\\$\w])\$(?=[^\s$\d.,])(?:[^$\n\\]|\\.)+?(?<=[^\s\\])\$(?![\w$])|(?<![\\$\w])\$(?=\d)(?:[^$\n\\]|\\.)*?[\\^_{}=+*/<>|](?:[^$\n\\]|\\.)*?(?<=[^\s\\])\$(?![\w$])|\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|__[^_]+__|(?<![\w*])\*[^*\s][^*]*\*(?!\w)|(?<![\w_])_[^_\s][^_]*_(?![\w])"
-                     r"|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|\^[^^\s]+\^|~[^~\s]+~)")
+_INLINE = re.compile(r"(\$\$[^$\n]+?\$\$|\\\((?:[^\\]|\\[^()])+\\\)|(?<![\\$\w])\$(?=[^\s$\d.,])(?:[^$\n\\]|\\.)+?(?<=[^\s\\])\$(?![\w$])|(?<![\\$\w])\$(?=\d)(?:[^$\n\\]|\\.)*?[\\^_{}=+*/<>|](?:[^$\n\\]|\\.)*?(?<=[^\s\\])\$(?![\w$])|\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|__[^_]+__|(?<![\w*])\*[^*\s][^*]*\*(?!\w)|(?<![\w_])_[^_\s][^_]*_(?![\w])"
+                     r"|`[^`]+`|\[[^\[\]]+\]\([^)\s]+\)|\^[^^\s]+\^|~[^~\s]+~)")
 
 
 def _link(piece: str):
@@ -285,8 +285,10 @@ def _separator(line: str) -> bool:
 
 
 class _Heading:
-    def __init__(self, level: str, text: str):
-        self._groups = (level, text)
+    """A small stand-in for re.Match: the groups a caller reads, by number."""
+
+    def __init__(self, *groups: str):
+        self._groups = groups
 
     def group(self, index: int) -> str:
         return self._groups[index - 1]
@@ -300,6 +302,25 @@ def _heading(stripped: str):
     text = m.group(2).rstrip().rstrip("#").rstrip()
     return _Heading(m.group(1), text) if text else None
 
+
+def _separator_start(line: str) -> bool:
+    """The line after a table header begins like a separator: optional |, spaces, optional :, then --."""
+    rest = line.lstrip()
+    if rest.startswith("|"):
+        rest = rest[1:].lstrip(" \t")
+    if rest.startswith(":"):
+        rest = rest[1:]
+    return rest.startswith("--")
+
+
+def _list_item(line: str):
+    """A bullet or numbered list item as a match-like object: group(1) indent, group(2) marker, group(3) text."""
+    rest = line.lstrip(" \t")
+    indent = line[:len(line) - len(rest)]
+    marker = re.match(r"[-*+•]|\d+[.)]|[a-z][.)]", rest)
+    if not marker or not rest[marker.end():marker.end() + 1] in (" ", "\t"):
+        return None
+    return _Heading(indent, marker.group(0), rest[marker.end():].lstrip(" \t"))
 
 def _image(stripped: str):
     """![alt](target "title") as a match-like object: group(1) alt, group(2) target."""
@@ -629,7 +650,7 @@ def _render_markdown(doc: _Doc, markdown: str, chapter_breaks: bool) -> None:
             first_heading = False
             index += 1
             continue
-        if stripped.startswith("|") and index + 1 < len(lines) and re.match(r"\|?[ \t]*:?-{2,}", lines[index + 1].lstrip()):
+        if stripped.startswith("|") and index + 1 < len(lines) and _separator_start(lines[index + 1]):
             flush()
             list_state.clear()
             block = []
@@ -647,7 +668,7 @@ def _render_markdown(doc: _Doc, markdown: str, chapter_breaks: bool) -> None:
             doc.image(image.group(2), image.group(1))
             index += 1
             continue
-        item = re.match(r"^([ \t]*)([-*+•]|\d+[.)]|[a-z][.)])[ \t]+(\S.*|)$", line)
+        item = _list_item(line)
         if item and (not re.match(r"^\s*[a-z][.)]", line) or list_state):
             flush()
             indent = len(item.group(1).replace("\t", "    "))
