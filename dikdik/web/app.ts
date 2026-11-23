@@ -22,6 +22,8 @@ import { ComposerSize, composerMaximum } from './composer-size';
 import { TerminalRenderer } from './terminal-render';
 import { ToolSession } from './tool-session';
 import { runningTerminalCommands } from './contracts';
+import { sidebarUpdate } from "./contracts";
+import type { UpdateInfo, UpdateStatus } from "./contracts";
 import { frameBatch } from './render-scheduler';
 import { make, icon, setClass, storageGet, storageSet, wide, clock, copyText, copyButton } from './dom';
 import { codeBlock, diffLines, tokenNodes, languageFor, looksLikeDiff, safePageLink } from './code-render';
@@ -5153,90 +5155,39 @@ async function loadGitAccounts(): Promise<void> {
 Object.assign(refreshPanels, { platform: loadPlatform, acp: loadAcp, apps: loadApps, git: loadGitAccounts });
 
 // --- desktop self-update --------------------------------------------------
-interface UpdateInfo {
-  current: string; latest: string; available: boolean; url?: string; notes?: string; install?: string;
-  can_install?: boolean; pip_command?: string; asset?: { size?: number } | null; error?: string;
-}
-interface UpdateStatus {
-  state: string; done?: number; total?: number; latest?: string; error?: string; cancelled?: boolean;
-  previous?: { ok: boolean; from: string; to: string; url: string };
-}
+// The sidebar button is the whole flow: one click downloads and verifies the release, then Dikdik
+// closes, installs it and reopens in the new version (sidebarUpdate decides what it shows).
 const UPDATE_BUSY = new Set(["downloading", "verifying", "installing", "restarting"]);
-// What happens once the download is verified, in each platform's own terms.
-const UPDATE_INSTALL_NOTE: Record<string, string> = {
-  windows: "Dikdik will close, install the update silently and reopen in a few seconds.",
-  macos: "Dikdik will close, replace itself and reopen.",
-  linux: "Enter your password in the system dialog; Dikdik then reopens.",
-};
 let updateInfo: UpdateInfo | null = null, updateState: UpdateStatus = { state: "idle" }, updateConfirm = false;
 let updatePoll: ReturnType<typeof setTimeout> | null = null, updateChecking = false;
 const updateEl = (id: string): HTMLElement | null => document.getElementById(id);
-const megabytes = (bytes = 0) => `${(bytes / 1048576).toFixed(bytes >= 104857600 ? 0 : 1)} MB`;
 function runningTaskCount(): number { return lastTasks.filter(task => task.state === "running" || task.state === "queued").length; }
 
 function renderUpdate(): void {
-  const info = updateInfo, state = updateState.state, busy = UPDATE_BUSY.has(state);
-  const action = updateEl("update-action") as HTMLButtonElement | null, detail = updateEl("update-detail");
-  const version = updateEl("update-version"); if (version) version.textContent = info?.current ?? updateState.latest ?? "";
-  const progress = updateEl("update-progress"), bar = updateEl("update-bar") as HTMLProgressElement | null;
-  const cancel = updateEl("update-cancel"), indicator = updateEl("sidebar-update") as HTMLButtonElement | null;
-  const latest = updateState.latest || info?.latest || "";
-  const percent = updateState.total ? Math.min(100, Math.round((updateState.done ?? 0) * 100 / updateState.total)) : 0;
-  if (progress) progress.hidden = state !== "downloading" && state !== "verifying";
-  if (bar) { if (state === "verifying") bar.removeAttribute?.("value"); else bar.value = percent; }
-  const text = updateEl("update-progress-text");
-  if (text) text.textContent = state === "verifying" ? "Checking the download…" : updateState.total ? `${megabytes(updateState.done)} of ${megabytes(updateState.total)} · ${percent}%` : megabytes(updateState.done);
-  if (cancel) cancel.hidden = state !== "downloading";
-  const pip = updateEl("update-pip");
-  if (pip) pip.hidden = !(info?.available && info.pip_command);
-  const pipCommand = updateEl("update-pip-command"); if (pipCommand) pipCommand.textContent = info?.pip_command ?? "";
-  const notesBox = updateEl("update-notes-box") as HTMLDetailsElement | null;
-  if (notesBox) notesBox.hidden = !(info?.available && (info.notes || info.url));
-  const notesTitle = updateEl("update-notes-title"); if (notesTitle) notesTitle.textContent = `What’s new in ${latest}`;
-  const notesBody = updateEl("update-notes-body");
-  if (notesBody && info?.notes && notesBody.dataset.version !== latest) { notesBody.dataset.version = latest; notesBody.replaceChildren(richText(info.notes)); }
-  const notesLink = updateEl("update-notes") as HTMLAnchorElement | null;
-  if (notesLink) { notesLink.hidden = !info?.url; if (info?.url) notesLink.href = info.url; }
-  if (indicator) {
-    indicator.hidden = !(info?.available || busy);
-    const label = indicator.querySelector?.("span:not(.update-dot)");
-    if (label) label.textContent = state === "downloading" ? `Updating ${percent}%` : busy ? "Updating…" : "Update";
-    indicator.title = busy ? `Installing Dikdik ${latest}` : `Dikdik ${latest} is available — click to update`;
+  const version = updateEl("update-version");
+  if (version) version.textContent = updateInfo?.current || version.textContent || "—";
+  const view = sidebarUpdate(updateInfo, updateState, runningTaskCount(), updateConfirm);
+  const button = updateEl("sidebar-update") as HTMLButtonElement | null;
+  if (button) {
+    button.hidden = view.hidden;
+    button.dataset.tone = view.tone;
+    button.disabled = view.action === "none";
+    button.title = view.title;
+    button.setAttribute?.("aria-label", view.title);
+    const label = button.querySelector?.(".update-label"); if (label) label.textContent = view.label;
+    const fill = button.querySelector?.(".update-fill") as HTMLElement | null;
+    button.classList?.toggle("has-progress", view.progress !== null || view.tone === "busy");
+    if (fill) fill.style.width = view.progress === null ? "" : `${view.progress}%`;
   }
-  if (!action || !detail) return;
-  action.hidden = state === "downloading" || state === "verifying";
-  action.disabled = busy || updateChecking;
-  if (state === "installing" || state === "restarting") {
-    action.textContent = state === "restarting" ? "Restarting…" : "Installing…";
-    detail.textContent = state === "restarting" ? `Restarting into Dikdik ${latest}…` : UPDATE_INSTALL_NOTE[info?.install ?? ""] ?? "Installing…";
-  } else if (state === "downloading" || state === "verifying") {
-    detail.textContent = `Downloading Dikdik ${latest}. You can keep working.`;
-  } else if (state === "failed") {
-    action.textContent = "Try again";
-    detail.textContent = `The update didn’t install: ${updateState.error ?? "unknown error"} You’re still on ${info?.current ?? "this version"}.`;
-  } else if (updateChecking) {
-    action.textContent = "Checking…"; detail.textContent = "Looking for a newer release…";
-  } else if (!info) {
-    action.textContent = "Check for updates";
-  } else if (info.error) {
-    action.textContent = "Check again"; detail.textContent = "Couldn’t reach GitHub to check for updates.";
-  } else if (!info.available) {
-    action.textContent = "Check for updates"; detail.textContent = "You’re on the latest release.";
-  } else if (info.pip_command) {
-    action.textContent = "Copy upgrade command"; detail.textContent = `Dikdik ${latest} is available. This copy runs from Python; upgrade it with pip, then restart Dikdik.`;
-  } else if (!info.can_install) {
-    action.textContent = "Open download page"; detail.textContent = `Dikdik ${latest} is available. Download it from the release page.`;
-  } else {
-    const running = runningTaskCount();
-    const size = info.asset?.size ? ` (${megabytes(info.asset.size)})` : "";
-    action.textContent = updateConfirm ? `Restart and pause ${running} task${running === 1 ? "" : "s"}` : `Install ${latest}`;
-    detail.textContent = updateConfirm ? `${running} running task${running === 1 ? "" : "s"} will pause and can be resumed after the restart.`
-      : `Dikdik ${latest}${size} is ready to download. ${UPDATE_INSTALL_NOTE[info.install ?? ""] ?? ""}`;
+  const pop = updateEl("update-pop");
+  if (pop) {
+    pop.hidden = !view.prompt;
+    const text = updateEl("update-pop-text"); if (text) text.textContent = view.prompt;
   }
 }
 async function loadUpdateCheck(force = false): Promise<void> {
   if (updateChecking || UPDATE_BUSY.has(updateState.state)) return;
-  updateChecking = true; renderUpdate();
+  updateChecking = true;
   try { updateInfo = await api<UpdateInfo>(`/api/desktop/update/check${force ? "?force=1" : ""}`); }
   catch { updateInfo = { current: updateInfo?.current ?? "", latest: "", available: false, error: "unreachable" }; }
   finally { updateChecking = false; }
@@ -5246,14 +5197,14 @@ async function loadUpdateCheck(force = false): Promise<void> {
 async function pollUpdate(): Promise<void> {
   if (updatePoll !== null) { clearTimeout(updatePoll); updatePoll = null; }
   try { updateState = await api<UpdateStatus>("/api/desktop/update/status"); }
-  catch { if (updateState.state === "restarting") return; }  // the old window is closing
+  catch { if (updateState.state === "restarting" || updateState.state === "installing") return; }  // the old window is closing
   renderUpdate();
   if (UPDATE_BUSY.has(updateState.state)) updatePoll = setTimeout(() => void pollUpdate(), updateState.state === "downloading" ? 400 : 1000);
 }
 async function startUpdate(): Promise<void> {
-  if (!updateInfo?.can_install) return;
-  if (runningTaskCount() && !updateConfirm) { updateConfirm = true; renderUpdate(); return; }
   updateConfirm = false;
+  updateState = { state: "downloading", latest: updateInfo?.latest ?? "", done: 0, total: updateInfo?.asset?.size ?? 0 };
+  renderUpdate();
   try {
     const reply = await api<UpdateStatus & { ok: boolean }>("/api/desktop/update/apply", {});
     if (!reply.ok) throw new Error(reply.error || "The update could not start.");
@@ -5268,19 +5219,22 @@ async function startUpdate(): Promise<void> {
 async function reportPreviousUpdate(): Promise<void> {
   const state = await api<UpdateStatus>("/api/desktop/update/status").catch(() => null);
   if (!state?.previous) return;
-  const { ok, from, to } = state.previous;
-  message(ok ? `Dikdik updated to ${to}. Open Settings → General for what’s new.` : `The update to ${to} didn’t finish; you’re still on ${from}. Try again from Settings.`, !ok);
+  const { ok, from, to, detail } = state.previous;
+  message(ok ? `Dikdik updated to ${to}.` : `The update to ${to} didn’t finish${detail ? ` (${detail})` : ""}; you’re still on ${from}. Use the Update button in the sidebar to try again.`, !ok);
   void request("/api/desktop/update/dismiss", "POST", {}).catch(() => undefined);
 }
-updateEl("update-action")?.addEventListener("click", () => {
-  if (updateState.state === "failed") { updateState = { state: "idle" }; void loadUpdateCheck(true); return; }
-  if (updateInfo?.available && updateInfo.pip_command) { void copyText(updateInfo.pip_command, updateEl("update-pip-copy") as HTMLButtonElement); return; }
-  if (updateInfo?.available && !updateInfo.can_install && updateInfo.url) { globalThis.open?.(updateInfo.url, "_blank", "noopener"); return; }
-  if (updateInfo?.can_install) void startUpdate(); else void loadUpdateCheck(true);
+updateEl("sidebar-update")?.addEventListener("click", () => {
+  const view = sidebarUpdate(updateInfo, updateState, runningTaskCount(), updateConfirm);
+  if (view.action === "start") void startUpdate();
+  else if (view.action === "confirm") { updateConfirm = true; renderUpdate(); (updateEl("update-pop-go") as HTMLButtonElement | null)?.focus?.(); }
+  else if (view.action === "copy" && updateInfo?.pip_command) { void copyText(updateInfo.pip_command, updateEl("sidebar-update") as HTMLButtonElement); message("Copied the pip upgrade command. Run it, then restart Dikdik."); }
+  else if (view.action === "open" && updateInfo?.url) globalThis.open?.(updateInfo.url, "_blank", "noopener");
+  else if (view.action === "retry") { updateState = { state: "idle" }; void loadUpdateCheck(true).then(() => { if (updateInfo?.can_install) void startUpdate(); }); }
+  else if (view.action === "cancel") void request<UpdateStatus>("/api/desktop/update/cancel", "POST", {}).then(state => { updateState = state; renderUpdate(); }).catch(() => undefined);
 });
-updateEl("update-cancel")?.addEventListener("click", () => { void request<UpdateStatus>("/api/desktop/update/cancel", "POST", {}).then(state => { updateState = state; renderUpdate(); }).catch(() => undefined); });
-updateEl("update-pip-copy")?.addEventListener("click", () => { if (updateInfo?.pip_command) void copyText(updateInfo.pip_command, updateEl("update-pip-copy") as HTMLButtonElement); });
-updateEl("sidebar-update")?.addEventListener("click", () => { openSettings("general", true); updateEl("update-row")?.scrollIntoView?.({ block: "center" }); });
+updateEl("update-pop-go")?.addEventListener("click", () => void startUpdate());
+updateEl("update-pop-later")?.addEventListener("click", () => { updateConfirm = false; renderUpdate(); });
+document.addEventListener?.("keydown", event => { if (event.key === "Escape" && updateConfirm) { updateConfirm = false; renderUpdate(); } });
 void reportPreviousUpdate();
 void pollUpdate();
 // Look again every six hours while Dikdik stays open.

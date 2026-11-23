@@ -204,14 +204,22 @@ def previous_result() -> dict | None:
         return None
     target = str(pending.get("to") or "")
     ok = bool(target) and not is_newer(target, __version__)
-    return {"ok": ok, "from": pending.get("from", ""), "to": target, "url": pending.get("url", "")}
+    result = {"ok": ok, "from": pending.get("from", ""), "to": target, "url": pending.get("url", "")}
+    try:
+        code = (update_dir() / "installer-exit.txt").read_text(encoding="ascii").strip()
+    except (OSError, ValueError):
+        code = ""
+    if not ok and code and code != "0":
+        result["detail"] = f"the installer stopped with exit code {code}"
+    return result
 
 
 def dismiss_previous() -> None:
-    try:
-        (update_dir() / "pending.json").unlink()
-    except OSError:
-        pass
+    for name in ("pending.json", "installer-exit.txt"):
+        try:
+            (update_dir() / name).unlink()
+        except OSError:
+            pass
 
 
 def _download(url: str, dest: Path, timeout: int = TIMEOUT, on_progress: Callable[[int, int], None] | None = None) -> None:
@@ -267,12 +275,16 @@ def _sh(value) -> str:
     return "'" + str(value).replace("'", "'\\''") + "'"
 
 
-def windows_helper(installer: Path, exe: Path, pid: int) -> list[str]:
-    """PowerShell that waits for Dikdik to exit, installs silently, then opens the installed Dikdik.
+def windows_helper(installer: Path, exe: Path, pid: int, record: Path | None = None) -> list[str]:
+    """PowerShell that waits for Dikdik to exit, installs silently, records the installer's exit code
+    (so the next launch can say why an update did not take), then opens the installed Dikdik.
     The Inno Setup flags: no wizard or prompts, never reboot, close anything still holding files."""
-    script = (f"Wait-Process -Id {pid} -Timeout 60 -ErrorAction SilentlyContinue; "
-              f"Start-Process -FilePath {_ps(installer)} -ArgumentList "
-              "'/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/SP-' -Wait; "
+    install = (f"Start-Process -FilePath {_ps(installer)} -ArgumentList "
+               "'/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS','/SP-' -Wait")
+    if record is not None:
+        install = (f"$p = {install} -PassThru; "
+                   f"Set-Content -LiteralPath {_ps(record)} -Value $p.ExitCode -Encoding ascii -ErrorAction SilentlyContinue")
+    script = (f"Wait-Process -Id {pid} -Timeout 60 -ErrorAction SilentlyContinue; {install}; "
               f"Start-Process -FilePath {_ps(exe)}")
     return ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
             "-Command", script]
@@ -312,7 +324,9 @@ def hand_off(installer: Path) -> None:
     pid = os.getpid()
     kind = install_kind()
     if kind == "windows":
-        _detached(windows_helper(installer, Path(sys.executable), pid))
+        record = update_dir() / "installer-exit.txt"
+        record.unlink(missing_ok=True)
+        _detached(windows_helper(installer, Path(sys.executable), pid, record))
     elif kind == "macos":
         bundle = macos_bundle()
         if not os.access(str(bundle.parent), os.W_OK):

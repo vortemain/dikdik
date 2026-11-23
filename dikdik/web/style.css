@@ -1614,29 +1614,37 @@ body.run-simple .classic-only { display: none !important; }
   .mcp-install-fields > label { grid-template-columns: minmax(0, 1fr); gap: 6px; }
 }
 
-/* --- in-app update notice (beside Settings in the sidebar) --- */
-.foot-actions { display: flex; gap: 2px; align-items: stretch; }
-.update-indicator { position: relative; color: var(--accent); font-weight: 500; }
-.update-indicator:hover { background: var(--accent-soft, rgba(31, 61, 49, 0.12)); }
-.update-indicator .update-dot { position: absolute; top: 9px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 var(--accent); animation: update-pulse 1.6s ease-out infinite; }
-@keyframes update-pulse { 0% { box-shadow: 0 0 0 0 rgba(31, 61, 49, 0.5); } 70% { box-shadow: 0 0 0 6px rgba(31, 61, 49, 0); } 100% { box-shadow: 0 0 0 0 rgba(31, 61, 49, 0); } }
-@media (prefers-reduced-motion: reduce) { .update-indicator .update-dot { animation: none; } }
-/* Settings → General → Updates: status, progress, notes and the platform's next step. */
-.update-row { align-items: flex-start; }
-.update-main { min-width: 0; flex: 1; display: grid; gap: 8px; }
-.update-main p { overflow-wrap: anywhere; }
-.update-actions { display: flex; gap: 6px; flex: 0 0 auto; align-items: center; }
-.update-progress { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.update-progress progress { flex: 1; max-width: 320px; height: 6px; appearance: none; border: 0; border-radius: 999px; overflow: hidden; background: var(--surface-3); }
-.update-progress progress::-webkit-progress-bar { background: var(--surface-3); }
-.update-progress progress::-webkit-progress-value { background: var(--accent); border-radius: 999px; transition: width .3s ease; }
-.update-progress progress::-moz-progress-bar { background: var(--accent); }
-.update-pip { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.update-pip code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 12px var(--mono); padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
-.update-notes summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
-.update-notes-body { max-height: 240px; overflow-y: auto; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
-.update-notes a { font-size: 12.5px; }
-.update-row [hidden] { display: none; }  /* outranks the display rules above */
+/* --- one-click update (beside Settings in the sidebar) --- */
+.foot-actions { display: flex; flex-wrap: wrap; gap: 4px; align-items: stretch; }
+.sidebar-foot { position: relative; }
+/* Its own full-width row above Settings, so the version and progress are never cut off. */
+.update-indicator { flex: 1 1 100%; order: -1; padding-right: 28px !important; position: relative; overflow: hidden; color: var(--accent); font-weight: 600;
+  background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+  transition: background .2s ease, color .2s ease; }
+.update-indicator:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 16%, var(--accent-soft)); }
+.update-indicator:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.update-indicator .update-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.update-indicator .update-dot { position: absolute; top: 50%; right: 12px; margin-top: -3.5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  animation: update-pulse 1.8s ease-out infinite; }
+.update-indicator[data-tone="busy"] .update-dot, .update-indicator[data-tone="failed"] .update-dot { display: none; }
+.update-indicator[data-tone="busy"] { cursor: progress; }
+.update-indicator[data-tone="busy"]:disabled { opacity: 1; }
+.update-indicator[data-tone="failed"] { color: var(--danger); background: var(--danger-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 25%, transparent); }
+/* A thin progress line along the bottom edge: the download percentage, or a moving sweep while it verifies and installs. */
+.update-track { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: color-mix(in srgb, var(--accent) 14%, transparent); opacity: 0; transition: opacity .2s; }
+.update-indicator.has-progress .update-track { opacity: 1; }
+.update-fill { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 0 3px 3px 0; transition: width .35s ease; }
+.update-indicator[data-tone="busy"] .update-fill:not([style*="width: "]) { width: 35%; animation: update-sweep 1.2s ease-in-out infinite; }
+@keyframes update-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes update-sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) { .update-indicator .update-dot, .update-fill { animation: none !important; } }
+/* Asked once when tasks are running: they pause and resume after the restart. */
+.update-pop { position: absolute; left: 10px; right: 10px; bottom: calc(100% - 2px); z-index: 20; padding: 12px 12px 10px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface, #fff); box-shadow: var(--shadow); font-size: 13px; }
+.update-pop p { margin: 0 0 10px; color: var(--ink-2); line-height: 1.45; }
+.update-pop-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.update-pop[hidden] { display: none; }
 
 /* A file the chat created: download it or show it in its folder. */
 .msg-file { list-style: none; }

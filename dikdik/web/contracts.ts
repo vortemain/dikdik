@@ -1852,3 +1852,41 @@ export function resultStatus(state: string, result?: TaskResult | null): string 
     ? "Task stopped without a result. Inspect the persisted events above."
     : "Work is running. Events are persisted backend activity.";
 }
+
+// --- desktop self-update ----------------------------------------------------
+export interface UpdateInfo {
+  current: string; latest: string; available: boolean; url?: string; notes?: string; install?: string;
+  can_install?: boolean; pip_command?: string; asset?: { size?: number } | null; error?: string;
+}
+export interface UpdateStatus {
+  state: string; done?: number; total?: number; latest?: string; error?: string; cancelled?: boolean;
+  previous?: { ok: boolean; from: string; to: string; url: string; detail?: string };
+}
+export type UpdateAction = "start" | "confirm" | "copy" | "open" | "retry" | "cancel" | "none";
+export interface SidebarUpdate {
+  hidden: boolean; label: string; title: string; tone: "ready" | "busy" | "failed";
+  progress: number | null; action: UpdateAction; prompt: string;
+}
+
+/** What the sidebar's update button shows and does: one click installs, closes and reopens Dikdik. */
+export function sidebarUpdate(info: UpdateInfo | null, status: UpdateStatus, running: number, confirming: boolean): SidebarUpdate {
+  const latest = status.latest || info?.latest || "";
+  const base = { hidden: false, progress: null, prompt: "" } as const;
+  switch (status.state) {
+    case "downloading": {
+      const percent = status.total ? Math.min(100, Math.round((status.done ?? 0) * 100 / status.total)) : 0;
+      return { ...base, label: `Updating ${percent}%`, title: `Downloading Dikdik ${latest}. Click to cancel.`, tone: "busy", progress: percent, action: "cancel" };
+    }
+    case "verifying": return { ...base, label: "Verifying…", title: "Checking the download against the release checksum", tone: "busy", action: "none" };
+    case "installing": return { ...base, label: "Installing…", title: `Installing Dikdik ${latest}; it reopens by itself`, tone: "busy", action: "none" };
+    case "restarting": return { ...base, label: "Restarting…", title: `Reopening in Dikdik ${latest}`, tone: "busy", action: "none" };
+    case "failed": return { ...base, label: "Update failed · Retry", title: `The update didn’t install: ${status.error ?? "unknown error"} Click to try again.`, tone: "failed", action: "retry" };
+  }
+  if (!info?.available) return { ...base, hidden: true, label: "", title: "", tone: "ready", action: "none" };
+  const label = `Update to ${latest}`;
+  if (info.pip_command) return { ...base, label, title: "This copy runs from Python: click to copy the upgrade command", tone: "ready", action: "copy" };
+  if (!info.can_install) return { ...base, label, title: "Open the release page to download it", tone: "ready", action: "open" };
+  const prompt = running ? `${running} running task${running === 1 ? "" : "s"} will pause and can be resumed after Dikdik restarts.` : "";
+  return { ...base, label, title: `Dikdik ${latest} is ready. Click to update; Dikdik closes and reopens in the new version.`,
+           tone: "ready", action: running && !confirming ? "confirm" : "start", prompt: confirming ? prompt : "" };
+}
