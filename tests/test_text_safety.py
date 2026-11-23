@@ -52,6 +52,10 @@ class MarkdownHelperTests(unittest.TestCase):
         self.assertEqual(documents._list_item("- ").group(3), "")
         self.assertIsNone(documents._list_item("-no space"))
         self.assertIsNone(documents._list_item("plain text"))
+        self.assertEqual(documents._list_item("b) second").group(2), "b)")
+        self.assertEqual(documents._list_item("\t* star").group(1), "\t")
+        self.assertIsNone(documents._list_item("12 apples"))
+        self.assertIsNone(documents._list_item("B. capital"))
 
 
 class SlowInputTests(unittest.TestCase):
@@ -75,6 +79,7 @@ class SlowInputTests(unittest.TestCase):
             "[" * 20000,                                   # many link openers
             "*\t!" + "\t\xa0" * 20000,                     # list item (CodeQL's example)
             "|" + "\t" * 20000,                            # separator start
+            "0" * 40000 + "x",                             # list marker digits (CodeQL's example)
         ])
         with tempfile.TemporaryDirectory() as folder:
             self.fast(lambda: documents.build_docx(markdown, root=Path(folder)), limit=5.0)

@@ -317,10 +317,18 @@ def _list_item(line: str):
     """A bullet or numbered list item as a match-like object: group(1) indent, group(2) marker, group(3) text."""
     rest = line.lstrip(" \t")
     indent = line[:len(line) - len(rest)]
-    marker = re.match(r"[-*+•]|\d+[.)]|[a-z][.)]", rest)
-    if not marker or not rest[marker.end():marker.end() + 1] in (" ", "\t"):
+    digits = len(rest) - len(rest.lstrip("0123456789"))
+    if rest[:1] and rest[0] in "-*+•":
+        marker = rest[0]
+    elif digits and rest[digits:digits + 1] in (".", ")"):
+        marker = rest[:digits + 1]
+    elif rest[:1] and "a" <= rest[0] <= "z" and rest[1:2] in (".", ")"):
+        marker = rest[:2]
+    else:
         return None
-    return _Heading(indent, marker.group(0), rest[marker.end():].lstrip(" \t"))
+    if rest[len(marker):len(marker) + 1] not in (" ", "\t"):
+        return None
+    return _Heading(indent, marker, rest[len(marker):].lstrip(" \t"))
 
 def _image(stripped: str):
     """![alt](target "title") as a match-like object: group(1) alt, group(2) target."""
