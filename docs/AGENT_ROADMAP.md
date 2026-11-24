@@ -89,7 +89,8 @@ no live-provider run yet.
 - **Task-aware summary prompt**: `compact_prompt("chat" | "code")` replaces the coding-only prompt.
 - **Adaptive effort** (`reasoning.py`): a heuristic marks short factual questions with nothing
   attached as `simple`, everything else as `deep`; a request's `effort` field (`auto`, `simple`,
-  `deep`) overrides it. A simple request gets no `task_tracker` or `record_requirements` and a
+  `deep`) overrides it. A simple request gets no `record_requirements`, and no `task_tracker`
+  unless the conversation already has a Task List with open steps. It also gets a
   one-line note in the request, not the system prompt, so the system prompt stays cache-stable.
   The provider options get `adaptive_effort` (`low` or `high`) as a hint for native adapters,
   and `reasoning_effort: low` only when the profile set none and the model family is known to

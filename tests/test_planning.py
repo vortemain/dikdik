@@ -77,6 +77,22 @@ class PlanningTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.engine.planning.tracker(task, [{"title": "a", "status": "maybe"}])
 
+    def test_checklist_advance_moves_one_step_and_extra_fields_are_dropped(self):
+        task = self.engine.submit(dict(REQUEST, mode="agent"))
+        self.idle(task)
+        with self.assertRaisesRegex(ValueError, "no checklist"):
+            self.engine.planning.tracker(task, advance=True)
+        saved = self.engine.planning.tracker(task, [{"id": "REQ-1", "title": "a", "status": "in_progress", "tests": []},
+                                                     {"title": "b", "status": "todo"}])
+        self.assertEqual(saved["tasks"][0], {"id": "REQ-1", "title": "a", "status": "in_progress"})
+        steps = [[item["status"] for item in self.engine.planning.tracker(task, advance=True)["tasks"]] for _ in range(2)]
+        self.assertEqual(steps, [["done", "in_progress"], ["done", "done"]])
+        with self.assertRaisesRegex(ValueError, "already done"):
+            self.engine.planning.tracker(task, advance=True)
+        self.assertEqual(self.engine.planning.progress(task)["revision"], 3)
+        tracked = [e for e in self.engine.store.get(task)["events"] if e["kind"] == "task_tracker"]
+        self.assertEqual(len(tracked), 3)
+
     def test_project_plan_list_maps_each_plan_to_its_conversation(self):
         child, _, _ = self.plan()
         plan = self.engine.planning.get(child)

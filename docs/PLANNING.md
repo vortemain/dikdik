@@ -38,6 +38,18 @@ step has a short unique ID, title and `todo`, `in_progress` or `done` status; at
 most one step may be in progress. The Task List tab appears only after the tool
 has been used, shows icons plus labels and highlights the current step. This is
 progress reported by the agent; completing it is not test or acceptance evidence.
+
+The agent keeps the list current as it works. `{"advance": true}` marks the
+in-progress step done and starts the next to-do step, so it can ride along with
+the call that begins the next step. Unknown step fields are dropped rather than
+failing the call, and a rejected list returns its validation message to the
+model. After two batches of step work with no update, the agent gets one
+reminder. Before it ends a turn that did work with steps still open, it is asked
+once to update the list or rewrite it to show what remains. A second finish or
+reply completes the turn either way, because the host never marks steps done
+itself. A follow-up turn in the same conversation sees the open list and keeps
+the tracker, even for a short request.
+
 The checklist and plan survive service restart. Deleting the code conversation
 also removes its planner, progress rows and private plan artifacts; active work
 must be stopped first.
