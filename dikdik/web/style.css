@@ -179,20 +179,65 @@ summary { cursor: pointer; }
 /* --- boot & sign-in ------------------------------------------------------ */
 /* The start-up screen sits on the window's own background colour and appears only if start-up
    takes longer than a moment; a quick start goes straight to the workspace. */
-.boot { position: fixed; inset: 0; z-index: 60; display: grid; place-content: center; justify-items: center; gap: 22px; background: var(--bg); animation: boot-in .32s ease-out .35s both; }
-.boot-identity { display: flex; align-items: center; gap: 12px; }
-.boot-logo { width: 40px; height: 40px; border-radius: 10px; }
-.boot-wordmark { font-size: 26px; font-weight: 650; letter-spacing: -.035em; color: var(--ink); }
-.boot-track { position: relative; width: 148px; height: 2px; overflow: hidden; border-radius: 2px; background: var(--line); }
-.boot-track span { position: absolute; inset: 0 auto 0 0; width: 38%; border-radius: inherit; background: var(--muted); animation: boot-track 1.15s cubic-bezier(.45, 0, .55, 1) infinite; }
+.boot { position: fixed; inset: 0; z-index: 60; display: grid; place-content: center; justify-items: center; gap: 14px; background: var(--bg); animation: boot-in .32s ease-out .35s both; }
+/* The logo is the loader: a thick tile turning in 3D, light sweeping its face, the dikdik filling with gold. */
+.boot-stage { position: relative; display: grid; justify-items: center; width: 120px; padding: 10px 0 18px; perspective: 520px; }
+.boot-mark { position: relative; width: 76px; height: 76px; transform-style: preserve-3d; animation: boot-turn 2.6s cubic-bezier(.45, 0, .55, 1) infinite; }
+.boot-mark::before, .boot-mark::after { content: ""; position: absolute; inset: 0; border-radius: 18px; }
+.boot-mark::before { background: #0e1f18; transform: translateZ(-8px); box-shadow: 0 18px 30px -12px rgba(0, 0, 0, .55); }
+.boot-mark::after { background: #16301f; transform: translateZ(-4px); }
+.boot-logo { position: relative; display: block; width: 76px; height: 76px; border-radius: 18px; transform: translateZ(1px); }
+.boot-glyph-base { opacity: .26; }
+.boot-glyph-fill { clip-path: inset(100% 0 0 0); animation: boot-fill 2.6s cubic-bezier(.65, 0, .35, 1) infinite; }
+.boot-sheen { position: absolute; inset: 0; border-radius: 18px; overflow: hidden; transform: translateZ(2px); pointer-events: none;
+  background: linear-gradient(115deg, transparent 30%, rgba(255, 240, 214, .32) 47%, rgba(255, 255, 255, .08) 53%, transparent 68%) no-repeat;
+  background-size: 260% 100%; mix-blend-mode: screen; animation: boot-sheen 2.6s cubic-bezier(.45, 0, .55, 1) infinite; }
+.boot-shadow { position: absolute; bottom: 4px; width: 62px; height: 10px; border-radius: 50%; background: radial-gradient(closest-side, rgba(0, 0, 0, .34), transparent); animation: boot-shadow 2.6s cubic-bezier(.45, 0, .55, 1) infinite; }
+/* The name flips up letter by letter, then a gold ripple runs through it in time with the logo. */
+.boot-wordmark { --boot-gold: #E8C496; display: flex; font-size: 24px; font-weight: 650; letter-spacing: -.035em; color: var(--ink); perspective: 400px; }
+.boot-wordmark > span { display: inline-block; transform-origin: 50% 100%;
+  animation: boot-letter-in .62s cubic-bezier(.2, .8, .2, 1) calc(.4s + var(--i, 0) * 70ms) both,
+             boot-letter-wave 2.6s ease-in-out calc(1.3s + var(--i, 0) * 110ms) infinite; }
+.boot-wordmark > span:nth-child(2) { --i: 1; }
+.boot-wordmark > span:nth-child(3) { --i: 2; }
+.boot-wordmark > span:nth-child(4) { --i: 3; }
+.boot-wordmark > span:nth-child(5) { --i: 4; }
+.boot-wordmark > span:nth-child(6) { --i: 5; }
 .boot-status { margin: 0; font-size: 12.5px; color: var(--muted); letter-spacing: .01em; }
 @keyframes boot-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes boot-track { from { transform: translateX(-100%); } to { transform: translateX(265%); } }
+@keyframes boot-turn {
+  0%, 100% { transform: translateY(0) rotateX(12deg) rotateY(-32deg); }
+  50% { transform: translateY(-7px) rotateX(-8deg) rotateY(32deg); }
+}
+@keyframes boot-sheen { 0%, 100% { background-position: 100% 0; } 50% { background-position: 0 0; } }
+@keyframes boot-shadow { 0%, 100% { transform: scaleX(1); opacity: 1; } 50% { transform: scaleX(.78); opacity: .6; } }
+@keyframes boot-fill {
+  0% { clip-path: inset(100% 0 0 0); opacity: 1; }
+  72% { clip-path: inset(0 0 0 0); opacity: 1; }
+  88% { clip-path: inset(0 0 0 0); opacity: 1; }
+  100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+@keyframes boot-letter-in { from { opacity: 0; transform: translateY(12px) rotateX(-85deg); } to { opacity: 1; transform: none; } }
+@keyframes boot-letter-wave {
+  0%, 24%, 100% { transform: none; color: var(--ink); }
+  12% { transform: translateY(-4px) rotateX(18deg); color: var(--boot-gold); }
+}
+:root[data-theme="light"] .boot-shadow { background: radial-gradient(closest-side, rgba(31, 61, 49, .22), transparent); }
+:root[data-theme="light"] .boot-wordmark { --boot-gold: #A8742C; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .boot-shadow { background: radial-gradient(closest-side, rgba(31, 61, 49, .22), transparent); }
+  :root:not([data-theme="dark"]) .boot-wordmark { --boot-gold: #A8742C; }
+}
 @keyframes breathe { 50% { opacity: .45; } }
 /* The workspace settles in instead of snapping on. */
 .app:not([hidden]) { animation: app-in .18s ease-out both; }
 @keyframes app-in { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .boot, .app:not([hidden]) { animation: none; } .boot-track span { animation: none; width: 100%; opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .boot, .app:not([hidden]) { animation: none; }
+  .boot-mark, .boot-sheen, .boot-shadow, .boot-wordmark > span { animation: none; }
+  .boot-mark { transform: rotateX(8deg) rotateY(-14deg); }
+  .boot-glyph-fill { animation: breathe 2.4s ease-in-out infinite; clip-path: none; }
+}
 .connect-view { min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; overflow: auto; }
 .connect-card { width: min(420px, 100%); text-align: center; }
 .connect-card > img { width: 56px; height: 56px; border-radius: 14px; margin-bottom: 20px; box-shadow: var(--shadow); }

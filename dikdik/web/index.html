@@ -81,20 +81,27 @@
 
   <!-- Shown only when start-up takes a moment (it fades in after a short delay). -->
   <div id="boot" class="boot" role="status" aria-live="polite">
-    <div class="boot-identity">
-      <svg class="boot-logo" viewBox="0 0 64 64" aria-hidden="true">
-        <rect width="64" height="64" rx="15" fill="#1F3D31"/>
-        <g fill="#E8C496">
-          <path d="M25.5 25.5C18 25.2 10.8 20 8 11.5c8.6.4 15.6 4.6 19.6 10.6Z"/>
-          <path d="M38.5 25.5c7.5-.3 14.7-5.5 17.5-14-8.6.4-15.6 4.6-19.6 10.6Z"/>
-          <path d="m27.6 21.4 1.6-12.2 2.3 12.2Zm8.8 0-1.6-12.2-2.3 12.2Z"/>
-          <path d="M22.8 27.6c0-5.6 4.1-8.4 9.2-8.4s9.2 2.8 9.2 8.4c0 8.2-3.9 16.8-6.4 22.1-.9 1.9-4.7 1.9-5.6 0-2.5-5.3-6.4-13.9-6.4-22.1Z"/>
-        </g>
-        <g fill="#1F3D31"><circle cx="27.4" cy="31" r="2.3"/><circle cx="36.6" cy="31" r="2.3"/><path d="M29.6 46.6c0-1.1 1.1-1.8 2.4-1.8s2.4.7 2.4 1.8-1.1 1.7-2.4 1.7-2.4-.6-2.4-1.7Z"/></g>
-      </svg>
-      <span class="boot-wordmark">dikdik</span>
+    <div class="boot-stage" aria-hidden="true">
+      <div class="boot-mark">
+        <svg class="boot-logo" viewBox="0 0 64 64">
+          <defs>
+            <g id="boot-glyph">
+              <path d="M25.5 25.5C18 25.2 10.8 20 8 11.5c8.6.4 15.6 4.6 19.6 10.6Z"/>
+              <path d="M38.5 25.5c7.5-.3 14.7-5.5 17.5-14-8.6.4-15.6 4.6-19.6 10.6Z"/>
+              <path d="m27.6 21.4 1.6-12.2 2.3 12.2Zm8.8 0-1.6-12.2-2.3 12.2Z"/>
+              <path d="M22.8 27.6c0-5.6 4.1-8.4 9.2-8.4s9.2 2.8 9.2 8.4c0 8.2-3.9 16.8-6.4 22.1-.9 1.9-4.7 1.9-5.6 0-2.5-5.3-6.4-13.9-6.4-22.1Z"/>
+            </g>
+          </defs>
+          <rect width="64" height="64" rx="15" fill="#1F3D31"/>
+          <use href="#boot-glyph" class="boot-glyph-base" fill="#E8C496"/>
+          <use href="#boot-glyph" class="boot-glyph-fill" fill="#E8C496"/>
+          <g fill="#1F3D31"><circle cx="27.4" cy="31" r="2.3"/><circle cx="36.6" cy="31" r="2.3"/><path d="M29.6 46.6c0-1.1 1.1-1.8 2.4-1.8s2.4.7 2.4 1.8-1.1 1.7-2.4 1.7-2.4-.6-2.4-1.7Z"/></g>
+        </svg>
+        <span class="boot-sheen"></span>
+      </div>
+      <span class="boot-shadow"></span>
     </div>
-    <div class="boot-track" aria-hidden="true"><span></span></div>
+    <span class="boot-wordmark" aria-hidden="true"><span>D</span><span>i</span><span>k</span><span>d</span><span>i</span><span>k</span></span>
     <p class="boot-status">Opening your workspace</p>
   </div>
 
@@ -136,7 +143,7 @@
     <header id="titlebar" class="titlebar" aria-label="Title bar">
       <div class="titlebar-lead">
         <button id="toggle-sidebar-mobile" class="ghost icon" type="button" aria-label="Open menu"><svg class="i"><use href="#i-menu"/></svg></button>
-        <a class="brand" href="/" aria-label="Dikdik home"><img src="/icon.svg" alt="" width="22" height="22"><span class="brand-name">dikdik</span></a>
+        <a class="brand" href="/" aria-label="Dikdik home"><img src="/icon.svg" alt="" width="22" height="22"><span class="brand-name">Dikdik</span></a>
         <span class="titlebar-space"></span>
         <button id="open-palette" class="ghost icon" type="button" aria-label="Command menu" title="Command menu (Ctrl K)"><svg class="i"><use href="#i-command"/></svg></button>
         <button id="toggle-sidebar" class="ghost icon" type="button" aria-label="Hide sidebar" title="Hide sidebar"><svg class="i"><use href="#i-sidebar"/></svg></button>
