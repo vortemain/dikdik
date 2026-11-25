@@ -22,8 +22,8 @@ import { ComposerSize, composerMaximum } from './composer-size';
 import { TerminalRenderer } from './terminal-render';
 import { ToolSession } from './tool-session';
 import { runningTerminalCommands } from './contracts';
-import { sidebarUpdate } from "./contracts";
-import type { UpdateInfo, UpdateStatus } from "./contracts";
+import { sidebarUpdate, updateRecommendation } from "./contracts";
+import type { UpdateAction, UpdateInfo, UpdateStatus } from "./contracts";
 import { frameBatch } from './render-scheduler';
 import { make, icon, setClass, storageGet, storageSet, wide, clock, copyText, copyButton } from './dom';
 import { codeBlock, diffLines, tokenNodes, languageFor, looksLikeDiff, safePageLink } from './code-render';
@@ -71,7 +71,7 @@ const secretCards = new Map<string, HTMLElement>();  // open secret requests
 const questionCards = new Map<string, HTMLElement>();  // open clarifying questions
 // Organisation and files: read by functions that run at load time.
 let modelReady = true, activeTag = "", listLimit = 40, folderOptions: string[] = [], filtersOpen = false;
-let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean; title_model?: string; notifications?: 'off' | 'background' | 'all'; notification_previews?: boolean } | null = null;
+let appSettings: { confirmation: string; condenser: boolean; git_name: string; git_email: string; sounds: boolean; title_model?: string; notifications?: 'off' | 'background' | 'all'; notification_previews?: boolean; update_checks?: boolean } | null = null;
 let nativeNotifications = false;
 const titled = new Set<string>();  // conversations we already asked to be titled this session
 let stepGroup: { li: HTMLLIElement; list: HTMLElement; details: HTMLDetailsElement; summary: HTMLElement; count: number; steps: { verb: string; target: string }[] } | null = null;
@@ -4059,8 +4059,10 @@ async function loadAppSettings(): Promise<void> {
   select("notification-mode").value = settings.notifications ?? "background";
   input("notification-previews").checked = settings.notification_previews === true;
   input("notification-previews").disabled = settings.notifications === "off";
+  input("update-checks").checked = settings.update_checks !== false;
   void loadNotificationStatus();
-  void loadUpdateCheck();
+  if (settings.update_checks !== false) void loadUpdateCheck();
+  else if (!updateInfo) { const status = updateEl("update-status-text"); if (status) status.textContent = "Automatic checks are off. Use Check now to look for a release."; }
   input("git-name").value = settings.git_name ?? "";
   input("git-email").value = settings.git_email ?? "";
   syncGitSave();
@@ -4093,6 +4095,11 @@ select("notification-mode").addEventListener("change", () => {
   void saveAppSetting({ notifications: select("notification-mode").value });
 });
 input("notification-previews").addEventListener("change", () => { void saveAppSetting({ notification_previews: input("notification-previews").checked }); });
+input("update-checks").addEventListener("change", () => {
+  const on = input("update-checks").checked;
+  void saveAppSetting({ update_checks: on });
+  if (on) void loadUpdateCheck(true);
+});
 async function loadNotificationStatus(): Promise<void> {
   try {
     const status = await api<{ desktop: boolean; ready: boolean; available: boolean; permission: string; error: string }>("/api/desktop/notifications");
@@ -5162,6 +5169,11 @@ let updateInfo: UpdateInfo | null = null, updateState: UpdateStatus = { state: "
 let updatePoll: ReturnType<typeof setTimeout> | null = null, updateChecking = false;
 const updateEl = (id: string): HTMLElement | null => document.getElementById(id);
 function runningTaskCount(): number { return lastTasks.filter(task => task.state === "running" || task.state === "queued").length; }
+// "Later" skips one version across restarts; a recommendation is offered once per version per session.
+const UPDATE_SNOOZE_KEY = "dikdik.update.snooze";
+let updatePromptShownFor = "", updatePromptAction: UpdateAction = "none";
+function readUpdateSnooze(): string { try { return globalThis.localStorage?.getItem(UPDATE_SNOOZE_KEY) ?? ""; } catch { return ""; } }
+function writeUpdateSnooze(version: string): void { try { if (version) globalThis.localStorage?.setItem(UPDATE_SNOOZE_KEY, version); else globalThis.localStorage?.removeItem(UPDATE_SNOOZE_KEY); } catch { /* storage may be unavailable */ } }
 
 function renderUpdate(): void {
   const version = updateEl("update-version");
@@ -5179,11 +5191,61 @@ function renderUpdate(): void {
     button.classList?.toggle("has-progress", view.progress !== null || view.tone === "busy");
     if (fill) fill.style.width = view.progress === null ? "" : `${view.progress}%`;
   }
-  const pop = updateEl("update-pop");
-  if (pop) {
-    pop.hidden = !view.prompt;
-    const text = updateEl("update-pop-text"); if (text) text.textContent = view.prompt;
+  renderUpdateSettings();
+  const pop = updateEl("update-pop"), textEl = updateEl("update-pop-text");
+  const go = updateEl("update-pop-go") as HTMLButtonElement | null;
+  let prompt = "", action: UpdateAction = "none", goLabel = "Update now";
+  if (updateConfirm) {
+    prompt = view.prompt;
+    action = "start";
+  } else {
+    const rec = updateRecommendation(updateInfo, updateState, runningTaskCount(), readUpdateSnooze(),
+      updatePromptShownFor === (updateInfo?.latest ?? ""));
+    if (rec.show) {
+      updatePromptShownFor = updateInfo?.latest ?? "";
+      prompt = rec.text;
+      action = updateInfo?.can_install ? "start" : updateInfo?.pip_command ? "copy" : "open";
+      goLabel = updateInfo?.can_install ? "Update now" : updateInfo?.pip_command ? "Copy command" : "Open release page";
+    }
   }
+  updatePromptAction = action;
+  if (pop) pop.hidden = !prompt;
+  if (textEl) textEl.textContent = prompt;
+  if (go) go.textContent = goLabel;
+  const badge = Boolean(updateInfo?.available) && !UPDATE_BUSY.has(updateState.state);
+  for (const id of ["open-settings", "rail-settings"]) updateEl(id)?.classList?.toggle("has-update", badge);
+}
+function updatePlatformNote(): string {
+  switch (updateInfo?.install) {
+    case "windows": return "Dikdik closes, the installer runs silently, and Dikdik reopens in the new version.";
+    case "macos": return "Dikdik swaps the app bundle and reopens in the new version.";
+    case "linux": return "The system asks for the administrator password, installs the package, and Dikdik reopens.";
+    case "python": return "This copy runs from Python: copy the upgrade command, then restart Dikdik.";
+    default: return "";
+  }
+}
+function renderUpdateSettings(): void {
+  const version = updateEl("update-version");
+  if (version) version.textContent = updateInfo?.current || "-";
+  const status = updateEl("update-status-text");
+  if (status) {
+    if (!updateInfo) status.textContent = "Checking for updates...";
+    else if (updateInfo.error) status.textContent = "Could not reach the release server. Try again later.";
+    else if (updateInfo.available) status.textContent = `Dikdik ${updateInfo.latest} is available. ${updatePlatformNote()}`.trim();
+    else status.textContent = `Dikdik ${updateInfo.current} is up to date.`;
+  }
+  const install = updateEl("update-install") as HTMLButtonElement | null;
+  const busy = UPDATE_BUSY.has(updateState.state);
+  if (install) {
+    install.hidden = !updateInfo?.available;
+    install.disabled = busy;
+    install.textContent = updateInfo?.can_install ? (busy ? "Updating..." : "Download and install")
+      : updateInfo?.pip_command ? "Copy upgrade command" : "Open release page";
+  }
+  const wrap = updateEl("update-notes-wrap"), notes = updateEl("update-notes");
+  const text = updateInfo?.available ? (updateInfo.notes ?? "").trim() : "";
+  if (wrap) wrap.hidden = !text;
+  if (notes) notes.textContent = text;
 }
 async function loadUpdateCheck(force = false): Promise<void> {
   if (updateChecking || UPDATE_BUSY.has(updateState.state)) return;
@@ -5223,23 +5285,36 @@ async function reportPreviousUpdate(): Promise<void> {
   message(ok ? `Dikdik updated to ${to}.` : `The update to ${to} didn’t finish${detail ? ` (${detail})` : ""}; you’re still on ${from}. Use the Update button in the sidebar to try again.`, !ok);
   void request("/api/desktop/update/dismiss", "POST", {}).catch(() => undefined);
 }
+function applyUpdateAction(action: UpdateAction): void {
+  if (action === "start") void startUpdate();
+  else if (action === "confirm") { updateConfirm = true; renderUpdate(); (updateEl("update-pop-go") as HTMLButtonElement | null)?.focus?.(); }
+  else if (action === "copy" && updateInfo?.pip_command) { void copyText(updateInfo.pip_command, updateEl("sidebar-update") as HTMLButtonElement); message("Copied the pip upgrade command. Run it, then restart Dikdik."); }
+  else if (action === "open" && updateInfo?.url) globalThis.open?.(updateInfo.url, "_blank", "noopener");
+  else if (action === "retry") { updateState = { state: "idle" }; void loadUpdateCheck(true).then(() => { if (updateInfo?.can_install) void startUpdate(); }); }
+  else if (action === "cancel") void request<UpdateStatus>("/api/desktop/update/cancel", "POST", {}).then(state => { updateState = state; renderUpdate(); }).catch(() => undefined);
+}
 updateEl("sidebar-update")?.addEventListener("click", () => {
-  const view = sidebarUpdate(updateInfo, updateState, runningTaskCount(), updateConfirm);
-  if (view.action === "start") void startUpdate();
-  else if (view.action === "confirm") { updateConfirm = true; renderUpdate(); (updateEl("update-pop-go") as HTMLButtonElement | null)?.focus?.(); }
-  else if (view.action === "copy" && updateInfo?.pip_command) { void copyText(updateInfo.pip_command, updateEl("sidebar-update") as HTMLButtonElement); message("Copied the pip upgrade command. Run it, then restart Dikdik."); }
-  else if (view.action === "open" && updateInfo?.url) globalThis.open?.(updateInfo.url, "_blank", "noopener");
-  else if (view.action === "retry") { updateState = { state: "idle" }; void loadUpdateCheck(true).then(() => { if (updateInfo?.can_install) void startUpdate(); }); }
-  else if (view.action === "cancel") void request<UpdateStatus>("/api/desktop/update/cancel", "POST", {}).then(state => { updateState = state; renderUpdate(); }).catch(() => undefined);
+  applyUpdateAction(sidebarUpdate(updateInfo, updateState, runningTaskCount(), updateConfirm).action);
 });
-updateEl("update-pop-go")?.addEventListener("click", () => void startUpdate());
-updateEl("update-pop-later")?.addEventListener("click", () => { updateConfirm = false; renderUpdate(); });
+updateEl("update-pop-go")?.addEventListener("click", () => applyUpdateAction(updatePromptAction));
+updateEl("update-pop-later")?.addEventListener("click", () => {
+  if (updateConfirm) { updateConfirm = false; renderUpdate(); return; }
+  if (updateInfo?.latest) writeUpdateSnooze(updateInfo.latest);
+  renderUpdate();
+});
+updateEl("update-check-now")?.addEventListener("click", () => { message("Checking for updates..."); void loadUpdateCheck(true); });
+updateEl("update-install")?.addEventListener("click", () => {
+  applyUpdateAction(updateInfo?.can_install ? "start" : updateInfo?.pip_command ? "copy" : "open");
+});
 document.addEventListener?.("keydown", event => { if (event.key === "Escape" && updateConfirm) { updateConfirm = false; renderUpdate(); } });
 void reportPreviousUpdate();
 void pollUpdate();
 // Look again every six hours while Dikdik stays open.
 const UPDATE_RECHECK_MS = 6 * 60 * 60 * 1000;
 function scheduleUpdateCheck(): void {
-  setTimeout(() => { if (!document.hidden) void loadUpdateCheck(true); scheduleUpdateCheck(); }, UPDATE_RECHECK_MS);
+  setTimeout(() => {
+    if (!document.hidden && appSettings?.update_checks !== false) void loadUpdateCheck(true);
+    scheduleUpdateCheck();
+  }, UPDATE_RECHECK_MS);
 }
 scheduleUpdateCheck();

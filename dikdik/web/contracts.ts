@@ -1890,3 +1890,24 @@ export function sidebarUpdate(info: UpdateInfo | null, status: UpdateStatus, run
   return { ...base, label, title: `Dikdik ${latest} is ready. Click to update; Dikdik closes and reopens in the new version.`,
            tone: "ready", action: running && !confirming ? "confirm" : "start", prompt: confirming ? prompt : "" };
 }
+
+/** Human-readable download size; empty when the release did not report one. */
+export function updateSize(bytes?: number | null): string {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes <= 0) return "";
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(mb >= 10 ? 0 : 1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+export interface UpdateRecommendation { show: boolean; text: string }
+
+/** Whether an available release should be offered proactively, and the words to use.
+ *  A version the user skipped with "Later", or one already offered this session, stays quiet. */
+export function updateRecommendation(info: UpdateInfo | null, status: UpdateStatus, running: number, snoozed: string, alreadyShown: boolean): UpdateRecommendation {
+  if (!info?.available || !info.latest || info.error || alreadyShown || snoozed === info.latest) return { show: false, text: "" };
+  if (["downloading", "verifying", "installing", "restarting"].includes(status.state)) return { show: false, text: "" };
+  const size = updateSize(info.asset?.size);
+  const pause = running ? ` ${running} running task${running === 1 ? "" : "s"} will pause and can be resumed after the restart.` : "";
+  const act = info.can_install ? "Install it from here" : info.pip_command ? "Copy the upgrade command" : "Open the release page";
+  const tail = info.can_install ? "Dikdik closes and reopens in the new version." : info.pip_command ? "Run it, then restart Dikdik." : "Download the release for this platform.";
+  return { show: true, text: `Dikdik ${info.latest} is available${size ? ` (${size})` : ""}. ${act}. ${tail}${pause}` };
+}
