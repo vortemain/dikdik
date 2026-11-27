@@ -1,5 +1,6 @@
 """Benchmark tasks have known outcomes, and the harness judges by hidden oracles, not agent claims."""
 
+import functools
 import importlib.util
 import os
 import shutil
@@ -19,7 +20,21 @@ spec.loader.exec_module(bench)
 TASKS = sorted(p for p in bench.TASKS.iterdir() if p.is_dir())
 
 
-CHROMIUM = importlib.util.find_spec("playwright") is not None
+@functools.cache
+def chromium() -> bool:
+    """Whether the todo-web oracle can launch Chromium here: the Playwright package alone is not enough."""
+    try:
+        from playwright.sync_api import Error, sync_playwright
+    except ImportError:
+        return False
+    try:
+        with sync_playwright() as playwright:
+            playwright.chromium.launch(headless=True).close()
+    except Error:
+        return False
+    return True
+
+
 # Plausible-but-wrong builds of the build-from-scratch tasks: each must fail its oracle.
 BROKEN = {
     "notes-api": ("server.py", "if not isinstance(title, str) or not title or len(title) > 200:",
@@ -45,7 +60,7 @@ class TaskValidityTests(unittest.TestCase):
                 fixture = Path(temp) / "fixture"
                 shutil.copytree(task / "repo", fixture)
                 self.assertFalse(bench.oracle(fixture, task)["passed"], "the oracle must fail on the unfixed fixture")
-                if task.name == "todo-web" and not CHROMIUM:
+                if task.name == "todo-web" and not chromium():
                     continue  # its oracle needs Playwright Chromium (it fails closed without it, as just shown)
                 shutil.copytree(task / "solution", fixture, dirs_exist_ok=True)
                 self.assertTrue(bench.oracle(fixture, task)["passed"], bench.oracle(fixture, task).get("output_tail"))
@@ -54,7 +69,7 @@ class TaskValidityTests(unittest.TestCase):
         for name, (path, old, new) in BROKEN.items():
             task = bench.TASKS / name
             self.assertEqual([p.name for p in (task / "repo").iterdir()], ["README.md"])  # nothing to build on
-            if name == "todo-web" and not CHROMIUM:
+            if name == "todo-web" and not chromium():
                 continue
             with self.subTest(task=name), tempfile.TemporaryDirectory() as temp:
                 fixture = Path(temp) / "fixture"
@@ -63,6 +78,35 @@ class TaskValidityTests(unittest.TestCase):
                 self.assertEqual(text.count(old), 1)
                 (fixture / path).write_text(text.replace(old, new), encoding="utf-8")
                 self.assertFalse(bench.oracle(fixture, task)["passed"], "a broken build must fail the oracle")
+
+    def test_the_oracle_stops_what_its_tests_leave_running(self):
+        # An oracle whose set-up fails after starting its server never reaches tearDownClass: the server outlives
+        # the oracle, keeps the judged folder open (Windows refuses to remove it) and holds its port.
+        leaky = ("import os, subprocess, sys, time, unittest\n"
+                 "from pathlib import Path\n"
+                 "SERVER = ('import socket, sys, time\\n'\n"
+                 "          's = socket.socket(); s.bind((\"127.0.0.1\", 0)); s.listen()\\n'\n"
+                 "          'open(sys.argv[1], \"w\").write(str(s.getsockname()[1]))\\n'\n"
+                 "          'time.sleep(600)\\n')\n"
+                 "class Oracle(unittest.TestCase):\n"
+                 "    def test_server(self):\n"
+                 "        marker = Path(os.environ['DIKDIK_TEST_MARKER'])\n"
+                 "        subprocess.Popen([sys.executable, '-c', SERVER, str(marker)], cwd=Path(__file__).parent,\n"
+                 "                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                 "        deadline = time.monotonic() + 20\n"
+                 "        while not marker.exists() or not marker.read_text():\n"
+                 "            self.assertLess(time.monotonic(), deadline)\n"
+                 "            time.sleep(0.05)\n")
+        with tempfile.TemporaryDirectory() as temp:
+            task, workspace, marker = Path(temp) / "task", Path(temp) / "workspace", Path(temp) / "port"
+            (task / "oracle").mkdir(parents=True)
+            (task / "oracle" / "test_oracle.py").write_text(leaky, encoding="utf-8")
+            workspace.mkdir()
+            with patch.dict(os.environ, {"DIKDIK_TEST_MARKER": str(marker)}):
+                result = bench.oracle(workspace, task)
+            self.assertTrue(result["passed"], result.get("output_tail"))
+            with self.assertRaises(OSError, msg="the oracle's server is still running"):
+                socket.create_connection(("127.0.0.1", int(marker.read_text())), timeout=2).close()
 
     def test_ui_tasks_let_the_agent_use_the_browser(self):
         seen = []

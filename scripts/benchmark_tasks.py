@@ -36,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from dikdik import __version__  # noqa: E402
 from dikdik.engine import TERMINAL, Engine  # noqa: E402
+from dikdik.local_exec import _ProcessTree  # noqa: E402
 from dikdik.model_config import ModelResolver  # noqa: E402
 from dikdik.secrets_store import SecretsStore  # noqa: E402
 from dikdik.store import Store  # noqa: E402
@@ -58,12 +59,21 @@ def oracle(workspace: Path, task: Path, timeout: float = 120) -> dict:
         shutil.copytree(workspace, judged, ignore=shutil.ignore_patterns("__pycache__", ".git"))
         for test in (task / "oracle").glob("*.py"):
             shutil.copy2(test, judged / test.name)
+        # A server or browser the tests leave running would hold the judged folder (and a port): stop the whole tree.
+        tree = _ProcessTree()
         try:
-            run = subprocess.run([sys.executable, "-m", "unittest", "discover", "-v", "-p", "test_oracle*.py"], cwd=judged,
-                                 capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+            run = subprocess.Popen([sys.executable, "-m", "unittest", "discover", "-v", "-p", "test_oracle*.py"], cwd=judged,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
+                                   start_new_session=os.name != "nt")
+            tree.attach(run)
+            stdout, stderr = run.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
+            tree.stop()
+            run.communicate()
             return {"passed": False, "reason": "oracle timed out"}
-    tail = (run.stdout + run.stderr)[-3000:]
+        finally:
+            tree.close()
+    tail = (stdout + stderr)[-3000:]
     return {"passed": run.returncode == 0, "exit_code": run.returncode, "output_tail": tail}
 
 
