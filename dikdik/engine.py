@@ -2266,7 +2266,7 @@ class Engine:
                 files = inventory(self.root)
                 return toolchain.report(sorted(files), files.get, arguments.get("tool") if isinstance(arguments.get("tool"), str) else None)
             if name == 'task_tracker':
-                return self.planning.tracker(task, arguments.get('tasks'))
+                return self.planning.tracker(task, arguments.get('tasks'), advance=arguments.get('advance') is True)
             if name == 'save_notes':
                 return self.planning.notes(arguments.get('notes'))
             if name in {"memory", "session_search"} and learning_tools:
@@ -2458,6 +2458,7 @@ class Engine:
                 workspace=workspace,
                 hooks=hooks, task_id=task, hook_lifecycle=False,
                 continuity=continuity,
+                reported_checklist=None if resume else self.planning.progress(task)["tasks"],
                 allow_static_checks=local,
                 allow_unverified_checks=local and not any(r["kind"] in TEST_KINDS for r in baseline_checks),
                 context_limit=context_limit, effort=effort, effort_source=effort_source,
@@ -2751,7 +2752,7 @@ class Engine:
             if name == "command_process" and local:
                 return self._command_process(task, arguments)
             if name == "task_tracker":
-                return self.planning.tracker(task, arguments.get("tasks"))
+                return self.planning.tracker(task, arguments.get("tasks"), advance=arguments.get("advance") is True)
             if name == "save_notes":
                 return self.planning.notes(arguments.get("notes"))
             if name in {"memory", "session_search"} and learning_tools:
@@ -3269,7 +3270,7 @@ class Engine:
             if name == 'write_plan':
                 return self.planning.write(task, arguments.get('content'), cancel)
             if name == 'task_tracker':
-                return self.planning.tracker(task, arguments.get('tasks'))
+                return self.planning.tracker(task, arguments.get('tasks'), advance=arguments.get('advance') is True)
             raise ValueError('Planning tool unavailable')
         context_limit = self._context_limit(model_id)
         outcome = run_agent(original, request['objective'], CompatibleAgentModel(request['approve_external'], lambda: self.models.resolve(model_id), lambda text: self._live(task, text), cancel=cancel, context_limit=context_limit),
