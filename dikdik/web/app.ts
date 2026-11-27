@@ -5133,7 +5133,7 @@ function renderSshBadge(): void {
   el("env-label").textContent = env.text;
   pill.title = env.title;
   setClass(pill, "remote", env.remote);
-  pill.querySelector("use")?.setAttribute("href", env.remote ? "#i-server" : "#i-cpu");
+  pill.querySelector?.("use")?.setAttribute("href", env.remote ? "#i-server" : "#i-cpu");
 }
 async function loadSshHosts(): Promise<void> {
   try {
