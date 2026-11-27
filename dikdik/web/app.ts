@@ -5169,9 +5169,11 @@ let updateInfo: UpdateInfo | null = null, updateState: UpdateStatus = { state: "
 let updatePoll: ReturnType<typeof setTimeout> | null = null, updateChecking = false;
 const updateEl = (id: string): HTMLElement | null => document.getElementById(id);
 function runningTaskCount(): number { return lastTasks.filter(task => task.state === "running" || task.state === "queued").length; }
-// "Later" skips one version across restarts; a recommendation is offered once per version per session.
+// "Later" skips one version across restarts. The offer stays up through re-renders (checks, Settings)
+// until it is answered; once answered it is not offered again this session.
 const UPDATE_SNOOZE_KEY = "dikdik.update.snooze";
-let updatePromptShownFor = "", updatePromptAction: UpdateAction = "none";
+let updatePromptAnswered = "", updatePromptAction: UpdateAction = "none";
+function answerUpdatePrompt(): void { updatePromptAnswered = updateInfo?.latest ?? ""; }
 function readUpdateSnooze(): string { try { return globalThis.localStorage?.getItem(UPDATE_SNOOZE_KEY) ?? ""; } catch { return ""; } }
 function writeUpdateSnooze(version: string): void { try { if (version) globalThis.localStorage?.setItem(UPDATE_SNOOZE_KEY, version); else globalThis.localStorage?.removeItem(UPDATE_SNOOZE_KEY); } catch { /* storage may be unavailable */ } }
 
@@ -5200,9 +5202,8 @@ function renderUpdate(): void {
     action = "start";
   } else {
     const rec = updateRecommendation(updateInfo, updateState, runningTaskCount(), readUpdateSnooze(),
-      updatePromptShownFor === (updateInfo?.latest ?? ""));
+      updatePromptAnswered !== "" && updatePromptAnswered === updateInfo?.latest);
     if (rec.show) {
-      updatePromptShownFor = updateInfo?.latest ?? "";
       prompt = rec.text;
       action = updateInfo?.can_install ? "start" : updateInfo?.pip_command ? "copy" : "open";
       goLabel = updateInfo?.can_install ? "Update now" : updateInfo?.pip_command ? "Copy command" : "Open release page";
@@ -5294,16 +5295,19 @@ function applyUpdateAction(action: UpdateAction): void {
   else if (action === "cancel") void request<UpdateStatus>("/api/desktop/update/cancel", "POST", {}).then(state => { updateState = state; renderUpdate(); }).catch(() => undefined);
 }
 updateEl("sidebar-update")?.addEventListener("click", () => {
+  answerUpdatePrompt();
   applyUpdateAction(sidebarUpdate(updateInfo, updateState, runningTaskCount(), updateConfirm).action);
 });
-updateEl("update-pop-go")?.addEventListener("click", () => applyUpdateAction(updatePromptAction));
+updateEl("update-pop-go")?.addEventListener("click", () => { answerUpdatePrompt(); applyUpdateAction(updatePromptAction); });
 updateEl("update-pop-later")?.addEventListener("click", () => {
   if (updateConfirm) { updateConfirm = false; renderUpdate(); return; }
+  answerUpdatePrompt();
   if (updateInfo?.latest) writeUpdateSnooze(updateInfo.latest);
   renderUpdate();
 });
 updateEl("update-check-now")?.addEventListener("click", () => { message("Checking for updates..."); void loadUpdateCheck(true); });
 updateEl("update-install")?.addEventListener("click", () => {
+  answerUpdatePrompt();
   applyUpdateAction(updateInfo?.can_install ? "start" : updateInfo?.pip_command ? "copy" : "open");
 });
 document.addEventListener?.("keydown", event => { if (event.key === "Escape" && updateConfirm) { updateConfirm = false; renderUpdate(); } });

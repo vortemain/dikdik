@@ -1901,9 +1901,9 @@ export function updateSize(bytes?: number | null): string {
 export interface UpdateRecommendation { show: boolean; text: string }
 
 /** Whether an available release should be offered proactively, and the words to use.
- *  A version the user skipped with "Later", or one already offered this session, stays quiet. */
-export function updateRecommendation(info: UpdateInfo | null, status: UpdateStatus, running: number, snoozed: string, alreadyShown: boolean): UpdateRecommendation {
-  if (!info?.available || !info.latest || info.error || alreadyShown || snoozed === info.latest) return { show: false, text: "" };
+ *  A version the user skipped with "Later", or whose offer was already answered this session, stays quiet. */
+export function updateRecommendation(info: UpdateInfo | null, status: UpdateStatus, running: number, snoozed: string, answered: boolean): UpdateRecommendation {
+  if (!info?.available || !info.latest || info.error || answered || snoozed === info.latest) return { show: false, text: "" };
   if (["downloading", "verifying", "installing", "restarting"].includes(status.state)) return { show: false, text: "" };
   const size = updateSize(info.asset?.size);
   const pause = running ? ` ${running} running task${running === 1 ? "" : "s"} will pause and can be resumed after the restart.` : "";

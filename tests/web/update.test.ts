@@ -47,7 +47,7 @@ test("an available update is recommended once, with its size and running-task wa
   expect(updateRecommendation(ready, { state: "idle" }, 2, "", false).text).toContain("2 running tasks will pause");
 });
 
-test("a skipped, already-shown, busy or failed update stays quiet", () => {
+test("a skipped, already-answered, busy or failed update stays quiet", () => {
   expect(updateRecommendation(ready, { state: "idle" }, 0, "v0.8.1", false).show).toBe(false);
   expect(updateRecommendation(ready, { state: "idle" }, 0, "", true).show).toBe(false);
   expect(updateRecommendation(ready, { state: "downloading" }, 0, "", false).show).toBe(false);
