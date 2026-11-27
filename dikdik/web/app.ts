@@ -34,6 +34,7 @@ import { announceTheme, boardStyle, setBoardStyle, type BoardStyle } from './boa
 import { copyWithTex } from './math';
 import { Typewriter } from './typewriter';
 import { createAskDrawer } from './ask-drawer';
+import { backTarget, badge, checkFolder, checkHost, checkRepository, cloneTarget, connectionView, environmentLabel, environmentMenu, hostLabel, isLive, type SshConnection, type SshHost } from './ssh-remote';
 import { createConversationMode, isChatConversation } from './conversation-mode';
 import { citationMarkers, compactTokens, duration, groupable, groupTitle, pendingModelCall, sourceLabel, steeringStatus, thinkingDurations, thinkingLabel, thinkingSummary, toolTimings, turnCost, turnCostText } from './chat-space';
 import { startGreeting, suggestionsFor, chatSuggestions, renderSuggestions, factsFromFiles, timeGreeting } from './welcome';
@@ -2391,6 +2392,7 @@ async function project(): Promise<void> {
   el("settings-project").textContent = data.name;
   el("settings-indexer").textContent = (data as Project & { indexer?: string }).indexer === "rust" ? "Rust (native, parallel)" : "Python (run scripts/build_native.py for the faster Rust indexer)";
   el("settings-inventory").textContent = `${data.files.length} text files · ${data.python_tests.length} potential Python tests · ${data.manifests.length} manifests`;
+  setSshSession(data.ssh_session ?? null);
   refreshWelcomeSuggestions();
 }
 
@@ -2911,6 +2913,7 @@ let refreshPanels: Record<string, () => Promise<void>> = {};
 
 async function connect(): Promise<void> {
   await Promise.all([project(), loadHistory()]);
+  void refreshSsh();
   void loadModel().catch(() => undefined);
   void loadAgents().catch(() => undefined);
   el("boot").hidden = true;
@@ -5089,6 +5092,293 @@ el("project-clone-form").addEventListener("submit", event => {
   void switchProject("/api/projects/clone", { url, parent: (el("project-clone-parent") as HTMLInputElement).value.trim() },
     "Cloning… large repositories can take a few minutes.");
 });
+
+// --- Connect to host: work on another computer over SSH (ADR-009) ---------------
+// Dikdik runs on the host behind an SSH tunnel; its own window (at localhost:<port>) does the work.
+// The composer's environment pill chooses where to work, like an editor's remote picker.
+let sshSession: { host: string } | null = null;
+let sshConnections: SshConnection[] = [];
+let sshHosts: SshHost[] = [];
+let sshAvailable: { ok: boolean; reason: string | null } = { ok: true, reason: null };
+let sshPoll: ReturnType<typeof setTimeout> | undefined;
+const sshDialog = el("ssh-dialog") as HTMLDialogElement;
+const SSH_DISCONNECT_NOTE = "Dikdik stops on the host, and anything still running there stops with it.";
+function sshStatus(text: string, error = false): void {
+  const status = el("ssh-status");
+  status.textContent = text;
+  status.classList.toggle("error-text", error);
+}
+function setSshSession(session: { host: string } | null): void {
+  sshSession = session && typeof session.host === "string" ? session : null;
+  if (sshSession) {
+    document.title = `SSH: ${sshSession.host} — Dikdik`;
+    const cloneHint = document.querySelector("#project-clone-form .hint");
+    if (cloneHint) cloneHint.textContent = `Clones on ${sshSession.host} with its own Git sign-in (an SSH key or gh auth login there).`;
+  }
+  renderSshBadge();
+}
+function renderSshBadge(): void {
+  const view = badge(sshSession, sshConnections), chip = el("ssh-badge");
+  chip.hidden = view === null;
+  setClass(chip, "remote", sshSession !== null);
+  if (view) { el("ssh-badge-text").textContent = view.text; chip.title = view.title; chip.setAttribute("aria-label", view.title); }
+  const env = environmentLabel(sshSession), pill = el("env-pill");
+  el("env-label").textContent = env.text;
+  pill.title = env.title;
+  setClass(pill, "remote", env.remote);
+  pill.querySelector("use")?.setAttribute("href", env.remote ? "#i-server" : "#i-cpu");
+}
+async function loadSshHosts(): Promise<void> {
+  try {
+    const data = await api<{ available: boolean; reason: string | null; hosts: SshHost[] }>("/api/ssh/hosts");
+    sshAvailable = { ok: data.available !== false, reason: data.reason ?? null };
+    sshHosts = Array.isArray(data.hosts) ? data.hosts : [];
+  } catch { sshHosts = []; }
+  const hint = el("project-remote-hint");
+  (el("project-remote-connect") as HTMLButtonElement).disabled = !sshAvailable.ok;
+  if (!sshAvailable.ok && sshAvailable.reason) { hint.textContent = sshAvailable.reason; hint.classList.add("error-text"); }
+  el("project-remote-hosts").replaceChildren(...sshHosts.map(host => {
+    const option = make("option") as HTMLOptionElement;
+    option.value = host.name; option.label = hostLabel(host);
+    return option;
+  }));
+}
+async function refreshSsh(): Promise<void> {
+  if (sshPoll !== undefined) clearTimeout(sshPoll);
+  sshPoll = undefined;
+  try {
+    const data = await api<{ connections?: unknown }>("/api/ssh/connections");
+    sshConnections = Array.isArray(data?.connections) ? data.connections as SshConnection[] : [];
+  } catch { sshConnections = []; }
+  renderSshConnections();
+  renderSshBadge();
+  const busy = sshConnections.some(c => c.state === "connecting" || c.state === "host_key");
+  if (busy || (sshDialog.open && sshConnections.some(isLive))) sshPoll = setTimeout(() => { void refreshSsh(); }, busy ? 800 : 3000);
+}
+// Folder or Repository: a repository is cloned on the host (with the host's Git sign-in), then opened.
+type SshKind = "folder" | "repo";
+let sshKind: SshKind = "folder";
+function setSshKind(kind: SshKind): void {
+  sshKind = kind;
+  for (const tab of sshDialog.querySelectorAll<HTMLElement>("[data-ssh-kind]")) tab.setAttribute("aria-selected", String(tab.dataset.sshKind === kind));
+  for (const pane of sshDialog.querySelectorAll<HTMLElement>("[data-ssh-pane]")) pane.hidden = pane.dataset.sshPane !== kind;
+  (el("project-remote-connect") as HTMLButtonElement).textContent = kind === "repo" ? "Clone and connect" : "Connect";
+  if (kind === "repo") {
+    const parent = input("ssh-repo-parent");
+    if (!parent.value) parent.value = storageGet("dikdik.ssh.parent") || "~/projects";
+    void loadSshRepos();
+  }
+  renderSshRepoHint();
+}
+function renderSshRepoHint(): void {
+  const url = input("ssh-repo-url").value;
+  const base = "The host clones with its own Git sign-in (gh auth login or an SSH key there). An existing clone of the same repository is opened as it is.";
+  el("ssh-repo-hint").textContent = url.trim() && !checkRepository(url) ? `Opens ${cloneTarget(url, input("ssh-repo-parent").value)} on the host. ${base}` : base;
+}
+// The list comes from this computer's GitHub sign-in (as in Clone repository); only the URL goes to the host.
+async function loadSshRepos(): Promise<void> {
+  const box = el("ssh-repos");
+  try {
+    const accounts = await api<{ github: { signed_in: boolean; protocol?: string | null } }>("/api/git/accounts");
+    if (!accounts.github.signed_in) { box.hidden = true; return; }
+    gitProtocol = accounts.github.protocol === "ssh" ? "ssh" : "https";
+    box.hidden = false;
+    if (!repoCache) { el("ssh-repos-list").replaceChildren(make("li", "muted", "Loading your repositories…")); repoCache = (await api<{ repos: RepoEntry[] }>("/api/git/repos")).repos; }
+    renderSshRepos();
+  } catch { box.hidden = true; }
+}
+function renderSshRepos(): void {
+  const needle = input("ssh-repos-search").value.trim().toLowerCase(), chosen = input("ssh-repo-url").value.trim();
+  const shown = (repoCache ?? []).filter(repo => !needle || repo.name.toLowerCase().includes(needle) || repo.description.toLowerCase().includes(needle)).slice(0, 80);
+  el("ssh-repos-list").replaceChildren(...(shown.length ? shown.map(repo => {
+    const item = make("li"), pick = make("button") as HTMLButtonElement, url = gitProtocol === "ssh" ? repo.ssh_url : repo.url;
+    pick.type = "button";
+    pick.setAttribute("aria-pressed", String(url === chosen));
+    pick.append(make("strong", "", `${repo.name}${repo.private ? " · private" : ""}`), make("small", "", repo.description || "No description"));
+    pick.onclick = () => {
+      input("ssh-repo-url").value = url;
+      for (const other of el("ssh-repos-list").querySelectorAll("button")) other.setAttribute("aria-pressed", String(other === pick));
+      renderSshRepoHint();
+    };
+    item.append(pick);
+    return item;
+  }) : [make("li", "muted", "No repositories match")]));
+}
+/** The Connect to host dialog, optionally with a host already chosen from the environment menu. */
+function openSsh(host = "", kind?: SshKind): void {
+  sshStatus("");
+  if (projectsDialog.open) projectsDialog.close();
+  const hostField = input("project-remote-host"), folderField = input("project-remote-folder"), last = storageGet("dikdik.ssh.last");
+  let saved: { host?: unknown; folder?: unknown } = {};
+  try { saved = last ? JSON.parse(last) as typeof saved : {}; } catch { /* an old or hand-edited value: start empty */ }
+  if (host) {
+    hostField.value = host;
+    if (saved.host !== host) folderField.value = "";
+  }
+  if (!hostField.value && typeof saved.host === "string") hostField.value = saved.host;
+  if (!folderField.value && typeof saved.folder === "string" && saved.host === hostField.value) folderField.value = saved.folder;
+  if (!sshDialog.open) sshDialog.showModal();
+  setSshKind(kind ?? sshKind);
+  (hostField.value ? (sshKind === "repo" ? input("ssh-repo-url") : folderField) : hostField).focus();
+  void loadSshHosts();
+  void refreshSsh();
+}
+async function sshConnect(host: string, folder: string, repo = ""): Promise<void> {
+  const problem = checkHost(host) ?? (repo ? checkRepository(repo) ?? checkFolder(folder || "~/projects") : checkFolder(folder));
+  if (problem) { sshStatus(problem, true); return; }
+  sshStatus("");
+  if (repo) storageSet("dikdik.ssh.parent", folder.trim());
+  else storageSet("dikdik.ssh.last", JSON.stringify({ host: host.trim(), folder: folder.trim() }));
+  try { await request("/api/ssh/connections", "POST", { host: host.trim(), folder: folder.trim(), ...(repo ? { repo: repo.trim() } : {}) }); }
+  catch (error) { sshStatus(error instanceof Error ? error.message : String(error), true); }
+  void refreshSsh();
+}
+async function sshOpen(connection: SshConnection): Promise<void> {
+  const link = await request<{ url: string }>(`/api/ssh/connections/${connection.id}/link`, "POST", {});
+  // The desktop app has one window: it moves to the host and offers the way back after Disconnect.
+  if (windowApi()) { globalThis.location.assign(link.url); return; }
+  const opened = globalThis.open(link.url, "_blank");
+  if (opened) opened.opener = null;
+  else sshStatus("The browser blocked the new window. Allow pop-ups for this address, then press Open again.", true);
+}
+async function sshAct(connection: SshConnection, action: string): Promise<void> {
+  try {
+    if (action === "open") await sshOpen(connection);
+    else if (action === "trust") await request(`/api/ssh/connections/${connection.id}/trust`, "POST", { fingerprint: connection.host_keys[0]?.fingerprint });
+    else if (action === "retry") await request("/api/ssh/connections", "POST", connection.repo
+      ? { host: connection.host, folder: connection.parent ?? "~/projects", repo: connection.repo }
+      : { host: connection.host, folder: connection.folder });
+    else {
+      if (action === "disconnect" && !await confirmDialog(`Disconnect from ${connection.host}?`, SSH_DISCONNECT_NOTE, "Disconnect", true)) { renderSshConnections(true); return; }
+      await request(`/api/ssh/connections/${connection.id}`, "DELETE");
+    }
+  } catch (error) { sshStatus(error instanceof Error ? error.message : String(error), true); }
+  sshRendered = "";
+  void refreshSsh();
+}
+const SSH_ACTION_LABELS: Record<string, string> = { open: "Open", disconnect: "Disconnect", trust: "Trust and connect", cancel: "Cancel", retry: "Connect again" };
+let sshRendered = "";
+function renderSshConnections(force = false): void {
+  // Polling must not replace the buttons under the pointer or the keyboard focus when nothing changed.
+  const shown = JSON.stringify(sshConnections.map(connection => ({ ...connection, created: 0 })));
+  if (shown === sshRendered && !force) return;
+  sshRendered = shown;
+  el("projects-remote").hidden = sshConnections.length === 0;
+  el("projects-remote-list").replaceChildren(...sshConnections.map(connection => {
+    const view = connectionView(connection), item = make("li", `remote-host tone-${view.tone}`);
+    const text = make("div", "remote-host-text");
+    text.append(make("strong", "", connection.host), make("p", "muted", connection.repo ? `${connection.folder} · from ${connection.repo}` : connection.folder),
+      make("p", "remote-host-status", view.status));
+    if (connection.state === "host_key") {
+      const keys = make("div", "remote-host-key");
+      keys.append(make("p", "", `First connection to ${connection.host}. Compare this fingerprint with the host's own (on the host: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub) before trusting it. It is then saved in your known_hosts.`));
+      for (const key of connection.host_keys) keys.append(make("code", "", `${key.type} ${key.fingerprint}`));
+      text.append(keys);
+    }
+    const actions = make("div", "remote-host-actions");
+    for (const action of view.actions) {
+      const primary = action === "open" || action === "trust";
+      const control = make("button", primary ? "primary small" : "ghost small", SSH_ACTION_LABELS[action] ?? action) as HTMLButtonElement;
+      control.type = "button";
+      control.onclick = () => { control.disabled = true; void sshAct(connection, action); };
+      actions.append(control);
+    }
+    item.append(text, actions);
+    return item;
+  }));
+}
+function showDisconnected(host: string): void {
+  const panel = make("div", "ssh-disconnected"), back = backTarget(document.referrer);
+  panel.append(make("h2", "", `Disconnected from ${host}`), make("p", "muted", "Dikdik has stopped on the host and the SSH tunnel is closed."));
+  if (back && back !== `${globalThis.location.protocol}//${globalThis.location.host}/`) {
+    const link = make("a", "primary small", "Back to this computer") as HTMLAnchorElement;
+    link.href = back;
+    panel.append(link);
+  } else panel.append(make("p", "muted", "You can close this window."));
+  document.body.replaceChildren(panel);
+}
+async function disconnectSession(): Promise<void> {
+  if (!sshSession) return;
+  const host = sshSession.host;
+  if (!await confirmDialog(`Disconnect from ${host}?`, SSH_DISCONNECT_NOTE, "Disconnect", true)) return;
+  try { await request("/api/ssh/session/disconnect", "POST", {}); showDisconnected(host); }
+  catch (error) { message(error instanceof Error ? error.message : String(error), true); }
+}
+
+// The environment menu: Local, live SSH connections, hosts from ~/.ssh/config, Add SSH connection.
+const envMenu = el("env-menu"), envPill = el("env-pill");
+function closeEnvMenu(): void { envMenu.hidden = true; envPill.setAttribute("aria-expanded", "false"); }
+function renderEnvMenu(): void {
+  const row = (iconName: string, label: string, detail: string | null, run: (() => void) | null, current = false, className = ""): HTMLElement => {
+    const node = make("button", `env-item ${className}`.trim()) as HTMLButtonElement;
+    node.type = "button";
+    node.setAttribute("role", current ? "menuitemradio" : "menuitem");
+    if (current) node.setAttribute("aria-checked", "true");
+    const words = make("span", "env-item-text");
+    words.append(make("span", "env-item-label", label));
+    if (detail) words.append(make("small", "", detail));
+    node.append(icon(iconName), words);
+    if (current) node.append(icon("check"));
+    node.onclick = () => { closeEnvMenu(); run?.(); };
+    if (!run) node.disabled = !current;
+    return node;
+  };
+  envMenu.replaceChildren(...environmentMenu(sshSession, sshConnections, sshAvailable.ok ? sshHosts : []).map(item => {
+    switch (item.kind) {
+      case "heading": return make("p", "menu-note env-heading", item.label);
+      case "local": return row("cpu", item.label, item.detail, null, item.current);
+      case "session": return row("server", item.label, item.detail, null, item.current);
+      case "disconnect": return row("x", item.label, null, () => { void disconnectSession(); }, false, "danger-item");
+      case "connection": {
+        const connection = item.connection;
+        return row("server", item.label, item.detail, () => {
+          if (connection.state === "connected") void sshOpen(connection).catch(error => message(error instanceof Error ? error.message : String(error), true));
+          else openSsh();
+        });
+      }
+      case "host": return row("server", item.label, item.detail, () => openSsh(item.host));
+      case "remote-repo": return row("branch", item.label, item.detail, sshAvailable.ok ? () => openSsh("", "repo") : null);
+      case "clone": return row("branch", item.label, item.detail, () => openProjects("clone"));
+      case "add": return row("plus", item.label, sshAvailable.ok ? null : sshAvailable.reason, sshAvailable.ok ? () => openSsh() : null);
+      default: return row("sliders", item.label, null, () => openSsh());
+    }
+  }));
+}
+async function toggleEnvMenu(): Promise<void> {
+  if (!envMenu.hidden) { closeEnvMenu(); return; }
+  renderEnvMenu();
+  envMenu.hidden = false;
+  envPill.setAttribute("aria-expanded", "true");
+  const place = (): void => {
+    const box = envPill.getBoundingClientRect();
+    envMenu.style.left = `${Math.max(8, Math.min(box.left, innerWidth - envMenu.offsetWidth - 8))}px`;
+    envMenu.style.top = `${Math.max(8, box.top - envMenu.offsetHeight - 6)}px`;
+  };
+  place();
+  envMenu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  if (!sshSession) {
+    await Promise.all([loadSshHosts(), refreshSsh()]);
+    if (!envMenu.hidden) { renderEnvMenu(); place(); }
+  }
+}
+envPill.addEventListener("click", event => { event.stopPropagation(); void toggleEnvMenu(); });
+envMenu.addEventListener("click", event => event.stopPropagation());
+if (typeof document.addEventListener === "function") {
+  document.addEventListener("click", () => { if (!envMenu.hidden) closeEnvMenu(); });
+  document.addEventListener("keydown", (event: KeyboardEvent) => { if (event.key === "Escape" && !envMenu.hidden) { closeEnvMenu(); envPill.focus(); } });
+}
+el("ssh-badge").addEventListener("click", () => { if (sshSession) void disconnectSession(); else openSsh(); });
+el("projects-connect-host").addEventListener("click", () => openSsh());
+el("ssh-close").addEventListener("click", () => sshDialog.close());
+el("project-remote-form").addEventListener("submit", event => {
+  event.preventDefault();
+  if (sshKind === "repo") void sshConnect(input("project-remote-host").value, input("ssh-repo-parent").value, input("ssh-repo-url").value);
+  else void sshConnect(input("project-remote-host").value, input("project-remote-folder").value);
+});
+for (const tab of sshDialog.querySelectorAll<HTMLElement>("[data-ssh-kind]")) tab.addEventListener("click", () => setSshKind(tab.dataset.sshKind === "repo" ? "repo" : "folder"));
+el("ssh-repos-search").addEventListener("input", renderSshRepos);
+el("ssh-repo-url").addEventListener("input", () => { renderSshRepoHint(); renderSshRepos(); });
+el("ssh-repo-parent").addEventListener("input", renderSshRepoHint);
 
 // --- Settings → Git: this computer's own GitHub / GitLab sign-ins ---------------
 interface GitAccount { installed: boolean; signed_in: boolean; account?: string | null; protocol?: string | null; install: string; cli: string }

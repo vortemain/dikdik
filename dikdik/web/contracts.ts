@@ -37,6 +37,7 @@ export interface Project {
   python_tests: string[];
   manifests: string[];
   limitations: string;
+  ssh_session?: { host: string } | null;
 }
 export interface TaskResult {
   browser_session?: boolean;
