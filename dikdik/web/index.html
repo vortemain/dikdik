@@ -123,6 +123,7 @@
 
   <p id="message" role="status" aria-live="polite"></p>
   <div id="model-menu" class="menu" role="menu" aria-label="Model" hidden></div>
+  <div id="env-menu" class="menu env-menu" role="menu" aria-label="Environment" hidden></div>
   <div id="state-menu" class="menu" role="menu" aria-label="Status and actions" hidden></div>
   <div id="task-menu" class="menu" role="menu" aria-label="Task actions" hidden>
     <button type="button" role="menuitem" data-action="rename"><svg class="i"><use href="#i-pencil"/></svg><span>Rename</span></button>
@@ -149,7 +150,7 @@
         <button id="toggle-sidebar" class="ghost icon" type="button" aria-label="Hide sidebar" title="Hide sidebar"><svg class="i"><use href="#i-sidebar"/></svg></button>
         <button id="show-sidebar" class="ghost icon" type="button" aria-label="Show sidebar" title="Show sidebar" hidden><svg class="i"><use href="#i-sidebar"/></svg></button>
       </div>
-      <div class="topbar-title"><button id="topbar-project" class="topbar-project" type="button" title="Switch, open, clone or create a project" aria-haspopup="dialog"><svg class="i"><use href="#i-folder"/></svg><span id="topbar-project-name">—</span><svg class="i topbar-project-chevron"><use href="#i-chevron"/></svg></button><span class="topbar-sep" aria-hidden="true">/</span><h1 id="chat-title">New task</h1><button id="state-button" class="state-button" type="button" aria-haspopup="menu" title="Status and actions"><span id="task-state" class="state-pill" role="status" aria-live="polite"></span></button></div>
+      <div class="topbar-title"><button id="ssh-badge" class="ssh-badge" type="button" hidden><svg class="i"><use href="#i-server"/></svg><span id="ssh-badge-text"></span></button><button id="topbar-project" class="topbar-project" type="button" title="Switch, open, clone or create a project" aria-haspopup="dialog"><svg class="i"><use href="#i-folder"/></svg><span id="topbar-project-name">—</span><svg class="i topbar-project-chevron"><use href="#i-chevron"/></svg></button><span class="topbar-sep" aria-hidden="true">/</span><h1 id="chat-title">New task</h1><button id="state-button" class="state-button" type="button" aria-haspopup="menu" title="Status and actions"><span id="task-state" class="state-pill" role="status" aria-live="polite"></span></button></div>
       <div class="topbar-actions">
         <button id="task-actions" class="ghost icon" type="button" aria-label="Task actions" title="Task actions" hidden><svg class="i"><use href="#i-more"/></svg></button>
         <button id="pause" class="ghost small" type="button" hidden title="Pause after the current step; resume later from exactly here"><svg class="i"><use href="#i-pause"/></svg>Pause</button>
@@ -294,6 +295,7 @@
             </div>
             <div class="composer-controls">
               <button id="attach" class="ghost icon" type="button" aria-label="Attach files" title="Attach images or text files (or paste / drop them)"><svg class="i"><use href="#i-paperclip"/></svg></button>
+              <button id="env-pill" class="ghost small env-pill" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="env-menu"><svg class="i"><use href="#i-cpu"/></svg><span id="env-label">Local</span><svg class="i env-chevron"><use href="#i-chevron"/></svg></button>
               <label id="run-mode-pill" class="pill run-mode-pill" title="How Dikdik works in this project"><span class="sr-only">Permissions</span><svg class="i"><use href="#i-shield"/></svg><select id="run-mode"><option value="auto">Auto</option><option value="ask">Ask before commands</option><option value="plan">Plan only</option><option value="classic">Classic (copy, then Apply)</option></select></label>
               <label id="mode-pill" class="pill classic-only" title="Mode"><span class="sr-only">Mode</span><svg class="i"><use href="#i-sparkle"/></svg><select id="mode"><option value="agent" selected>Agent</option><option value="plan">Plan</option><option value="model">Single proposal</option><option value="offline">Offline edits</option></select></label>
               <label id="verification-pill" class="pill classic-only" title="Verification"><span class="sr-only">Verification</span><svg class="i"><use href="#i-shield"/></svg><select id="verification"><option value="syntax">Syntax check</option><option value="local">On this computer</option></select></label>
@@ -687,6 +689,7 @@
         <button class="secondary small" type="button" data-project-tab="open" role="tab"><svg class="i"><use href="#i-folder"/></svg>Open folder</button>
         <button class="secondary small" type="button" data-project-tab="new" role="tab"><svg class="i"><use href="#i-plus"/></svg>New project</button>
         <button class="secondary small" type="button" data-project-tab="clone" role="tab"><svg class="i"><use href="#i-branch"/></svg>Clone repository</button>
+        <button id="projects-connect-host" class="secondary small" type="button"><svg class="i"><use href="#i-server"/></svg>Connect to host…</button>
       </div>
       <form id="project-open-form" class="project-form" data-project-form="open" hidden>
         <label for="project-open-path">Folder</label>
@@ -716,6 +719,43 @@
       <p id="projects-status" class="hint" role="status"></p>
       <h4 class="projects-heading">Recent</h4>
       <ul id="projects-recent" class="projects-recent"></ul>
+    </div>
+  </dialog>
+  <dialog id="ssh-dialog" class="small-dialog wide-dialog projects-dialog" aria-labelledby="ssh-title">
+    <div class="settings-head"><h3 id="ssh-title">Connect to host</h3><button id="ssh-close" class="ghost icon" type="button" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+    <div class="projects-body">
+      <p class="hint ssh-lead">Open a folder or a repository on another computer over SSH and work there, like a remote editor window.</p>
+      <form id="project-remote-form" class="project-form">
+        <label for="project-remote-host">Host</label>
+        <input id="project-remote-host" list="project-remote-hosts" placeholder="devbox or user@host" autocomplete="off" spellcheck="false">
+        <datalist id="project-remote-hosts"></datalist>
+        <div class="projects-actions ssh-open-kind" role="tablist" aria-label="What to open on the host">
+          <button class="secondary small" type="button" role="tab" data-ssh-kind="folder" aria-selected="true"><svg class="i"><use href="#i-folder"/></svg>Folder</button>
+          <button class="secondary small" type="button" role="tab" data-ssh-kind="repo" aria-selected="false"><svg class="i"><use href="#i-branch"/></svg>Repository</button>
+        </div>
+        <div class="ssh-pane" data-ssh-pane="folder">
+          <label for="project-remote-folder">Folder on the host</label>
+          <input id="project-remote-folder" placeholder="~/projects/my-app" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="ssh-pane" data-ssh-pane="repo" hidden>
+          <label for="ssh-repo-url">Repository URL</label>
+          <input id="ssh-repo-url" placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false">
+          <div id="ssh-repos" class="project-repos" hidden>
+            <div class="field-row"><input id="ssh-repos-search" placeholder="Search your GitHub repositories" aria-label="Search your GitHub repositories" autocomplete="off" spellcheck="false"></div>
+            <ul id="ssh-repos-list" class="project-repos-list"></ul>
+          </div>
+          <label for="ssh-repo-parent">Clone into (on the host)</label>
+          <input id="ssh-repo-parent" placeholder="~/projects" autocomplete="off" spellcheck="false">
+          <p id="ssh-repo-hint" class="hint">The host clones with its own Git sign-in (gh auth login or an SSH key there). An existing clone of the same repository is opened as it is.</p>
+        </div>
+        <p id="project-remote-hint" class="hint">Uses this computer's SSH keys, ssh-agent and ~/.ssh/config; passwords are never asked for. The host needs Linux or macOS with Python 3.13 or newer. Dikdik installs itself in ~/.dikdik-remote there, and commands, tests, Git and model calls run on the host.</p>
+        <div class="row"><button id="project-remote-connect" class="primary small" type="submit">Connect</button></div>
+      </form>
+      <p id="ssh-status" class="hint" role="status"></p>
+      <div id="projects-remote" class="projects-remote" hidden>
+        <h4 class="projects-heading">SSH connections</h4>
+        <ul id="projects-remote-list" class="projects-remote-list"></ul>
+      </div>
     </div>
   </dialog>
   <dialog id="info-dialog" class="small-dialog wide-dialog" aria-labelledby="info-title">

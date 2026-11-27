@@ -94,6 +94,7 @@ export function createConversationMode(deps: ConversationModeDeps): Conversation
     hide("topbar-project", chat);
     for (const node of document.querySelectorAll?.<HTMLElement>(".topbar-sep, .welcome-project") ?? []) node.hidden = chat;
     // Composer controls that only mean something for code.
+    hide("env-pill", chat);
     hide("run-mode-pill", chat);
     hide("mode-pill", chat);
     hide("verification-pill", chat);

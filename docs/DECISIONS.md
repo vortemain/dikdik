@@ -162,3 +162,73 @@ Consequence: there is no isolated way to execute an untrusted repository's code.
 Recognizing Dockerfiles in a user's project (syntax highlighting, file icons and the
 INF security rules) is analysis, not execution, and stays. The root `Dockerfile`
 stays for self-hosting Dikdik on a server (`docs/CLOUD.md`); it is never used by Dikdik itself.
+
+## ADR-009: Remote work over SSH runs Dikdik on the host behind a tunnel (2026-11-27)
+
+The owner wants to open a folder on another computer and have the agent work
+there, the way VS Code Remote-SSH and Claude Code's SSH connections work. Two
+shapes were considered: proxy every file read, command and Git call over SSH, or
+run Dikdik itself on the host and reach it through an SSH tunnel. Proxying would
+touch every tool and keep two copies of each code path. Running Dikdik remotely
+reuses every tool unchanged and keeps both ends loopback-only, so it is accepted.
+
+Phase 1 (`dikdik/ssh_remote.py`, Projects → Connect to host):
+
+- Hosts come from `~/.ssh/config` (and its `Include` files; wildcard patterns are
+  skipped) or a typed `user@host` / `ssh://user@host:port`. Only the system
+  OpenSSH client is used, so keys, ssh-agent, `ProxyJump` and `known_hosts` all
+  behave as in a terminal. There is no new dependency.
+- Every call uses `BatchMode=yes` and `StrictHostKeyChecking=yes`, never `no`.
+  Passwords and passphrases are never asked for or stored; a refused key login
+  explains how to set up a key or load it into ssh-agent.
+- An unknown host key is fetched by a separate probe that writes into a scratch
+  `known_hosts` file with every authentication method switched off, so no
+  credential is offered to a host that has not been verified. The UI shows the
+  SHA256 fingerprint; only when the user confirms that same fingerprint are the
+  lines appended to the user's own `known_hosts`. A changed host key stops the
+  connection with `ssh-keygen -R` guidance and is never replaced automatically.
+- The host needs a POSIX shell (Linux or macOS) and Python 3.13+. Dikdik has no
+  runtime dependencies there, so instead of a venv (which needs `python3-venv` on
+  Debian and Ubuntu) the local package is streamed as a deterministic tar over the
+  SSH channel and unpacked with `tarfile`'s `data` filter into
+  `~/.dikdik-remote/<version>/`, stamped with the archive's SHA-256. Native
+  extensions, caches and compiled files are left out; the Python indexer is used.
+  Remote state lives in `~/.dikdik-remote/data`, so deleting `~/.dikdik-remote`
+  removes everything.
+- The host runs `dikdik.server FOLDER --port 0 --no-browser --ssh-session LABEL
+  --forwarded-port P` on 127.0.0.1. This computer makes the host's sign-in token and
+  sends it as the first line of the SSH channel's stdin; the host prints only a
+  `DIKDIK-SSH-READY` line with its port. The token is kept in memory on both ends,
+  registered for log redaction, and never logged or printed. The host process exits
+  when the channel's stdin closes, so it lives exactly as long as the local
+  connection.
+- A second `ssh -N -L` forwards local port P to the host's port, tied to the same
+  connection: if either process ends, the other is stopped. `ExitOnForwardFailure`
+  is on and the tunnel answers `/health` before the connection counts as ready.
+- The remote window opens at `http://localhost:P/#token=…`. `localhost` is used,
+  not `127.0.0.1`, because browsers share cookies across ports per host name: the
+  local owner session cookie (on `127.0.0.1`) is therefore never sent through the
+  tunnel to the other computer. The link is handed only to the signed-in owner
+  session (not API keys) and the fragment is removed from the address bar as
+  before. With `--ssh-session`, the host also accepts `localhost:P` and
+  `127.0.0.1:P` as its own address and refuses the token-less local sign-in,
+  because loopback on a shared server does not mean "only you".
+- Connect to host can open a repository instead of a folder: the URL follows the
+  Clone repository rules, the host clones it into a chosen folder with its own Git
+  sign-in (hooks and fsmonitor off, no terminal prompts), an existing clone of the same
+  origin is reused and any other existing folder is refused. The GitHub list comes from
+  this computer's sign-in; only the chosen URL is sent to the host.
+- The composer has an environment pill (Local or `SSH: host`) whose menu lists this
+  computer, live connections, saved hosts and Add SSH connection, like an editor's
+  remote picker. The remote window also shows `SSH: host` in the title bar; its
+  Disconnect stops the host process. The Connect to host dialog lists connections
+  with Open and Disconnect. Connect to host is unavailable when Dikdik itself runs on a server
+  (`--listen`) or inside an SSH session, where the tunnel would not reach the
+  browser.
+
+Consequences: model calls, API keys and Git credentials are those of the host
+(set keys in the remote window's Settings). Remote connections are not restored
+after the local app restarts. Follow-ups, out of scope here: relay model calls back
+over `ssh -R` so API keys stay on this computer; listing repositories with the
+host's own `gh` sign-in; WSL distributions via `wsl.exe`; Windows hosts; and a
+self-contained build for hosts without Python 3.13.

@@ -39,6 +39,7 @@ from .html_preview import HTMLPreviews, PREVIEW_CSP
 from .config import check_config_or_exit
 from .projects import Projects, check_location, pick_folder, list_folders
 from . import remote as remote_mode
+from . import ssh_remote
 from . import git_accounts
 from . import logs
 from . import sql
@@ -171,7 +172,8 @@ def open_in_editor(root: Path, rel: str, line=None) -> dict:
     return {"opened": rel or ".", "editor": "VS Code"}
 
 
-def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.RemoteConfig | None" = None):
+def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.RemoteConfig | None" = None,
+                ssh_session: "ssh_remote.SSHSession | None" = None, ssh: "ssh_remote.SSHConnections | None" = None):
     wiring = _Wiring(engine)
     sign_ins = git_accounts.SignIns()
     projects = Projects(engine, on_switch=wiring.wire, limit=remote.projects_root if remote else None)
@@ -188,6 +190,11 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
     server_state = ServerState(ready=not os.environ.get("DIKDIK_DORMANT", ""))
     api_keys = ApiKeyStore(Path(engine.data) if hasattr(engine, "data") else Path("."))
     previews = HTMLPreviews()
+    if ssh is None:
+        # Connect to host opens a tunnel on this computer's loopback: useless to a browser elsewhere.
+        ssh = ssh_remote.SSHConnections(unavailable=(
+            "Connect to host is not available when Dikdik runs on a server" if remote else
+            "Connect to host is not available inside a remote window; use the Dikdik on your own computer" if ssh_session else None))
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -240,7 +247,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
         @property
         def cookie_name(self):
             # Cookies are not port-scoped, so each local instance gets its own name.
-            return f"dikdik_session_{self.server.server_port}"
+            return f"dikdik_session_{ssh_session.forwarded_port if ssh_session else self.server.server_port}"
 
         def refuse(self, status, data):
             # Read a small unread body first: on Windows, closing a socket with unread
@@ -272,6 +279,10 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
             if remote:  # on a server: also exactly the public address it was started with
                 hosts.add(remote.public_host)
                 origins.add(remote.public_origin)
+            if ssh_session:  # on an SSH host: the tunnel's port on the user's own computer
+                for name in (f"localhost:{ssh_session.forwarded_port}", f"127.0.0.1:{ssh_session.forwarded_port}"):
+                    hosts.add(name)
+                    origins.add("http://" + name)
             requested = (self.headers.get("Host") or "").lower()
             origin = (self.headers.get("Origin") or ("https://" if remote and requested == remote.public_host and remote.secure else "http://") + requested).lower()
             if requested not in hosts:
@@ -702,6 +713,10 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if path == "/api/keys":
                     self.reply(200, {"keys": api_keys.list()})
                     return
+                answer = ssh.route("GET", path, {}, self.api_key is None)
+                if answer is not None:
+                    self.reply(*answer)
+                    return
                 if path == "/api/projects/folders":
                     if remote:
                         raise ValueError("Folder browsing is available only when Dikdik runs on this computer; type the server folder path instead")
@@ -760,7 +775,8 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     self.reply(*bash)
                 elif path == "/api/project":
                     self.reply(200, {"name": engine.root.name, "path": str(engine.root), "trusted": engine.trusted(), "indexer": INDEXER,
-                                     **workspace_metadata(engine.root), "images": workspace_images(engine.root)})
+                                     **workspace_metadata(engine.root), "images": workspace_images(engine.root),
+                                     "ssh_session": {"host": ssh_session.label} if ssh_session else None})
                 elif path == "/api/preview/live":
                     self.reply(200, engine.live_preview.status())
                 elif path == "/api/files/image":
@@ -910,8 +926,9 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 return
             if path == "/api/session/local":
                 # Local mode only: auto-sign-in so the user never pastes a token.
-                # CSRF is blocked by same_origin(); remote mode is refused (use /api/session).
-                if self.same_origin() and not remote:
+                # CSRF is blocked by same_origin(); remote mode is refused (use /api/session), and so is
+                # an SSH host, where loopback may be shared with other users of that computer.
+                if self.same_origin() and not remote and not ssh_session:
                     session_token_value = expected.decode("utf-8").removeprefix("Bearer ")
                     cookie = f"{self.cookie_name}={session_token_value}; Path=/; Max-Age={SESSION_AGE}; HttpOnly; SameSite=Strict"
                     self.reply(200, {"signed_in": True}, cookie=cookie)
@@ -966,6 +983,18 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                     if not isinstance(body, dict) or set(body) != {'html'}:
                         raise ValueError('Preview expects an HTML string')
                     self.reply(201, previews.create(body['html'], str(engine.root)))
+                    return
+                if path == "/api/ssh/session/disconnect":
+                    if not ssh_session or self.api_key is not None:
+                        self.reply(403, {"error": "Disconnect from the remote window you are signed in to"})
+                        return
+                    self.reply(200, {"disconnected": True})
+                    logs.log("ssh_session_disconnect")
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                    return
+                answer = ssh.route("POST", path, body, self.api_key is None)
+                if answer is not None:
+                    self.reply(*answer)
                     return
                 answer = gateway.route(self.command, path, body, dict(self.headers))
                 if answer is not None:
@@ -1311,6 +1340,10 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
                 if bash is not None:
                     self.reply(*bash)
                     return
+                answer = ssh.route(method, path, body, self.api_key is None)
+                if answer is not None:
+                    self.reply(*answer)
+                    return
                 if path == "/api/settings/app" and method == "PATCH":
                     self.reply(200, engine.update_app_settings(body))
                     return
@@ -1378,6 +1411,7 @@ def make_server(engine: Engine, port: int, token: str, remote: "remote_mode.Remo
     wiring.port = server.server_port
     routes.oauth.port = server.server_port
     server.projects = projects  # the engine open right now: projects.engine
+    server.ssh = ssh
     return server
 
 
@@ -1425,6 +1459,9 @@ def main(*, desktop: bool = False):
     server_flags.add_argument("--behind-proxy", action="store_true", help="A reverse proxy terminates HTTPS in front of Dikdik")
     server_flags.add_argument("--projects-root", help="On a server, every project must live inside this folder")
     parser.add_argument("--acp", action="store_true", help="ACP server mode: expose the agent over stdio JSON-RPC (for other ACP clients)")
+    # Set by Connect to host when it starts Dikdik on another computer (ADR-009), not for direct use.
+    parser.add_argument("--ssh-session", metavar="LABEL", help=argparse.SUPPRESS)
+    parser.add_argument("--forwarded-port", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
     early_exits(parser)
     check_config_or_exit()
@@ -1438,6 +1475,13 @@ def main(*, desktop: bool = False):
         remote = remote_mode.check(args.listen, args.public_url, args.tls_cert, args.tls_key, args.behind_proxy, args.projects_root)
     except ValueError as exc:
         parser.error(str(exc))
+    ssh_session = None
+    if args.ssh_session is not None or args.forwarded_port is not None:
+        if remote or args.desktop or args.ssh_session is None or args.forwarded_port is None:
+            parser.error("--ssh-session and --forwarded-port go together, and only on a loopback server")
+        if not 0 < args.forwarded_port < 65536 or not args.ssh_session.isprintable() or len(args.ssh_session) > 255:
+            parser.error("--ssh-session needs a short label and --forwarded-port a port number")
+        ssh_session = ssh_remote.SSHSession(args.ssh_session, args.forwarded_port)
     webview = None
     if args.desktop:
         if remote or args.no_browser:
@@ -1477,9 +1521,9 @@ def main(*, desktop: bool = False):
         engine = Engine(root, data)
     except ValueError as exc:
         parser.error(str(exc))
-    token = session_token(data / "web.token", args.rotate_token)
+    token = _session_token_from_stdin(parser) if ssh_session else session_token(data / "web.token", args.rotate_token)
     try:
-        server = make_server(engine, args.port, token, remote)
+        server = make_server(engine, args.port, token, remote, ssh_session)
     except OSError as exc:
         engine.close()
         if getattr(exc, "errno", None) in (errno_module.EADDRINUSE, errno_module.EACCES):
@@ -1490,7 +1534,11 @@ def main(*, desktop: bool = False):
     logs.log("server_started", version=DIKDIK_VERSION, port=server.server_port, remote=bool(remote), indexer=INDEXER)
     # The token rides in the URL fragment, which browsers never send to a server.
     link = f"{url}/#token={token}"
-    if remote:
+    if ssh_session:
+        # Connect to host reads the port from this line; the sign-in token came from it over stdin.
+        print(f"{ssh_remote.READY} {json.dumps({'port': server.server_port})}", flush=True)
+        threading.Thread(target=_stop_when_stdin_closes, args=(server,), daemon=True).start()
+    elif remote:
         print(f"Dikdik is running at {url}\nProject: {root}"
               + (f"\n{note}" if note else "")
               + f"\nSign-in link (needed once per browser): {link}", flush=True)
@@ -1498,7 +1546,7 @@ def main(*, desktop: bool = False):
         print(f"Dikdik is running at {url}\nProject: {root}"
               + (f"\n{note}" if note else "")
               + f"\nOpen this in your browser: {link}", flush=True)
-    if not args.no_browser and not remote and not args.desktop:
+    if not args.no_browser and not remote and not args.desktop and not ssh_session:
         webbrowser.open(link)
     try:
         if args.desktop:
@@ -1512,10 +1560,36 @@ def main(*, desktop: bool = False):
     except KeyboardInterrupt:
         pass
     finally:
+        server.ssh.close_all()
         server.server_close()
         server.projects.engine.close()
         logs.log("server_stopped")
         logs.close(log_path)
+
+
+def _session_token_from_stdin(parser: argparse.ArgumentParser) -> str:
+    """On an SSH host the sign-in token is the first line Connect to host sends; it is never printed."""
+    raw = b""
+    try:  # one byte at a time from the raw descriptor, so nothing after the line is consumed
+        while len(raw) < 256 and (byte := os.read(sys.stdin.fileno(), 1)) not in (b"", b"\n"):
+            raw += byte
+    except (OSError, ValueError):
+        pass
+    token = raw.decode("ascii", "replace").strip()
+    if len(token) < 32 or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+        parser.error("--ssh-session expects its sign-in token as the first line of stdin")
+    logs.register_secret(token)
+    return token
+
+
+def _stop_when_stdin_closes(server) -> None:
+    """On an SSH host, the connection's end is stdin's end: stop with it."""
+    try:  # the raw descriptor: a buffered reader's lock would abort interpreter shutdown
+        while os.read(sys.stdin.fileno(), 65536):
+            pass
+    except (OSError, ValueError):
+        pass
+    server.shutdown()
 
 
 def last_project(data: Path) -> Path | None:

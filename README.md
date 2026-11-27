@@ -190,6 +190,7 @@ Keep credentials out of source files and committed configuration.
 | [Composer](docs/COMPOSER.md) | Saved drafts, attachments and conversation input. |
 | [Desktop](docs/DESKTOP.md) | Desktop installers and platform requirements. |
 | [Server deployment](docs/CLOUD.md) | HTTPS, remote access and project boundaries. |
+| [Remote over SSH](docs/SSH.md) | Connect to host: open a folder on another computer and work there. |
 | [Releases](docs/RELEASING.md) | Versioning, builds, checksums and release automation. |
 | [Security](SECURITY.md) | Permissions, execution boundaries and deployment considerations. |
 
