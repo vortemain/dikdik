@@ -47,7 +47,9 @@ DEFAULT_CLONE_PARENT = "~/projects"
 READY_TIMEOUT = 90
 TUNNEL_TIMEOUT = 30
 DECISION_TIMEOUT = 600
-HOST = re.compile(r"(?:ssh://)?(?:[A-Za-z0-9._%+-]+@)?(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?")
+USER_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-")
+HOST_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+ADDRESS_CHARS = frozenset("0123456789abcdefABCDEF:.")
 VERSION = re.sub(r"[^0-9A-Za-z._+-]", "_", __version__)
 SKIPPED_SUFFIXES = {".pyc", ".pyo", ".pyd", ".so", ".dll", ".dylib"}
 # Never offer anything to a host whose key is not verified yet: the key-fetching probe
@@ -185,7 +187,7 @@ def config_hosts(path: Path | None = None) -> list[dict]:
             if key == "host":
                 current = []
                 for name in value.split():
-                    if any(ch in name for ch in "*?!") or not HOST.fullmatch(name):
+                    if any(ch in name for ch in "*?!") or not valid_host(name):
                         continue
                     current.append(hosts.setdefault(name, {"name": name, "hostname": None, "user": None}))
                 continue
@@ -197,11 +199,32 @@ def config_hosts(path: Path | None = None) -> list[dict]:
     return list(hosts.values())
 
 
+def valid_host(text: str) -> bool:
+    """alias, user@host, [ipv6] or ssh://user@host:port: parsed by hand, so no input can make it slow."""
+    if not text or len(text) > 255 or text.startswith("-"):
+        return False
+    rest = text.removeprefix("ssh://")
+    user, at, place = rest.rpartition("@")
+    if at and (not user or not set(user) <= USER_CHARS):
+        return False
+    if place.startswith("["):
+        end = place.find("]")
+        name, port = place[1:end], place[end + 1:]
+        if end < 0 or not name or not set(name) <= ADDRESS_CHARS:
+            return False
+    else:
+        name, colon, digits = place.partition(":")
+        port = colon + digits
+        if not name or not set(name) <= HOST_CHARS:
+            return False
+    return not port or (port.startswith(":") and 1 < len(port) <= 6 and port[1:].isascii() and port[1:].isdigit())
+
+
 def check_host(host) -> str:
     host = str(host or "").strip()
     if not host:
         raise SSHError("Choose a host from your SSH config or type user@host")
-    if host.startswith("-") or len(host) > 255 or not HOST.fullmatch(host):
+    if not valid_host(host):
         raise SSHError("Type a host as alias, user@host or ssh://user@host:port")
     return host
 
@@ -645,11 +668,19 @@ class SSHConnections:
         run = self._ssh(conn, "-T", "-o", "ClearAllForwardings=yes",
                         command=remote_command(python, RUN, VERSION, conn.folder, "--port", "0", "--no-browser",
                                                "--ssh-session", label, "--forwarded-port", str(port)))
+        # The host's sign-in token is made here and travels only on the channel's stdin; nothing prints it.
+        token = secrets.token_urlsafe(32)
+        logs.register_secret(token)
         try:
             process = subprocess.Popen(run, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except OSError as exc:
             raise SSHError(f"Could not start ssh: {exc.strerror or exc}") from exc
         conn.procs["run"] = process
+        try:
+            process.stdin.write((token + "\n").encode("ascii"))
+            process.stdin.flush()
+        except OSError:
+            pass  # the process already ended: its stderr explains why
         errors: list[str] = []
         threading.Thread(target=collect, args=(process.stderr, errors), daemon=True).start()
         ready: dict = {}
@@ -661,9 +692,7 @@ class SSHConnections:
                     line = raw.decode("utf-8", "replace").strip()
                     if not ready and line.startswith(READY + " "):
                         try:
-                            value = json.loads(line[len(READY) + 1:])
-                            ready.update(port=int(value["port"]), token=str(value["token"]))
-                            logs.register_secret(ready["token"])
+                            ready.update(port=int(json.loads(line[len(READY) + 1:])["port"]))
                         except (ValueError, KeyError, TypeError):
                             pass
                         arrived.set()
@@ -682,7 +711,7 @@ class SSHConnections:
                 kind = "start"
             conn.kind = kind
             raise SSHError(text)
-        conn.token = ready["token"]
+        conn.token = token
         self._tunnel(conn, ready["port"], ipv6)
 
     def _tunnel(self, conn: Connection, remote_port: int, ipv6: bool) -> None:

@@ -196,11 +196,12 @@ Phase 1 (`dikdik/ssh_remote.py`, Projects → Connect to host):
   Remote state lives in `~/.dikdik-remote/data`, so deleting `~/.dikdik-remote`
   removes everything.
 - The host runs `dikdik.server FOLDER --port 0 --no-browser --ssh-session LABEL
-  --forwarded-port P` on 127.0.0.1. It prints one `DIKDIK-SSH-READY` line with its
-  port and sign-in token on the SSH channel only; the local side keeps the token in
-  memory, registers it for log redaction, and never logs or prints it. The host
-  process exits when the channel's stdin closes, so it lives exactly as long as the
-  local connection.
+  --forwarded-port P` on 127.0.0.1. This computer makes the host's sign-in token and
+  sends it as the first line of the SSH channel's stdin; the host prints only a
+  `DIKDIK-SSH-READY` line with its port. The token is kept in memory on both ends,
+  registered for log redaction, and never logged or printed. The host process exits
+  when the channel's stdin closes, so it lives exactly as long as the local
+  connection.
 - A second `ssh -N -L` forwards local port P to the host's port, tied to the same
   connection: if either process ends, the other is stopped. `ExitOnForwardFailure`
   is on and the tunnel answers `/health` before the connection counts as ready.

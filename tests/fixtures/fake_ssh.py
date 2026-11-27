@@ -110,7 +110,7 @@ def main():
             sys.stderr.write("fake ssh: credentials offered to an unverified host\n")
             return 99
         scratch = option(options, "UserKnownHostsFile").strip('"').replace("%%", "%")
-        Path(scratch).write_text(KEY_LINE + "\n", encoding="utf-8")
+        Path(scratch).write_text(KEY_LINE + "\n", encoding="utf-8")  # dikdik-scan: ignore[PY013] test stand-in writes where ssh's UserKnownHostsFile points
         sys.stderr.write(f"Warning: Permanently added '{host}' (ED25519) to the list of known hosts.\n"
                          f"{host}: Permission denied (no authentication methods available).\n")
         return 255

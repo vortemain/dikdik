@@ -1521,7 +1521,7 @@ def main(*, desktop: bool = False):
         engine = Engine(root, data)
     except ValueError as exc:
         parser.error(str(exc))
-    token = session_token(data / "web.token", args.rotate_token)
+    token = _session_token_from_stdin(parser) if ssh_session else session_token(data / "web.token", args.rotate_token)
     try:
         server = make_server(engine, args.port, token, remote, ssh_session)
     except OSError as exc:
@@ -1535,8 +1535,8 @@ def main(*, desktop: bool = False):
     # The token rides in the URL fragment, which browsers never send to a server.
     link = f"{url}/#token={token}"
     if ssh_session:
-        # Read by Connect to host over the SSH channel only; the host's terminal never shows it.
-        print(f"{ssh_remote.READY} {json.dumps({'port': server.server_port, 'token': token})}", flush=True)
+        # Connect to host reads the port from this line; the sign-in token came from it over stdin.
+        print(f"{ssh_remote.READY} {json.dumps({'port': server.server_port})}", flush=True)
         threading.Thread(target=_stop_when_stdin_closes, args=(server,), daemon=True).start()
     elif remote:
         print(f"Dikdik is running at {url}\nProject: {root}"
@@ -1565,6 +1565,21 @@ def main(*, desktop: bool = False):
         server.projects.engine.close()
         logs.log("server_stopped")
         logs.close(log_path)
+
+
+def _session_token_from_stdin(parser: argparse.ArgumentParser) -> str:
+    """On an SSH host the sign-in token is the first line Connect to host sends; it is never printed."""
+    raw = b""
+    try:  # one byte at a time from the raw descriptor, so nothing after the line is consumed
+        while len(raw) < 256 and (byte := os.read(sys.stdin.fileno(), 1)) not in (b"", b"\n"):
+            raw += byte
+    except (OSError, ValueError):
+        pass
+    token = raw.decode("ascii", "replace").strip()
+    if len(token) < 32 or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+        parser.error("--ssh-session expects its sign-in token as the first line of stdin")
+    logs.register_secret(token)
+    return token
 
 
 def _stop_when_stdin_closes(server) -> None:

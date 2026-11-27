@@ -66,9 +66,9 @@ class HostListTests(unittest.TestCase):
                 manager.connect("box", "~/app")
 
     def test_hosts_and_folders_are_checked(self):
-        for good in ("devbox", "ada@10.0.0.5", "ssh://ada@host.example.com:2222", "user@[::1]"):
+        for good in ("devbox", "ada@10.0.0.5", "ssh://ada@host.example.com:2222", "user@[::1]", "[::1]:22"):
             self.assertEqual(ssh_remote.check_host(good), good)
-        for bad in ("", "-oProxyCommand=calc", "a b", "host;rm", "x" * 300):
+        for bad in ("", "-oProxyCommand=calc", "a b", "host;rm", "x" * 300, "@h", "h:", "h:123456", "a@b@c", "[::1", "u@[zz]"):
             with self.subTest(bad=bad), self.assertRaises(SSHError):
                 ssh_remote.check_host(bad)
         for good in ("~", "~/projects/app", "/srv/my app"):
@@ -452,6 +452,37 @@ class SessionServerTests(unittest.TestCase):
         get(port, "/api/ssh/connections/0123456789abcdef/link", "tok-for-tests-only", host=f"127.0.0.1:{port}", method="POST",
             body={}, origin=f"http://127.0.0.1:{port}")
         self.assertEqual(manager.route.call_args.args[3], True)
+
+    def test_host_takes_its_token_from_stdin_prints_only_its_port_and_stops_with_stdin(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / "proj").mkdir()
+            args = [sys.executable, "-m", "dikdik.server", str(Path(folder) / "proj"), "--port", "0", "--no-browser",
+                    "--data", str(Path(folder) / "data"), "--ssh-session", "box", "--forwarded-port", "45678"]
+            token = "t" * 43
+            host = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                host.stdin.write(token + "\n")
+                host.stdin.flush()
+                line = host.stdout.readline()
+                self.assertTrue(line.startswith(ssh_remote.READY + " "), line)
+                self.assertNotIn(token, line)
+                port = json.loads(line.split(" ", 1)[1])["port"]
+                self.assertEqual(set(json.loads(line.split(" ", 1)[1])), {"port"})
+                self.assertEqual(get(port, "/api/project", token, host="localhost:45678")[0], 200)
+                self.assertEqual(get(port, "/api/project", "x" * 43, host="localhost:45678")[0], 401)
+                host.stdin.close()
+                self.assertEqual(host.wait(30), 0)
+                rest = host.stdout.read() + host.stderr.read()
+                self.assertNotIn(token, rest)
+            finally:
+                if host.poll() is None:
+                    host.kill()
+                    host.wait(10)
+                host.stdout.close()
+                host.stderr.close()
+            refused = subprocess.run(args, input="short\n", capture_output=True, text=True, timeout=60)
+            self.assertEqual(refused.returncode, 2)
+            self.assertIn("first line of stdin", refused.stderr)
 
     def test_session_flags_go_together(self):
         for args in (["--ssh-session", "box"], ["--forwarded-port", "5000"],
