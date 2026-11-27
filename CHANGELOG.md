@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.1 — 2026-11-27
+
+Work on another computer over SSH:
+- Connect to host (ADR-009): open a folder or a repository on a Linux or macOS host
+  with Python 3.13+. Dikdik installs itself in `~/.dikdik-remote`, runs on the host's
+  loopback and is reached through an `ssh -L` tunnel; all tools run on the host. Uses
+  the system OpenSSH client with keys, agent, ProxyJump and strict host-key checking;
+  unknown host keys are confirmed by fingerprint; passwords are never asked for. The
+  host's sign-in token travels only on the SSH channel's stdin.
+- An environment pill in the composer (Local / SSH: host) with live connections,
+  saved hosts, Add SSH connection and Open a repository on a host; a title-bar badge
+  and Disconnect from either side.
+- In-app update recommendations: a one-time popup, a Settings dot, a Settings →
+  Updates section with size, notes, Check now and Install, and an automatic-checks
+  switch (on by default). Contributed by mk-Denver.
+- The boot screen animates the logo and name instead of a loading bar.
+- Fixed: the agent's task list stayed on its first step; benchmark oracles left
+  servers running on Windows; a flaky Windows Stop test.
+
 ## 0.8.0 — 2026-11-23
 
 A sharper, leaner agent that finishes long tasks:
