@@ -133,13 +133,16 @@ and signing before publication. If desktop support is unavailable,
 
 ## Updates
 
-Dikdik checks the published GitHub releases when Settings loads and every six
-hours (a result is reused for 15 minutes). A newer release shows an **Update**
-button in the sidebar and, in Settings → General → Updates, its size, what will
-happen on this platform and the release notes. Installing downloads in the
-background with progress and Cancel, verifies the file against the release's
-`SHA256SUMS.txt` (a release without it is never installed), then hands over to
-a small helper that waits for Dikdik to exit:
+Dikdik checks the published GitHub releases when it starts and every six hours
+while **Check for updates automatically** is on in Settings → General → Updates
+(the default; a result is reused for 15 minutes). Checking only reads release
+metadata and never installs anything by itself. A newer release shows an
+**Update** button in the sidebar and a one-time recommendation; **Later** skips
+that version and a dot marks Settings. Settings → General → Updates shows the
+version, size, what will happen on this platform, the release notes and **Check
+now**. Installing downloads in the background with progress and Cancel, verifies
+the file against the release's `SHA256SUMS.txt` (a release without it is never
+installed), then hands over to a small helper that waits for Dikdik to exit:
 
 - **Windows:** the Inno Setup installer runs with `/VERYSILENT /SUPPRESSMSGBOXES
   /NORESTART /CLOSEAPPLICATIONS`, so no wizard opens and no file is in use; the

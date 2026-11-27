@@ -89,7 +89,8 @@ APP_DEFAULTS = {"confirmation": "never", "condenser": True, "git_name": "", "git
                 "formatter": {"enabled": False, "command": ""},
                 "warming": {"enabled": False, "interval_seconds": 240, "duration_seconds": 1800},
                 "local_limits": {"memory_mb": 8192, "processes": 1024},  # per local command tree; 0 turns a limit off
-                "memory": True, "background_review": True}  # durable memory + session search; post-turn review (dikdik/review.py)
+                "memory": True, "background_review": True,  # durable memory + session search; post-turn review (dikdik/review.py)
+                "update_checks": True}  # look for a newer release on start and every six hours
 WARM_PROMPT = ("Do not perform any work, do not call tools, and change nothing. Reply with exactly: OK")
 WARM_MIN = {"interval": 5, "duration": 10}  # seconds; test hook — production settings clamp above these
 WARM_HARD_MIN = {"interval": 30, "duration": 60}
@@ -490,7 +491,7 @@ class Engine:
                     raise ValueError(f"warming.{key} must be a whole number of {floor}–{ceiling} seconds")
         if "notifications" in body and (not isinstance(body["notifications"], str) or body["notifications"] not in {"off", "background", "all"}):
             raise ValueError("notifications must be off, background or all")
-        for flag in ("condenser", "sounds", "notification_previews", "memory", "background_review"):
+        for flag in ("condenser", "sounds", "notification_previews", "memory", "background_review", "update_checks"):
             if flag in body and not isinstance(body[flag], bool):
                 raise ValueError(f"{flag} must be true or false")
         if "permission_rules" in body:

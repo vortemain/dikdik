@@ -1690,6 +1690,15 @@ body.run-simple .classic-only { display: none !important; }
 .update-pop p { margin: 0 0 10px; color: var(--ink-2); line-height: 1.45; }
 .update-pop-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .update-pop[hidden] { display: none; }
+/* Settings: the in-app update panel and its release notes. */
+.update-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+#update-notes-wrap h5 { margin: 12px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.update-notes { max-height: 220px; overflow: auto; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);
+  color: var(--ink-2); font: 12px/1.55 "JetBrains Mono", ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A quiet dot on Settings while a recommended update is waiting. */
+.foot-button.has-update, .rail button.has-update { position: relative; }
+.foot-button.has-update::after, .rail button.has-update::after { content: ""; position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--sidebar); }
 
 /* A file the chat created: download it or show it in its folder. */
 .msg-file { list-style: none; }
