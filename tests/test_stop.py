@@ -42,8 +42,10 @@ class StopTests(unittest.TestCase):
                 try:
                     if not self.rfile.read(1):
                         disconnected.set()
+                except (ConnectionResetError, ConnectionAbortedError):
+                    disconnected.set()  # Windows often resets rather than ends a closed socket: closed all the same
                 except OSError:
-                    pass
+                    pass  # the 15 s read timeout: the socket was left open
 
         server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         server.daemon_threads = True
@@ -67,7 +69,8 @@ class StopTests(unittest.TestCase):
             self.assertFalse(client.is_alive(), 'Stop waited for the provider timeout')
             self.assertLess(time.monotonic() - start, 1)
             self.assertEqual(results, ['cancelled'])
-            # Only an end-of-stream read sets this (the handler's 15 s read timeout does not), so a longer wait
+            # Only the client closing the socket (end of stream or a reset) sets this; the handler's 15 s read
+            # timeout does not, so a longer wait
             # under a loaded test run cannot pass an open socket.
             self.assertTrue(disconnected.wait(15), 'The cancelled stream socket was left open')
         finally:
